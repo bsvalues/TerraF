@@ -1,257 +1,269 @@
 import os
 import re
+import ast
 import logging
 import json
 from collections import defaultdict
-import pandas as pd
-import ast
 from pathlib import Path
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Patterns for identifying database-related files and code
-DB_FILE_PATTERNS = [
-    r'.*models\.py$',
-    r'.*schema\.py$',
-    r'.*repository\.py$',
-    r'.*dao\.py$',
-    r'.*db\.py$',
-    r'.*database\.py$',
-    r'.*migrations.*\.py$',
-    r'.*entity\.py$',
-    r'.*orm.*\.py$',
-]
-
-# SQL keywords for identifying SQL queries
-SQL_KEYWORDS = [
-    'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'CREATE TABLE', 'ALTER TABLE',
-    'DROP TABLE', 'JOIN', 'WHERE', 'GROUP BY', 'ORDER BY', 'HAVING',
-    'UNION', 'INDEX', 'VIEW', 'CONSTRAINT', 'FOREIGN KEY', 'PRIMARY KEY'
-]
-
-# ORM frameworks to detect
-ORM_FRAMEWORKS = {
-    'sqlalchemy': ['sqlalchemy', 'Column', 'relationship', 'ForeignKey', 'Table'],
-    'django': ['models.Model', 'models.CharField', 'models.ForeignKey', 'models.ManyToManyField'],
-    'peewee': ['peewee', 'Model', 'CharField', 'ForeignKeyField'],
-    'pony': ['pony.orm', 'Entity', 'Required', 'Optional', 'Set'],
-    'tortoise': ['tortoise.models', 'Model'],
-    'mongoengine': ['mongoengine', 'Document', 'StringField', 'ReferenceField']
-}
-
 class DatabaseModelExtractor(ast.NodeVisitor):
     """AST visitor for extracting database models from Python code"""
     
     def __init__(self):
         self.models = {}
-        self.current_model = None
         self.orm_type = None
+        self.current_class = None
+        self.current_fields = {}
     
     def visit_ClassDef(self, node):
         """Process class definitions to find database models"""
+        # Detect if this might be a database model
+        base_classes = [base.id if isinstance(base, ast.Name) else getattr(base, 'attr', '') 
+                        for base in node.bases if hasattr(base, 'id') or hasattr(base, 'attr')]
+        
         # Check for Django models
-        if any(base.id == 'Model' for base in node.bases if isinstance(base, ast.Name)):
+        if 'Model' in base_classes:
             self.orm_type = 'django'
+            self.current_class = node.name
+            self.current_fields = {}
             self._process_django_model(node)
-        
-        # Check for SQLAlchemy models (classes with __tablename__)
-        elif any(target.id == '__tablename__' for stmt in node.body 
-                if isinstance(stmt, ast.Assign) 
-                for target in stmt.targets 
-                if isinstance(target, ast.Name)):
+            
+            # Save the model
+            self.models[self.current_class] = {
+                'orm': 'django',
+                'fields': self.current_fields,
+                'meta': {}
+            }
+            
+        # Check for SQLAlchemy models
+        elif 'Base' in base_classes or any(b in base_classes for b in ['DeclarativeBase', 'declarative_base']):
             self.orm_type = 'sqlalchemy'
+            self.current_class = node.name
+            self.current_fields = {}
             self._process_sqlalchemy_model(node)
-        
+            
+            # Get table name from __tablename__ attribute
+            tablename = None
+            for item in node.body:
+                if isinstance(item, ast.Assign) and len(item.targets) == 1:
+                    if isinstance(item.targets[0], ast.Name) and item.targets[0].id == '__tablename__':
+                        if isinstance(item.value, ast.Str) or isinstance(item.value, ast.Constant):
+                            tablename = getattr(item.value, 's', None) or getattr(item.value, 'value', None)
+            
+            # Save the model
+            self.models[self.current_class] = {
+                'orm': 'sqlalchemy',
+                'tablename': tablename or self.current_class.lower(),
+                'fields': self.current_fields,
+                'relationships': {}
+            }
+            
         # Check for Peewee models
-        elif any(base.id == 'Model' for base in node.bases if isinstance(base, ast.Name)):
-            # Additional check to distinguish from other frameworks
-            if any(isinstance(stmt, ast.Assign) and 
-                  any(isinstance(stmt.value, ast.Call) and 
-                      (hasattr(stmt.value.func, 'id') and 
-                       stmt.value.func.id in ['CharField', 'IntegerField', 'ForeignKeyField']) 
-                      for stmt in node.body if isinstance(stmt, ast.Assign))):
-                self.orm_type = 'peewee'
-                self._process_peewee_model(node)
+        elif 'Model' in base_classes or any(b in base_classes for b in ['BaseModel', 'PeeweeModel']):
+            self.orm_type = 'peewee'
+            self.current_class = node.name
+            self.current_fields = {}
+            self._process_peewee_model(node)
+            
+            # Save the model
+            self.models[self.current_class] = {
+                'orm': 'peewee',
+                'fields': self.current_fields,
+                'meta': {}
+            }
         
-        # Process children nodes
+        # Continue visiting child nodes
         self.generic_visit(node)
+        
+        # Reset current class after processing
+        self.current_class = None
     
     def _process_django_model(self, node):
         """Extract fields from a Django model"""
-        model = {
-            'name': node.name,
-            'fields': [],
-            'relationships': [],
-            'orm_type': 'django'
-        }
-        
-        for stmt in node.body:
-            if isinstance(stmt, ast.Assign):
-                for target in stmt.targets:
-                    if isinstance(target, ast.Name):
-                        field_name = target.id
+        for item in node.body:
+            # Field assignments as class variables
+            if isinstance(item, ast.Assign) and len(item.targets) == 1:
+                if isinstance(item.targets[0], ast.Name):
+                    field_name = item.targets[0].id
+                    
+                    # Check if this is a field definition
+                    field_type = None
+                    field_args = {}
+                    
+                    if isinstance(item.value, ast.Call):
+                        if hasattr(item.value.func, 'id'):
+                            field_type = item.value.func.id
+                        elif hasattr(item.value.func, 'attr'):
+                            field_type = item.value.func.attr
                         
-                        # Skip non-field attributes
-                        if field_name.startswith('_') or field_name in ['objects', 'Meta']:
-                            continue
-                        
-                        if isinstance(stmt.value, ast.Call):
-                            field_type = None
-                            is_relationship = False
+                        # Extract field arguments
+                        for kw in item.value.keywords:
+                            if isinstance(kw.value, ast.Constant) or isinstance(kw.value, ast.Num) or isinstance(kw.value, ast.Str):
+                                field_args[kw.arg] = getattr(kw.value, 'value', getattr(kw.value, 'n', getattr(kw.value, 's', None)))
+                    
+                    if field_type:
+                        self.current_fields[field_name] = {
+                            'type': field_type,
+                            'args': field_args
+                        }
+            
+            # Process Meta inner class
+            elif isinstance(item, ast.ClassDef) and item.name == 'Meta':
+                for meta_item in item.body:
+                    if isinstance(meta_item, ast.Assign) and len(meta_item.targets) == 1:
+                        if isinstance(meta_item.targets[0], ast.Name):
+                            meta_name = meta_item.targets[0].id
+                            meta_value = None
                             
-                            # Get field type
-                            if isinstance(stmt.value.func, ast.Attribute):
-                                if stmt.value.func.attr in ['ForeignKey', 'OneToOneField', 'ManyToManyField']:
-                                    is_relationship = True
-                                    field_type = stmt.value.func.attr
-                                elif hasattr(stmt.value.func, 'value') and isinstance(stmt.value.func.value, ast.Name) and stmt.value.func.value.id == 'models':
-                                    field_type = stmt.value.func.attr
+                            if isinstance(meta_item.value, ast.Constant) or isinstance(meta_item.value, ast.Str):
+                                meta_value = getattr(meta_item.value, 'value', getattr(meta_item.value, 's', None))
+                            elif isinstance(meta_item.value, ast.List):
+                                meta_value = []
+                                for elt in meta_item.value.elts:
+                                    if isinstance(elt, ast.Constant) or isinstance(elt, ast.Str):
+                                        meta_value.append(getattr(elt, 'value', getattr(elt, 's', None)))
                             
-                            # Get related model for relationships
-                            related_model = None
-                            if is_relationship and stmt.value.args:
-                                related_arg = stmt.value.args[0]
-                                if isinstance(related_arg, ast.Name):
-                                    related_model = related_arg.id
-                                elif isinstance(related_arg, ast.Str):
-                                    related_model = related_arg.s
-                            
-                            if is_relationship and related_model:
-                                model['relationships'].append({
-                                    'name': field_name,
-                                    'type': field_type,
-                                    'related_model': related_model
-                                })
-                            elif field_type:
-                                model['fields'].append({
-                                    'name': field_name,
-                                    'type': field_type
-                                })
-        
-        self.models[node.name] = model
+                            if meta_value is not None:
+                                self.models[self.current_class]['meta'][meta_name] = meta_value
     
     def _process_sqlalchemy_model(self, node):
         """Extract fields from a SQLAlchemy model"""
-        model = {
-            'name': node.name,
-            'fields': [],
-            'relationships': [],
-            'orm_type': 'sqlalchemy'
-        }
-        
-        # Get the table name
-        table_name = None
-        for stmt in node.body:
-            if isinstance(stmt, ast.Assign):
-                for target in stmt.targets:
-                    if isinstance(target, ast.Name) and target.id == '__tablename__':
-                        if isinstance(stmt.value, ast.Str):
-                            table_name = stmt.value.s
-        
-        model['table_name'] = table_name
-        
-        # Get columns and relationships
-        for stmt in node.body:
-            if isinstance(stmt, ast.Assign):
-                for target in stmt.targets:
-                    if isinstance(target, ast.Name):
-                        field_name = target.id
-                        
-                        # Skip non-field attributes
-                        if field_name.startswith('_') or field_name in ['__tablename__', 'metadata']:
-                            continue
-                        
-                        if isinstance(stmt.value, ast.Call):
-                            field_type = None
-                            is_relationship = False
-                            
-                            # Check for Column
-                            if hasattr(stmt.value.func, 'id') and stmt.value.func.id == 'Column':
-                                field_type = 'Column'
-                                # Try to get the specific column type if available
-                                if stmt.value.args:
-                                    arg = stmt.value.args[0]
-                                    if isinstance(arg, ast.Call) and hasattr(arg.func, 'id'):
-                                        field_type = arg.func.id
-                            
-                            # Check for relationship
-                            elif hasattr(stmt.value.func, 'id') and stmt.value.func.id == 'relationship':
-                                is_relationship = True
-                                field_type = 'relationship'
+        for item in node.body:
+            # Field assignments as class variables
+            if isinstance(item, ast.Assign) and len(item.targets) == 1:
+                if isinstance(item.targets[0], ast.Name):
+                    field_name = item.targets[0].id
+                    
+                    # Skip __tablename__ as it's processed separately
+                    if field_name == '__tablename__':
+                        continue
+                    
+                    # Check if this is a Column definition
+                    field_type = None
+                    field_args = {}
+                    
+                    if isinstance(item.value, ast.Call):
+                        if hasattr(item.value.func, 'id') and item.value.func.id == 'Column':
+                            # Direct Column definition
+                            if item.value.args:
+                                # Get the type from the first argument
+                                first_arg = item.value.args[0]
+                                if isinstance(first_arg, ast.Call) and hasattr(first_arg.func, 'id'):
+                                    field_type = first_arg.func.id
+                                elif isinstance(first_arg, ast.Name):
+                                    field_type = first_arg.id
                                 
-                                # Get related model
-                                related_model = None
-                                if stmt.value.args:
-                                    related_arg = stmt.value.args[0]
-                                    if isinstance(related_arg, ast.Str):
-                                        related_model = related_arg.s
+                                # Process column arguments
+                                for kw in item.value.keywords:
+                                    if isinstance(kw.value, ast.Constant) or isinstance(kw.value, ast.Num) or isinstance(kw.value, ast.Str):
+                                        field_args[kw.arg] = getattr(kw.value, 'value', getattr(kw.value, 'n', getattr(kw.value, 's', None)))
+                                    elif isinstance(kw.value, ast.Name) and kw.arg == 'nullable':
+                                        field_args[kw.arg] = kw.value.id == 'True'
+                                    elif isinstance(kw.value, ast.Call) and kw.arg == 'default':
+                                        field_args[kw.arg] = "function_call"
+                        
+                        elif hasattr(item.value.func, 'attr') and item.value.func.attr == 'Column':
+                            # Column as an attribute (e.g., db.Column)
+                            if item.value.args:
+                                # Get the type from the first argument
+                                first_arg = item.value.args[0]
+                                if isinstance(first_arg, ast.Call):
+                                    if hasattr(first_arg.func, 'id'):
+                                        field_type = first_arg.func.id
+                                    elif hasattr(first_arg.func, 'attr'):
+                                        field_type = first_arg.func.attr
+                                elif isinstance(first_arg, ast.Attribute):
+                                    field_type = first_arg.attr
+                                elif isinstance(first_arg, ast.Name):
+                                    field_type = first_arg.id
+                                
+                                # Process column arguments
+                                for kw in item.value.keywords:
+                                    if isinstance(kw.value, ast.Constant) or isinstance(kw.value, ast.Num) or isinstance(kw.value, ast.Str):
+                                        field_args[kw.arg] = getattr(kw.value, 'value', getattr(kw.value, 'n', getattr(kw.value, 's', None)))
+                    
+                    if field_type:
+                        self.current_fields[field_name] = {
+                            'type': field_type,
+                            'args': field_args
+                        }
+            
+            # Relationship definitions
+            elif isinstance(item, ast.Assign) and len(item.targets) == 1:
+                if isinstance(item.targets[0], ast.Name):
+                    rel_name = item.targets[0].id
+                    
+                    if isinstance(item.value, ast.Call):
+                        if hasattr(item.value.func, 'id') and item.value.func.id == 'relationship':
+                            rel_target = None
+                            rel_args = {}
                             
-                            if is_relationship and related_model:
-                                model['relationships'].append({
-                                    'name': field_name,
-                                    'type': field_type,
-                                    'related_model': related_model
-                                })
-                            elif field_type:
-                                model['fields'].append({
-                                    'name': field_name,
-                                    'type': field_type
-                                })
-        
-        self.models[node.name] = model
+                            # Get the related model
+                            if item.value.args:
+                                first_arg = item.value.args[0]
+                                if isinstance(first_arg, ast.Str) or isinstance(first_arg, ast.Constant):
+                                    rel_target = getattr(first_arg, 's', getattr(first_arg, 'value', None))
+                            
+                            # Get relationship arguments
+                            for kw in item.value.keywords:
+                                if isinstance(kw.value, ast.Str) or isinstance(kw.value, ast.Constant):
+                                    rel_args[kw.arg] = getattr(kw.value, 's', getattr(kw.value, 'value', None))
+                            
+                            if rel_target:
+                                if 'relationships' not in self.models[self.current_class]:
+                                    self.models[self.current_class]['relationships'] = {}
+                                
+                                self.models[self.current_class]['relationships'][rel_name] = {
+                                    'target': rel_target,
+                                    'args': rel_args
+                                }
     
     def _process_peewee_model(self, node):
         """Extract fields from a Peewee model"""
-        model = {
-            'name': node.name,
-            'fields': [],
-            'relationships': [],
-            'orm_type': 'peewee'
-        }
-        
-        for stmt in node.body:
-            if isinstance(stmt, ast.Assign):
-                for target in stmt.targets:
-                    if isinstance(target, ast.Name):
-                        field_name = target.id
+        for item in node.body:
+            # Field assignments as class variables
+            if isinstance(item, ast.Assign) and len(item.targets) == 1:
+                if isinstance(item.targets[0], ast.Name):
+                    field_name = item.targets[0].id
+                    
+                    # Check if this is a field definition
+                    field_type = None
+                    field_args = {}
+                    
+                    if isinstance(item.value, ast.Call):
+                        if hasattr(item.value.func, 'id'):
+                            field_type = item.value.func.id
+                        elif hasattr(item.value.func, 'attr'):
+                            field_type = item.value.func.attr
                         
-                        # Skip non-field attributes
-                        if field_name.startswith('_') or field_name in ['Meta']:
-                            continue
-                        
-                        if isinstance(stmt.value, ast.Call):
-                            field_type = None
-                            is_relationship = False
+                        # Extract field arguments
+                        for kw in item.value.keywords:
+                            if isinstance(kw.value, ast.Constant) or isinstance(kw.value, ast.Num) or isinstance(kw.value, ast.Str):
+                                field_args[kw.arg] = getattr(kw.value, 'value', getattr(kw.value, 'n', getattr(kw.value, 's', None)))
+                    
+                    if field_type:
+                        self.current_fields[field_name] = {
+                            'type': field_type,
+                            'args': field_args
+                        }
+            
+            # Process Meta inner class
+            elif isinstance(item, ast.ClassDef) and item.name == 'Meta':
+                for meta_item in item.body:
+                    if isinstance(meta_item, ast.Assign) and len(meta_item.targets) == 1:
+                        if isinstance(meta_item.targets[0], ast.Name):
+                            meta_name = meta_item.targets[0].id
+                            meta_value = None
                             
-                            # Get field type
-                            if hasattr(stmt.value.func, 'id'):
-                                field_type = stmt.value.func.id
-                                if field_type in ['ForeignKeyField', 'ManyToManyField']:
-                                    is_relationship = True
+                            if isinstance(meta_item.value, ast.Constant) or isinstance(meta_item.value, ast.Str):
+                                meta_value = getattr(meta_item.value, 'value', getattr(meta_item.value, 's', None))
                             
-                            # Get related model for relationships
-                            related_model = None
-                            if is_relationship and stmt.value.keywords:
-                                for keyword in stmt.value.keywords:
-                                    if keyword.arg == 'model':
-                                        if isinstance(keyword.value, ast.Name):
-                                            related_model = keyword.value.id
-                            
-                            if is_relationship and related_model:
-                                model['relationships'].append({
-                                    'name': field_name,
-                                    'type': field_type,
-                                    'related_model': related_model
-                                })
-                            elif field_type:
-                                model['fields'].append({
-                                    'name': field_name,
-                                    'type': field_type
-                                })
-        
-        self.models[node.name] = model
+                            if meta_value is not None:
+                                self.models[self.current_class]['meta'][meta_name] = meta_value
 
 def find_database_files(repo_path):
     """
@@ -264,6 +276,25 @@ def find_database_files(repo_path):
     - list: Database-related files
     """
     db_files = []
+    
+    # Patterns to identify database-related files
+    db_file_patterns = [
+        r'.*models\.py$',
+        r'.*schema\.py$',
+        r'.*database\.py$',
+        r'.*db\.py$',
+        r'.*repository\.py$',
+        r'.*dao\.py$',
+        r'.*entity\.py$',
+        r'.*migrations/.*\.py$'
+    ]
+    
+    # Database-related libraries to detect
+    db_libraries = [
+        'django.db', 'sqlalchemy', 'peewee', 'psycopg2', 'pymysql', 'pymongo',
+        'sqlite3', 'mysql', 'postgresql', 'models.Model', 'db.Model', 'Base',
+        'declarative_base', 'Column', 'Field', 'create_engine', 'session'
+    ]
     
     for root, _, files in os.walk(repo_path):
         for file in files:
@@ -279,19 +310,20 @@ def find_database_files(repo_path):
                 continue
             
             # Check if the file matches database patterns
-            if any(re.match(pattern, rel_path) for pattern in DB_FILE_PATTERNS):
+            if any(re.match(pattern, rel_path) for pattern in db_file_patterns):
                 db_files.append(rel_path)
             elif file.endswith('.py'):
                 # For Python files, check the content for database-related code
                 try:
                     with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
-                        content = f.read().upper()
-                        # Check for SQL keywords or ORM imports
-                        if any(keyword in content for keyword in SQL_KEYWORDS):
+                        content = f.read().lower()
+                        # Check for database library imports
+                        if any(lib.lower() in content for lib in db_libraries):
                             db_files.append(rel_path)
-                        elif any(orm_keyword.lower() in content.lower() 
-                                for orm_keywords in ORM_FRAMEWORKS.values() 
-                                for orm_keyword in orm_keywords):
+                        # Check for SQL queries
+                        elif 'select ' in content and ' from ' in content:
+                            db_files.append(rel_path)
+                        elif 'insert into' in content or 'update ' in content or 'delete from' in content:
                             db_files.append(rel_path)
                 except Exception:
                     pass
@@ -313,29 +345,28 @@ def extract_database_models(repo_path, db_files):
     orm_types = set()
     
     for file_path in db_files:
+        full_path = os.path.join(repo_path, file_path)
+        
         try:
-            full_path = os.path.join(repo_path, file_path)
-            
             with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
                 content = f.read()
             
-            # Parse the file as Python code
+            # Parse the AST
             tree = ast.parse(content, filename=file_path)
             
-            # Extract models
-            extractor = DatabaseModelExtractor()
-            extractor.visit(tree)
+            # Visit nodes to extract models
+            visitor = DatabaseModelExtractor()
+            visitor.visit(tree)
             
-            # Add discovered models
-            for model_name, model_info in extractor.models.items():
-                all_models[model_name] = {
-                    **model_info,
-                    'source_file': file_path
-                }
-                if extractor.orm_type:
-                    orm_types.add(extractor.orm_type)
+            # Add extracted models
+            all_models.update(visitor.models)
+            
+            # Track ORM types
+            if visitor.orm_type:
+                orm_types.add(visitor.orm_type)
+                
         except Exception as e:
-            logger.error(f"Error extracting models from {file_path}: {str(e)}")
+            logger.error(f"Error extracting database models from {file_path}: {str(e)}")
     
     return all_models, list(orm_types)
 
@@ -352,32 +383,37 @@ def extract_raw_sql_queries(repo_path, db_files):
     """
     sql_queries = []
     
-    # Regular expressions for finding SQL queries
+    # Patterns to identify SQL queries
     sql_patterns = [
-        r'(?i)(?:execute|executemany|query)\s*\(\s*["\']([^;"\']+?(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)[^;"\']+)["\']',
-        r'(?i)(?<=r["\']|["\'])(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)[^;"\']+(?=["\'])',
-        r'(?i)(?<="""|\'\'\')(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)[^;]+(?="""|\'\'\')' 
+        r'(\bSELECT\b.+\bFROM\b.+)',
+        r'(\bINSERT\s+INTO\b.+)',
+        r'(\bUPDATE\b.+\bSET\b.+)',
+        r'(\bDELETE\s+FROM\b.+)',
+        r'(\bCREATE\s+TABLE\b.+)',
+        r'(\bALTER\s+TABLE\b.+)',
+        r'(\bDROP\s+TABLE\b.+)'
     ]
     
     for file_path in db_files:
+        full_path = os.path.join(repo_path, file_path)
+        
         try:
-            full_path = os.path.join(repo_path, file_path)
-            
             with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
                 content = f.read()
             
-            # Search for SQL patterns
+            # Look for SQL query patterns
             for pattern in sql_patterns:
-                matches = re.finditer(pattern, content)
+                matches = re.finditer(pattern, content, re.IGNORECASE | re.DOTALL)
                 for match in matches:
-                    query = match.group(0)
-                    # Clean up the query
-                    query = query.strip()
-                    if query:
-                        sql_queries.append({
-                            'query': query,
-                            'file': file_path
-                        })
+                    # Clean up the query (remove extra whitespace and limit to a reasonable length)
+                    query = match.group(0).strip()
+                    query = re.sub(r'\s+', ' ', query)
+                    query = query[:500] + '...' if len(query) > 500 else query
+                    
+                    sql_queries.append({
+                        'file': file_path,
+                        'query': query
+                    })
         except Exception as e:
             logger.error(f"Error extracting SQL queries from {file_path}: {str(e)}")
     
@@ -395,38 +431,49 @@ def detect_database_redundancies(models):
     """
     redundancies = []
     
-    # Check for similar model fields
+    # Check for similar field sets
     model_fields = {}
     for model_name, model_info in models.items():
-        fields = [(field['name'], field.get('type', 'unknown')) for field in model_info.get('fields', [])]
-        model_fields[model_name] = fields
+        field_set = frozenset(model_info.get('fields', {}).keys())
+        if field_set:
+            model_fields[model_name] = field_set
     
-    # Compare models pairwise
+    # Check for models with similar fields (potential redundancy)
     for model1, fields1 in model_fields.items():
         for model2, fields2 in model_fields.items():
-            if model1 >= model2:  # Skip duplicate comparisons and self-comparisons
-                continue
-            
-            # Find common fields (by name and type)
-            common_fields = set(fields1) & set(fields2)
-            if len(common_fields) >= 3:  # Arbitrary threshold for similarity
-                redundancies.append({
-                    'type': 'similar_models',
-                    'models': [model1, model2],
-                    'common_fields': list(common_fields),
-                    'similarity': len(common_fields) / max(len(fields1), len(fields2))
-                })
+            if model1 != model2:
+                # Calculate similarity (Jaccard index)
+                intersection = len(fields1.intersection(fields2))
+                union = len(fields1.union(fields2))
+                
+                if union > 0:
+                    similarity = intersection / union
+                    
+                    # If models share more than 70% of their fields, flag it
+                    if similarity > 0.7:
+                        redundancies.append({
+                            'type': 'similar_models',
+                            'model1': model1,
+                            'model2': model2,
+                            'similarity': round(similarity, 2),
+                            'common_fields': list(fields1.intersection(fields2))
+                        })
     
-    # Check for duplicate field names within a model
+    # Check for duplicate field names with different types (potential inconsistency)
+    field_types = defaultdict(dict)
     for model_name, model_info in models.items():
-        field_names = [field['name'] for field in model_info.get('fields', [])]
-        duplicate_fields = [name for name in set(field_names) if field_names.count(name) > 1]
-        if duplicate_fields:
-            redundancies.append({
-                'type': 'duplicate_fields',
-                'model': model_name,
-                'fields': duplicate_fields
-            })
+        for field_name, field_info in model_info.get('fields', {}).items():
+            field_type = field_info.get('type')
+            if field_type:
+                if field_name in field_types and field_type != field_types[field_name].get('type'):
+                    redundancies.append({
+                        'type': 'inconsistent_field_types',
+                        'field': field_name,
+                        'models': [model_name, field_types[field_name]['model']],
+                        'types': [field_type, field_types[field_name]['type']]
+                    })
+                else:
+                    field_types[field_name] = {'type': field_type, 'model': model_name}
     
     return redundancies
 
@@ -444,80 +491,63 @@ def generate_consolidation_recommendations(models, redundancies, orm_types):
     """
     recommendations = []
     
-    # Recommendations based on redundancies
-    for redundancy in redundancies:
-        if redundancy['type'] == 'similar_models':
-            model1, model2 = redundancy['models']
-            similarity = redundancy['similarity']
-            if similarity > 0.7:  # High similarity
+    # Recommend based on ORM types
+    if len(orm_types) > 1:
+        recommendations.append(
+            f"Multiple ORM frameworks detected ({', '.join(orm_types)}). Consider standardizing on a single framework."
+        )
+    
+    # Recommend based on redundancies
+    similar_models = [r for r in redundancies if r['type'] == 'similar_models']
+    if similar_models:
+        # Group by similarity to avoid duplicate recommendations
+        model_pairs_seen = set()
+        
+        for redundancy in similar_models:
+            model_pair = tuple(sorted([redundancy['model1'], redundancy['model2']]))
+            
+            if model_pair not in model_pairs_seen:
+                model_pairs_seen.add(model_pair)
+                
                 recommendations.append(
-                    f"Consider merging models '{model1}' and '{model2}' which share {len(redundancy['common_fields'])} "
-                    f"common fields with {int(similarity * 100)}% similarity."
+                    f"Models '{redundancy['model1']}' and '{redundancy['model2']}' have {redundancy['similarity'] * 100:.0f}% "
+                    f"field similarity. Consider consolidating into a single model."
                 )
-            else:  # Moderate similarity
-                recommendations.append(
-                    f"Extract common fields between '{model1}' and '{model2}' into a shared base model or mixin."
-                )
+    
+    # Recommend based on inconsistent field types
+    inconsistent_fields = [r for r in redundancies if r['type'] == 'inconsistent_field_types']
+    if inconsistent_fields:
+        # Group by field name
+        field_inconsistencies = defaultdict(list)
         
-        elif redundancy['type'] == 'duplicate_fields':
-            recommendations.append(
-                f"Remove or rename duplicate field definitions in model '{redundancy['model']}': {', '.join(redundancy['fields'])}"
-            )
-    
-    # Recommendations based on model relationships
-    relationship_models = {}
-    for model_name, model_info in models.items():
-        for rel in model_info.get('relationships', []):
-            related_model = rel.get('related_model')
-            if related_model:
-                key = tuple(sorted([model_name, related_model]))
-                if key not in relationship_models:
-                    relationship_models[key] = []
-                relationship_models[key].append({
-                    'model': model_name,
-                    'related_model': related_model,
-                    'type': rel.get('type')
-                })
-    
-    # Check for bidirectional relationships that could be optimized
-    for (model1, model2), relationships in relationship_models.items():
-        if len(relationships) > 1:
-            recommendations.append(
-                f"Ensure the relationship between '{model1}' and '{model2}' is consistently defined "
-                f"and properly optimized for querying in both directions."
-            )
-    
-    # General recommendations based on ORM usage
-    if orm_types:
-        if len(orm_types) > 1:
-            recommendations.append(
-                f"Multiple ORM frameworks detected ({', '.join(orm_types)}). Consider standardizing on a single ORM "
-                f"for consistency and easier maintenance."
-            )
+        for redundancy in inconsistent_fields:
+            field_inconsistencies[redundancy['field']].append(redundancy)
         
-        # Framework-specific recommendations
-        if 'django' in orm_types:
+        for field, inconsistencies in field_inconsistencies.items():
+            affected_models = []
+            for inc in inconsistencies:
+                affected_models.extend(inc['models'])
+            
+            affected_models = sorted(set(affected_models))
+            
             recommendations.append(
-                "Consider using Django's abstract base models for common fields and behaviors."
+                f"Field '{field}' has inconsistent types across models: {', '.join(affected_models)}. "
+                f"Standardize field types for better data consistency."
             )
+    
+    # General recommendations
+    if models:
+        recommendations.append(
+            "Consider using database migrations for schema changes to ensure consistency across environments."
+        )
         
-        if 'sqlalchemy' in orm_types:
-            recommendations.append(
-                "Consider using SQLAlchemy mixins and inheritance for shared model attributes."
-            )
-    
-    # General recommendations for database design
-    recommendations.append(
-        "Implement consistent naming conventions for models, fields, and relationships."
-    )
-    
-    recommendations.append(
-        "Ensure proper indexing on frequently queried fields and foreign keys."
-    )
-    
-    recommendations.append(
-        "Use database migrations for schema changes to maintain data integrity."
-    )
+        recommendations.append(
+            "Implement proper foreign key constraints for all relationships to maintain data integrity."
+        )
+        
+        recommendations.append(
+            "Add indexes for frequently queried fields to improve query performance."
+        )
     
     return recommendations
 
@@ -537,8 +567,8 @@ def analyze_database_structures(repo_path):
     results = {
         'database_files': [],
         'database_models': {},
-        'orm_frameworks': [],
-        'sql_queries': [],
+        'raw_sql_queries': [],
+        'orm_types': [],
         'redundancies': [],
         'consolidation_recommendations': []
     }
@@ -547,52 +577,37 @@ def analyze_database_structures(repo_path):
     db_files = find_database_files(repo_path)
     if not db_files:
         logger.info("No database-related files found.")
+        results['consolidation_recommendations'] = [
+            "No database models detected. Consider using an ORM for structured data persistence.",
+            "When adding database models, follow a consistent naming convention and structure.",
+            "Implement proper relationships and constraints for data integrity."
+        ]
         return results
     
-    # Convert to list of dictionaries for better display
-    results['database_files'] = [{'path': file} for file in db_files]
+    # Format file paths for better display
+    results['database_files'] = [{'path': path} for path in db_files]
     
     # Extract database models
     models, orm_types = extract_database_models(repo_path, db_files)
-    results['database_models'] = models
-    results['orm_frameworks'] = orm_types
+    if models:
+        results['database_models'] = models
+        results['orm_types'] = orm_types
     
     # Extract raw SQL queries
     sql_queries = extract_raw_sql_queries(repo_path, db_files)
-    results['sql_queries'] = sql_queries
+    if sql_queries:
+        results['raw_sql_queries'] = sql_queries
     
     # Detect redundancies
     if models:
         redundancies = detect_database_redundancies(models)
-        results['redundancies'] = redundancies
-        
-        # Generate consolidation recommendations
-        recommendations = generate_consolidation_recommendations(models, redundancies, orm_types)
+        if redundancies:
+            results['redundancies'] = redundancies
+    
+    # Generate consolidation recommendations
+    recommendations = generate_consolidation_recommendations(models, results['redundancies'], orm_types)
+    if recommendations:
         results['consolidation_recommendations'] = recommendations
     
-    # Add recommendations based on SQL usage
-    if sql_queries:
-        results['consolidation_recommendations'].append(
-            f"Found {len(sql_queries)} raw SQL queries. Consider moving complex queries to views or stored procedures "
-            f"for better maintainability."
-        )
-        
-        # Check for potential SQL injection
-        for query in sql_queries:
-            if '%' in query['query'] or '{' in query['query']:
-                results['consolidation_recommendations'].append(
-                    f"Potential SQL injection risk in {query['file']}. Ensure all parameters are properly sanitized."
-                )
-                break
-    
-    # If no specific recommendations found, add general ones
-    if not results['consolidation_recommendations']:
-        results['consolidation_recommendations'] = [
-            "Use a single database access layer to centralize database operations.",
-            "Implement an abstraction layer to make switching database backends easier.",
-            "Consider using an ORM for safer database access and easier maintenance.",
-            "Document database schema and relationships for better team understanding."
-        ]
-    
-    logger.info(f"Database analysis complete. Found {len(models)} models across {len(db_files)} files.")
+    logger.info(f"Database analysis complete. Found {len(db_files)} database-related files and {len(models)} models.")
     return results

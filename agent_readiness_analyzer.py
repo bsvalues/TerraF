@@ -4,7 +4,6 @@ import logging
 import ast
 import json
 from collections import defaultdict
-import pandas as pd
 from pathlib import Path
 
 # Setup logging
@@ -88,9 +87,10 @@ class MLComponentVisitor(ast.NodeVisitor):
         
         # Check for ML-related base classes
         for base in node.bases:
-            if isinstance(base, ast.Name) and base.id in ['Model', 'Estimator', 'BaseEstimator', 'Classifier', 'Regressor']:
-                ml_class = True
-                break
+            if isinstance(base, ast.Name):
+                if hasattr(base, 'id') and base.id in ['Model', 'Estimator', 'BaseEstimator', 'Classifier', 'Regressor']:
+                    ml_class = True
+                    break
             elif isinstance(base, ast.Attribute):
                 if hasattr(base, 'attr') and base.attr in ['Model', 'Estimator', 'BaseEstimator', 'Classifier', 'Regressor']:
                     ml_class = True
@@ -125,7 +125,7 @@ class MLComponentVisitor(ast.NodeVisitor):
         # Check for ML-related operations within the function
         if not ml_function:
             for item in ast.walk(node):
-                if isinstance(item, ast.Call):
+                if isinstance(item, ast.Call) and hasattr(item, 'func'):
                     if hasattr(item.func, 'id') and item.func.id in ['fit', 'predict', 'transform', 'train', 'evaluate']:
                         ml_function = True
                         break
