@@ -144,10 +144,313 @@ def render_code_analysis_tab():
     This tab allows you to analyze code quality, complexity, and patterns using AI agents.
     """)
     
+    # Sample code options
+    st.markdown("### Choose from examples or enter your own code")
+    
+    sample_options = [
+        "Select a sample...",
+        "TerraFusion Data Processor",
+        "TerraFusion AI Integration",
+        "TerraFusion Repository Handler"
+    ]
+    
+    sample_selection = st.selectbox("Sample Code", sample_options)
+    
+    # Define sample code snippets
+    terra_fusion_data_processor = '''
+def process_repository_data(repo_path, analysis_type="full"):
+    """
+    Process data from a code repository for deep analysis.
+    
+    Args:
+        repo_path: Path to the repository
+        analysis_type: Type of analysis to perform (basic, full, security)
+        
+    Returns:
+        Dict containing analysis results
+    """
+    if not os.path.exists(repo_path):
+        raise ValueError(f"Repository path not found: {repo_path}")
+    
+    # Initialize results
+    results = {
+        "file_count": 0,
+        "language_stats": {},
+        "complexity_metrics": {},
+        "timestamp": time.time()
+    }
+    
+    # Analyze files
+    for root, dirs, files in os.walk(repo_path):
+        # Skip hidden directories and files
+        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        
+        for file in files:
+            if file.startswith('.'):
+                continue
+                
+            file_path = os.path.join(root, file)
+            
+            # Update file count
+            results["file_count"] += 1
+            
+            # Analyze file type
+            file_ext = os.path.splitext(file)[1].lower()[1:]
+            if file_ext in results["language_stats"]:
+                results["language_stats"][file_ext] += 1
+            else:
+                results["language_stats"][file_ext] = 1
+                
+            # Calculate advanced metrics (example implementation)
+            # In real code, this would have proper language detection and analysis
+            if analysis_type == "full" and file_ext in ["py", "js", "java", "cpp", "c"]:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    try:
+                        content = f.read()
+                        
+                        # Very simplistic complexity metric - real implementation would use proper parsers
+                        line_count = len(content.splitlines())
+                        
+                        # Terrible way to estimate complexity - just for example purposes
+                        complexity = line_count / 10
+                        
+                        if file_ext not in results["complexity_metrics"]:
+                            results["complexity_metrics"][file_ext] = []
+                            
+                        results["complexity_metrics"][file_ext].append({
+                            "file": file_path.replace(repo_path, ''),
+                            "lines": line_count,
+                            "estimated_complexity": complexity
+                        })
+                    except Exception as e:
+                        print(f"Error processing file {file_path}: {str(e)}")
+    
+    return results
+    '''
+    
+    terra_fusion_ai_integration = '''
+class AICodeAnalyzer:
+    def __init__(self, model_id="gpt-4", api_key=None):
+        """
+        Initialize the AI code analyzer.
+        
+        Args:
+            model_id: The AI model to use
+            api_key: API key for the AI service
+        """
+        self.model_id = model_id
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        self.client = None
+        
+        # Initialize OpenAI client
+        if self.api_key:
+            try:
+                from openai import OpenAI
+                self.client = OpenAI(api_key=self.api_key)
+            except ImportError:
+                print("OpenAI library not installed. Install with 'pip install openai'")
+        else:
+            raise ValueError("API key is required to initialize AICodeAnalyzer")
+    
+    def analyze_code(self, code, language=None, analysis_type="review"):
+        """
+        Analyze code using AI.
+        
+        Args:
+            code: Code to analyze
+            language: Programming language of the code
+            analysis_type: Type of analysis (review, security, documentation)
+            
+        Returns:
+            Dict containing analysis results
+        """
+        if not self.client:
+            return {"error": "AI client not initialized"}
+        
+        # Create prompt based on language and analysis type
+        if language:
+            language_prompt = f"The following code is written in {language}."
+        else:
+            language_prompt = "Analyze the following code."
+        
+        if analysis_type == "review":
+            instruction = "Provide a comprehensive code review focusing on best practices, code quality, and potential bugs."
+        elif analysis_type == "security":
+            instruction = "Perform a security analysis of the code, identifying vulnerabilities and suggesting improvements."
+        elif analysis_type == "documentation":
+            instruction = "Review code documentation and suggest improvements for better readability and understanding."
+        else:
+            instruction = "Analyze the code and provide feedback."
+        
+        # Combine prompt
+        prompt = f"{language_prompt}\n\n{instruction}\n\nProvide your response in JSON format with these categories: 'issues', 'suggestions', 'good_practices', and 'overall_quality_score' (0-10).\n\nCode to analyze:\n```\n{code}\n```"
+        
+        # Call OpenAI API
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_id,
+                messages=[
+                    {"role": "system", "content": "You are an expert code analyst with deep knowledge of software engineering best practices."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1
+            )
+            
+            # Extract JSON response
+            import json
+            result = json.loads(response.choices[0].message.content)
+            
+            # Add metadata
+            result["metadata"] = {
+                "model_used": self.model_id,
+                "analysis_type": analysis_type,
+                "language": language or "auto-detected",
+                "timestamp": time.time()
+            }
+            
+            return result
+        except Exception as e:
+            return {"error": f"Analysis failed: {str(e)}"}
+    '''
+    
+    terra_fusion_repository_handler = '''
+class RepositoryHandler:
+    """
+    Handles repository operations such as cloning, analyzing, and extracting information.
+    """
+    
+    def __init__(self, workspace_dir="./repositories"):
+        """
+        Initialize the repository handler.
+        
+        Args:
+            workspace_dir: Directory to store and analyze repositories
+        """
+        self.workspace_dir = workspace_dir
+        
+        # Create workspace directory if it doesn't exist
+        os.makedirs(self.workspace_dir, exist_ok=True)
+        
+        # Initialize logger
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+        
+        # Check for git installation
+        try:
+            subprocess.run(["git", "--version"], check=True, capture_output=True)
+            self.git_available = True
+        except (subprocess.SubprocessError, FileNotFoundError):
+            self.logger.warning("Git is not available. Repository operations will be limited.")
+            self.git_available = False
+    
+    def clone_repository(self, repository_url, target_dir=None, branch="main"):
+        """
+        Clone a repository from a URL.
+        
+        Args:
+            repository_url: URL of the repository to clone
+            target_dir: Directory name for the cloned repository (optional)
+            branch: Branch to clone (default: main)
+            
+        Returns:
+            Path to the cloned repository directory
+        """
+        if not self.git_available:
+            raise RuntimeError("Git is not available. Cannot clone repository.")
+        
+        # Extract repository name from URL if target_dir is not provided
+        if target_dir is None:
+            repo_name = repository_url.split("/")[-1]
+            if repo_name.endswith(".git"):
+                repo_name = repo_name[:-4]
+            target_dir = repo_name
+        
+        # Create full path to target directory
+        repo_path = os.path.join(self.workspace_dir, target_dir)
+        
+        # Check if directory already exists
+        if os.path.exists(repo_path):
+            self.logger.info(f"Repository directory {repo_path} already exists.")
+            return repo_path
+        
+        try:
+            # Clone the repository
+            self.logger.info(f"Cloning repository {repository_url} to {repo_path}...")
+            subprocess.run(
+                ["git", "clone", "-b", branch, repository_url, repo_path],
+                check=True,
+                capture_output=True
+            )
+            self.logger.info(f"Repository cloned successfully to {repo_path}")
+            return repo_path
+        except subprocess.SubprocessError as e:
+            self.logger.error(f"Failed to clone repository: {str(e)}")
+            if os.path.exists(repo_path):
+                shutil.rmtree(repo_path)
+            raise RuntimeError(f"Failed to clone repository: {str(e)}")
+    
+    def get_repository_structure(self, repo_path, max_depth=3):
+        """
+        Get the structure of a repository.
+        
+        Args:
+            repo_path: Path to the repository
+            max_depth: Maximum directory depth to analyze
+            
+        Returns:
+            Dict representing the repository structure
+        """
+        if not os.path.exists(repo_path):
+            raise ValueError(f"Repository path not found: {repo_path}")
+        
+        def analyze_dir(path, current_depth=0):
+            if current_depth > max_depth:
+                return {"truncated": True}
+            
+            result = {}
+            try:
+                for item in os.listdir(path):
+                    # Skip hidden files and directories
+                    if item.startswith('.'):
+                        continue
+                    
+                    item_path = os.path.join(path, item)
+                    
+                    if os.path.isdir(item_path):
+                        result[item] = analyze_dir(item_path, current_depth + 1)
+                    else:
+                        # Only include file extensions at lower depths
+                        if current_depth < max_depth:
+                            ext = os.path.splitext(item)[1].lower()
+                            result[item] = ext
+            except Exception as e:
+                self.logger.error(f"Error analyzing directory {path}: {str(e)}")
+                result["error"] = str(e)
+            
+            return result
+        
+        return {
+            "name": os.path.basename(repo_path),
+            "structure": analyze_dir(repo_path),
+            "timestamp": time.time()
+        }
+    '''
+    
+    # Set text area value based on selection
+    initial_code = ""
+    if sample_selection == "TerraFusion Data Processor":
+        initial_code = terra_fusion_data_processor
+    elif sample_selection == "TerraFusion AI Integration":
+        initial_code = terra_fusion_ai_integration
+    elif sample_selection == "TerraFusion Repository Handler":
+        initial_code = terra_fusion_repository_handler
+    
     # Code input
     code = st.text_area(
         "Enter code to analyze:",
-        height=200,
+        value=initial_code,
+        height=400,
         help="Paste the code you want to analyze"
     )
     
