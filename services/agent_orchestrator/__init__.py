@@ -16,3 +16,4 @@ from services.agent_orchestrator.specialized_agents import (
     ArchitectureAnalysisAgent,
     DatabaseAnalysisAgent
 )
+from services.agent_orchestrator.agent_controller import AgentController, get_agent_controller
