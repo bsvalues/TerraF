@@ -1,634 +1,1218 @@
 """
 API Gateway
 
-This module provides a unified API Gateway for the Code Deep Dive Analyzer system,
-coordinating requests across all microservices.
+This module implements an API Gateway that provides a unified interface for all microservices
+in the Code Deep Dive Analyzer platform, handling routing, authentication, and service discovery.
 """
-import logging
-import importlib
 import os
-import sys
 import json
+import logging
 import time
-from typing import Dict, List, Any, Optional, Union, Tuple
+import uuid
+import threading
 from enum import Enum
-
-# Add parent directory to path to import from sibling packages
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-class ServiceStatus(Enum):
-    """Status of a service in the API Gateway."""
-    ONLINE = "online"
-    OFFLINE = "offline"
-    DEGRADED = "degraded"
-    STARTING = "starting"
-    STOPPING = "stopping"
-    UNKNOWN = "unknown"
+from typing import Dict, List, Any, Optional, Union, Tuple, Set, Callable
 
 class ServiceType(Enum):
     """Types of services in the system."""
     REPOSITORY = "repository"
-    KNOWLEDGE_GRAPH = "knowledge_graph"
     MODEL_HUB = "model_hub"
-    AGENT_ORCHESTRATOR = "agent_orchestrator"
     NEURO_SYMBOLIC = "neuro_symbolic"
     MULTIMODAL = "multimodal"
+    AGENT_ORCHESTRATOR = "agent_orchestrator"
     SDK = "sdk"
+    KNOWLEDGE_GRAPH = "knowledge_graph"
     ACADEMIC = "academic"
-    PROTOCOL = "protocol"
+    CUSTOM = "custom"
 
-class APIGateway:
+
+class ServiceStatus(Enum):
+    """Status of a service in the system."""
+    ONLINE = "online"
+    OFFLINE = "offline"
+    DEGRADED = "degraded"
+
+
+class EndpointMethod(Enum):
+    """HTTP methods supported by endpoints."""
+    GET = "GET"
+    POST = "POST"
+    PUT = "PUT"
+    DELETE = "DELETE"
+    PATCH = "PATCH"
+
+
+class AuthLevel(Enum):
+    """Authentication levels for endpoints."""
+    NONE = "none"
+    USER = "user"
+    ADMIN = "admin"
+    SERVICE = "service"
+
+
+class ServiceInfo:
     """
-    API Gateway for the Code Deep Dive Analyzer system.
+    Information about a service in the system.
+    """
+    
+    def __init__(self, service_id: str, service_type: ServiceType, name: str,
+               base_url: str, version: str, endpoints: List[Dict[str, Any]],
+               health_endpoint: Optional[str] = None,
+               metadata: Optional[Dict[str, Any]] = None):
+        """
+        Initialize service information.
+        
+        Args:
+            service_id: Unique identifier for the service
+            service_type: Type of service
+            name: Human-readable name
+            base_url: Base URL for service API
+            version: Service version
+            endpoints: List of service endpoints
+            health_endpoint: Optional health check endpoint
+            metadata: Optional service metadata
+        """
+        self.id = service_id
+        self.service_type = service_type
+        self.name = name
+        self.base_url = base_url
+        self.version = version
+        self.endpoints = endpoints
+        self.health_endpoint = health_endpoint
+        self.metadata = metadata or {}
+        self.status = ServiceStatus.OFFLINE
+        self.last_health_check = 0.0
+        self.error = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert service info to a dictionary."""
+        return {
+            'id': self.id,
+            'service_type': self.service_type.value,
+            'name': self.name,
+            'base_url': self.base_url,
+            'version': self.version,
+            'endpoints': self.endpoints,
+            'health_endpoint': self.health_endpoint,
+            'metadata': self.metadata,
+            'status': self.status.value,
+            'last_health_check': self.last_health_check,
+            'error': self.error
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ServiceInfo':
+        """
+        Create service info from a dictionary.
+        
+        Args:
+            data: Service info data dictionary
+        
+        Returns:
+            ServiceInfo instance
+        """
+        service_info = cls(
+            service_id=data['id'],
+            service_type=ServiceType(data['service_type']),
+            name=data['name'],
+            base_url=data['base_url'],
+            version=data['version'],
+            endpoints=data['endpoints'],
+            health_endpoint=data.get('health_endpoint'),
+            metadata=data.get('metadata', {})
+        )
+        
+        if 'status' in data:
+            service_info.status = ServiceStatus(data['status'])
+        
+        service_info.last_health_check = data.get('last_health_check', 0.0)
+        service_info.error = data.get('error')
+        
+        return service_info
+
+
+class RouteInfo:
+    """
+    Information about an API route in the gateway.
+    """
+    
+    def __init__(self, route_path: str, method: EndpointMethod,
+               target_service: str, target_endpoint: str,
+               auth_level: AuthLevel = AuthLevel.NONE,
+               cache_ttl: int = 0,
+               rate_limit: Optional[int] = None,
+               description: Optional[str] = None,
+               metadata: Optional[Dict[str, Any]] = None):
+        """
+        Initialize route information.
+        
+        Args:
+            route_path: Path of the route in the gateway
+            method: HTTP method
+            target_service: ID of the target service
+            target_endpoint: Endpoint path in the target service
+            auth_level: Authentication level required
+            cache_ttl: Cache time-to-live in seconds (0 = no caching)
+            rate_limit: Optional rate limit in requests per minute
+            description: Optional route description
+            metadata: Optional route metadata
+        """
+        self.path = route_path
+        self.method = method
+        self.target_service = target_service
+        self.target_endpoint = target_endpoint
+        self.auth_level = auth_level
+        self.cache_ttl = cache_ttl
+        self.rate_limit = rate_limit
+        self.description = description
+        self.metadata = metadata or {}
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert route info to a dictionary."""
+        return {
+            'path': self.path,
+            'method': self.method.value,
+            'target_service': self.target_service,
+            'target_endpoint': self.target_endpoint,
+            'auth_level': self.auth_level.value,
+            'cache_ttl': self.cache_ttl,
+            'rate_limit': self.rate_limit,
+            'description': self.description,
+            'metadata': self.metadata
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'RouteInfo':
+        """
+        Create route info from a dictionary.
+        
+        Args:
+            data: Route info data dictionary
+        
+        Returns:
+            RouteInfo instance
+        """
+        return cls(
+            route_path=data['path'],
+            method=EndpointMethod(data['method']),
+            target_service=data['target_service'],
+            target_endpoint=data['target_endpoint'],
+            auth_level=AuthLevel(data.get('auth_level', 'none')),
+            cache_ttl=data.get('cache_ttl', 0),
+            rate_limit=data.get('rate_limit'),
+            description=data.get('description'),
+            metadata=data.get('metadata', {})
+        )
+
+
+class ApiGateway:
+    """
+    API Gateway for the Code Deep Dive Analyzer platform.
     
     This class provides:
-    - Unified access to all microservices
-    - Service discovery and routing
-    - Request validation and transformation
-    - Error handling and logging
-    - Rate limiting and throttling
+    - Service registry and discovery
+    - Request routing and forwarding
+    - Authentication and authorization
+    - Rate limiting and caching
+    - Health monitoring
     """
     
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, storage_dir: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
         """
         Initialize the API Gateway.
         
         Args:
-            config_path: Optional path to configuration file
+            storage_dir: Optional directory for persistent storage
+            config: Optional gateway configuration
         """
+        # Set up storage directory
+        if storage_dir is None:
+            storage_dir = os.path.join(os.getcwd(), 'gateway_storage')
+        
+        self.storage_dir = storage_dir
+        os.makedirs(storage_dir, exist_ok=True)
+        
+        # Initialize logger
         self.logger = logging.getLogger('api_gateway')
         
-        # Load configuration
-        self.config = self._load_config(config_path)
-        
         # Initialize service registry
-        self.services = {}
-        self.service_instances = {}
-        self.service_status = {}
+        self.services = {}  # service_id -> ServiceInfo
         
-        # Register all available services
-        self._discover_services()
-    
-    def _load_config(self, config_path: Optional[str]) -> Dict[str, Any]:
-        """
-        Load configuration from file or use defaults.
+        # Initialize routes
+        self.routes = {}  # (method, path) -> RouteInfo
         
-        Args:
-            config_path: Path to configuration file
-            
-        Returns:
-            Configuration dictionary
-        """
-        default_config = {
-            'services': {
-                'repository': {
-                    'module': 'repository_service.repository_manager',
-                    'class': 'RepositoryManager',
-                    'enabled': True
-                },
-                'knowledge_graph': {
-                    'module': 'knowledge_graph.knowledge_graph',
-                    'class': 'MultiRepositoryKnowledgeGraph',
-                    'enabled': True
-                },
-                'model_hub': {
-                    'module': 'model_hub.model_registry',
-                    'class': 'ModelRegistry',
-                    'enabled': True
-                },
-                'agent_orchestrator': {
-                    'module': 'agent_orchestrator.orchestrator',
-                    'class': 'AgentOrchestrator',
-                    'enabled': True
-                },
-                'neuro_symbolic': {
-                    'module': 'neuro_symbolic.reasoning_engine',
-                    'class': 'NeuroSymbolicEngine',
-                    'enabled': True
-                },
-                'multimodal': {
-                    'module': 'multimodal.multimodal_processor',
-                    'class': 'MultimodalProcessor',
-                    'enabled': True
-                },
-                'sdk': {
-                    'module': 'sdk.plugin_system',
-                    'class': 'PluginManager',
-                    'enabled': True
-                },
-                'academic': {
-                    'module': 'academic.academic_framework',
-                    'class': 'AcademicFramework',
-                    'enabled': True
-                },
-                'protocol': {
-                    'module': 'protocol_server',
-                    'class': 'ProtocolServer',
-                    'enabled': True
-                }
-            },
-            'rate_limits': {
-                'default': 100,  # Requests per minute
-                'repository': 50,
-                'knowledge_graph': 30
-            },
-            'timeouts': {
-                'default': 30,  # Seconds
-                'repository_clone': 300,
-                'knowledge_graph_query': 60
-            }
+        # Initialize cache
+        self.cache = {}  # (method, path, request_hash) -> (response, timestamp)
+        
+        # Initialize rate limits
+        self.rate_limits = {}  # (client_id, method, path) -> List[timestamp]
+        
+        # Initialize default configuration
+        self.config = {
+            'default_timeout': 30,  # seconds
+            'enable_caching': True,
+            'enable_rate_limiting': True,
+            'health_check_interval': 60,  # seconds
+            'max_cache_size': 1000,  # entries
+            'default_rate_limit': 60,  # requests per minute
+            'authentication_enabled': True,
+            'cors_enabled': True,
+            'logging_level': 'INFO'
         }
         
-        if config_path and os.path.exists(config_path):
+        # Update with provided configuration
+        if config:
+            self.config.update(config)
+        
+        # Initialize threading controls
+        self.running = False
+        self.health_check_thread = None
+        
+        # Set up logging level
+        logging_level = getattr(logging, self.config['logging_level'], logging.INFO)
+        self.logger.setLevel(logging_level)
+        
+        # Load existing data
+        self._load_data()
+    
+    def _load_data(self) -> None:
+        """Load existing data from storage."""
+        # Load service registry
+        services_dir = os.path.join(self.storage_dir, 'services')
+        if os.path.exists(services_dir):
+            for filename in os.listdir(services_dir):
+                if filename.endswith('.json'):
+                    service_id = filename[:-5]  # Remove '.json'
+                    service_path = os.path.join(services_dir, filename)
+                    
+                    try:
+                        with open(service_path, 'r') as f:
+                            service_data = json.load(f)
+                        
+                        service_info = ServiceInfo.from_dict(service_data)
+                        self.services[service_id] = service_info
+                        
+                        self.logger.info(f"Loaded service info: {service_info.name} (ID: {service_id})")
+                    
+                    except Exception as e:
+                        self.logger.error(f"Error loading service info from {service_path}: {e}")
+        
+        # Load routes
+        routes_path = os.path.join(self.storage_dir, 'routes.json')
+        if os.path.exists(routes_path):
+            try:
+                with open(routes_path, 'r') as f:
+                    routes_data = json.load(f)
+                
+                for route_data in routes_data:
+                    route_info = RouteInfo.from_dict(route_data)
+                    self.routes[(route_info.method, route_info.path)] = route_info
+                
+                self.logger.info(f"Loaded {len(self.routes)} API routes")
+            
+            except Exception as e:
+                self.logger.error(f"Error loading routes from {routes_path}: {e}")
+        
+        # Load configuration
+        config_path = os.path.join(self.storage_dir, 'config.json')
+        if os.path.exists(config_path):
             try:
                 with open(config_path, 'r') as f:
-                    config = json.load(f)
+                    stored_config = json.load(f)
                 
-                # Merge with defaults
-                for key, value in config.items():
-                    if key in default_config and isinstance(value, dict) and isinstance(default_config[key], dict):
-                        default_config[key].update(value)
-                    else:
-                        default_config[key] = value
+                self.config.update(stored_config)
                 
-                self.logger.info(f"Loaded configuration from {config_path}")
+                self.logger.info("Loaded gateway configuration")
+            
             except Exception as e:
                 self.logger.error(f"Error loading configuration from {config_path}: {e}")
-        
-        return default_config
     
-    def _discover_services(self) -> None:
-        """Discover and register available services."""
-        services_config = self.config.get('services', {})
+    def _save_service_info(self, service_info: ServiceInfo) -> None:
+        """
+        Save service info to storage.
         
-        for service_name, service_config in services_config.items():
-            if not service_config.get('enabled', True):
-                self.logger.info(f"Service {service_name} is disabled in configuration")
-                continue
-            
-            module_name = service_config.get('module')
-            class_name = service_config.get('class')
-            
-            if not module_name or not class_name:
-                self.logger.warning(f"Invalid configuration for service {service_name}")
-                continue
-            
+        Args:
+            service_info: Service info to save
+        """
+        services_dir = os.path.join(self.storage_dir, 'services')
+        os.makedirs(services_dir, exist_ok=True)
+        
+        service_path = os.path.join(services_dir, f"{service_info.id}.json")
+        
+        with open(service_path, 'w') as f:
+            json.dump(service_info.to_dict(), f, indent=2)
+    
+    def _save_routes(self) -> None:
+        """Save routes to storage."""
+        routes_path = os.path.join(self.storage_dir, 'routes.json')
+        
+        routes_data = [route_info.to_dict() for route_info in self.routes.values()]
+        
+        with open(routes_path, 'w') as f:
+            json.dump(routes_data, f, indent=2)
+    
+    def _save_config(self) -> None:
+        """Save configuration to storage."""
+        config_path = os.path.join(self.storage_dir, 'config.json')
+        
+        with open(config_path, 'w') as f:
+            json.dump(self.config, f, indent=2)
+    
+    def start(self) -> None:
+        """Start the API Gateway."""
+        if self.running:
+            return
+        
+        self.running = True
+        
+        # Start health check thread
+        self.health_check_thread = threading.Thread(target=self._health_check_loop)
+        self.health_check_thread.daemon = True
+        self.health_check_thread.start()
+        
+        self.logger.info("Started API Gateway")
+    
+    def stop(self) -> None:
+        """Stop the API Gateway."""
+        self.running = False
+        
+        # Wait for threads to stop
+        if self.health_check_thread:
+            self.health_check_thread.join(timeout=2.0)
+        
+        # Save data
+        self._save_config()
+        self._save_routes()
+        
+        for service_info in self.services.values():
+            self._save_service_info(service_info)
+        
+        self.logger.info("Stopped API Gateway")
+    
+    def _health_check_loop(self) -> None:
+        """Health check thread loop."""
+        while self.running:
             try:
-                # Register service
-                self.services[service_name] = {
-                    'module': module_name,
-                    'class': class_name,
-                    'config': service_config
-                }
+                # Check services health
+                for service_id, service_info in list(self.services.items()):
+                    self._check_service_health(service_id)
                 
-                # Set initial status
-                self.service_status[service_name] = ServiceStatus.UNKNOWN
-                
-                self.logger.info(f"Registered service: {service_name}")
+                # Sleep for health check interval
+                time.sleep(self.config['health_check_interval'])
+            
             except Exception as e:
-                self.logger.error(f"Error registering service {service_name}: {e}")
+                self.logger.error(f"Error in health check loop: {e}")
+                time.sleep(10)  # Sleep briefly on error
     
-    def initialize_service(self, service_name: str) -> bool:
+    def _check_service_health(self, service_id: str) -> bool:
         """
-        Initialize a service.
+        Check the health of a service.
         
         Args:
-            service_name: Name of the service to initialize
+            service_id: ID of the service to check
             
         Returns:
-            Initialization success
+            True if service is healthy
         """
-        if service_name not in self.services:
-            self.logger.error(f"Service {service_name} not found")
+        if service_id not in self.services:
             return False
         
-        if service_name in self.service_instances and self.service_instances[service_name]:
-            self.logger.info(f"Service {service_name} is already initialized")
+        service_info = self.services[service_id]
+        
+        if not service_info.health_endpoint:
+            # No health endpoint defined, assume service is online
+            service_info.status = ServiceStatus.ONLINE
+            service_info.last_health_check = time.time()
             return True
         
-        service_info = self.services[service_name]
-        
         try:
-            # Update status
-            self.service_status[service_name] = ServiceStatus.STARTING
+            # In a real implementation, this would make an HTTP request
+            # to the service's health endpoint. For this simplified
+            # implementation, we'll just simulate a health check.
+            is_healthy = True  # Simulated health check result
             
-            # Import module
-            module_name = service_info['module']
-            module = importlib.import_module(module_name)
+            # Update service status
+            if is_healthy:
+                service_info.status = ServiceStatus.ONLINE
+                service_info.error = None
+            else:
+                service_info.status = ServiceStatus.DEGRADED
+                service_info.error = "Failed health check"
             
-            # Get class
-            class_name = service_info['class']
-            service_class = getattr(module, class_name)
+            service_info.last_health_check = time.time()
             
-            # Initialize service
-            service_instance = service_class()
+            # Save service info
+            self._save_service_info(service_info)
             
-            # Store instance
-            self.service_instances[service_name] = service_instance
-            
-            # Update status
-            self.service_status[service_name] = ServiceStatus.ONLINE
-            
-            self.logger.info(f"Initialized service: {service_name}")
-            return True
+            return is_healthy
         
-        except ImportError as e:
-            self.logger.error(f"Error importing module for service {service_name}: {e}")
-            self.service_status[service_name] = ServiceStatus.OFFLINE
-            return False
-        except AttributeError as e:
-            self.logger.error(f"Error getting class for service {service_name}: {e}")
-            self.service_status[service_name] = ServiceStatus.OFFLINE
-            return False
         except Exception as e:
-            self.logger.error(f"Error initializing service {service_name}: {e}")
-            self.service_status[service_name] = ServiceStatus.OFFLINE
+            # Handle health check failure
+            service_info.status = ServiceStatus.OFFLINE
+            service_info.error = str(e)
+            service_info.last_health_check = time.time()
+            
+            # Save service info
+            self._save_service_info(service_info)
+            
+            self.logger.error(f"Health check failed for service {service_id}: {e}")
             return False
     
-    def get_service(self, service_name: str) -> Any:
+    def register_service(self, service_type: Union[str, ServiceType], name: str,
+                      base_url: str, version: str, endpoints: List[Dict[str, Any]],
+                      health_endpoint: Optional[str] = None,
+                      metadata: Optional[Dict[str, Any]] = None) -> str:
         """
-        Get a service instance.
+        Register a service with the gateway.
         
         Args:
-            service_name: Name of the service
+            service_type: Type of service
+            name: Human-readable name
+            base_url: Base URL for service API
+            version: Service version
+            endpoints: List of service endpoints
+            health_endpoint: Optional health check endpoint
+            metadata: Optional service metadata
             
         Returns:
-            Service instance or None if not found or not initialized
+            Service ID
         """
-        if service_name not in self.services:
-            self.logger.error(f"Service {service_name} not found")
-            return None
+        # Convert service_type from string if needed
+        if isinstance(service_type, str):
+            service_type = ServiceType(service_type)
         
-        if service_name not in self.service_instances or not self.service_instances[service_name]:
-            # Try to initialize the service
-            if not self.initialize_service(service_name):
-                return None
+        # Generate service ID
+        service_id = str(uuid.uuid4())
         
-        return self.service_instances[service_name]
+        # Create service info
+        service_info = ServiceInfo(
+            service_id=service_id,
+            service_type=service_type,
+            name=name,
+            base_url=base_url,
+            version=version,
+            endpoints=endpoints,
+            health_endpoint=health_endpoint,
+            metadata=metadata
+        )
+        
+        # Add to registry
+        self.services[service_id] = service_info
+        
+        # Save service info
+        self._save_service_info(service_info)
+        
+        # Register default routes
+        self._register_default_routes(service_info)
+        
+        self.logger.info(f"Registered service: {name} (ID: {service_id})")
+        return service_id
     
-    def initialize_all_services(self) -> Dict[str, bool]:
+    def _register_default_routes(self, service_info: ServiceInfo) -> None:
         """
-        Initialize all registered services.
-        
-        Returns:
-            Dictionary mapping service names to initialization success
-        """
-        results = {}
-        
-        for service_name in self.services:
-            results[service_name] = self.initialize_service(service_name)
-        
-        return results
-    
-    def get_service_status(self, service_name: Optional[str] = None) -> Dict[str, str]:
-        """
-        Get status of services.
+        Register default routes for a service.
         
         Args:
-            service_name: Optional name of a specific service
-            
-        Returns:
-            Dictionary mapping service names to status values
+            service_info: Service info to register routes for
         """
-        if service_name:
-            if service_name not in self.services:
-                return {service_name: ServiceStatus.UNKNOWN.value}
+        for endpoint in service_info.endpoints:
+            # Extract endpoint information
+            path = endpoint.get('path', '/')
+            methods = endpoint.get('methods', ['GET'])
+            auth_level_str = endpoint.get('auth_level', 'none')
+            cache_ttl = endpoint.get('cache_ttl', 0)
+            rate_limit = endpoint.get('rate_limit')
+            description = endpoint.get('description')
             
-            return {service_name: self.service_status[service_name].value}
+            # Convert auth level from string
+            auth_level = AuthLevel(auth_level_str)
+            
+            # Generate route path
+            service_type = service_info.service_type.value
+            route_path = f"/api/{service_type}{path}"
+            
+            # Register route for each method
+            for method_str in methods:
+                method = EndpointMethod(method_str)
+                
+                # Create route info
+                route_info = RouteInfo(
+                    route_path=route_path,
+                    method=method,
+                    target_service=service_info.id,
+                    target_endpoint=path,
+                    auth_level=auth_level,
+                    cache_ttl=cache_ttl,
+                    rate_limit=rate_limit,
+                    description=description
+                )
+                
+                # Add to routes
+                self.routes[(method, route_path)] = route_info
         
-        # Return status of all services
-        return {name: status.value for name, status in self.service_status.items()}
+        # Save routes
+        self._save_routes()
     
-    def route_request(self, service_name: str, method_name: str, 
-                   *args, **kwargs) -> Any:
+    def update_service(self, service_id: str,
+                    base_url: Optional[str] = None,
+                    version: Optional[str] = None,
+                    endpoints: Optional[List[Dict[str, Any]]] = None,
+                    health_endpoint: Optional[str] = None,
+                    metadata: Optional[Dict[str, Any]] = None) -> bool:
         """
-        Route a request to a service.
+        Update a service in the registry.
         
         Args:
-            service_name: Name of the target service
-            method_name: Name of the method to call
-            *args: Positional arguments for the method
-            **kwargs: Keyword arguments for the method
+            service_id: ID of the service to update
+            base_url: Optional new base URL
+            version: Optional new version
+            endpoints: Optional new endpoints
+            health_endpoint: Optional new health check endpoint
+            metadata: Optional new metadata
             
         Returns:
-            Result of the method call
+            Update success
         """
-        service = self.get_service(service_name)
-        if not service:
-            raise ValueError(f"Service {service_name} not available")
+        if service_id not in self.services:
+            return False
         
-        # Check if method exists
-        if not hasattr(service, method_name):
-            raise ValueError(f"Method {method_name} not found in service {service_name}")
+        service_info = self.services[service_id]
         
-        # Get method
-        method = getattr(service, method_name)
+        # Update fields
+        if base_url is not None:
+            service_info.base_url = base_url
         
-        # Check for rate limiting
-        if not self._check_rate_limit(service_name):
-            raise Exception(f"Rate limit exceeded for service {service_name}")
+        if version is not None:
+            service_info.version = version
         
-        # Get timeout
-        timeout = self._get_timeout(service_name, method_name)
+        if health_endpoint is not None:
+            service_info.health_endpoint = health_endpoint
         
-        try:
-            # Execute method (no actual timeout implemented here for simplicity)
-            return method(*args, **kwargs)
-        except Exception as e:
-            self.logger.error(f"Error calling {method_name} on service {service_name}: {e}")
-            # Update service status if needed
-            # self._update_service_status(service_name, e)
-            raise
-    
-    def _check_rate_limit(self, service_name: str) -> bool:
-        """
-        Check if a request would exceed the rate limit.
+        if metadata is not None:
+            service_info.metadata.update(metadata)
         
-        Args:
-            service_name: Name of the service
+        # Update endpoints and routes if provided
+        if endpoints is not None:
+            service_info.endpoints = endpoints
             
-        Returns:
-            True if request is allowed, False if rate limit exceeded
-        """
-        # This is a placeholder; a real implementation would track request counts
+            # Remove existing routes for this service
+            self.routes = {
+                key: route 
+                for key, route in self.routes.items() 
+                if route.target_service != service_id
+            }
+            
+            # Register new routes
+            self._register_default_routes(service_info)
+        
+        # Save service info
+        self._save_service_info(service_info)
+        
+        self.logger.info(f"Updated service: {service_info.name} (ID: {service_id})")
         return True
     
-    def _get_timeout(self, service_name: str, method_name: str) -> float:
+    def deregister_service(self, service_id: str) -> bool:
         """
-        Get timeout for a method call.
+        Deregister a service from the gateway.
         
         Args:
-            service_name: Name of the service
-            method_name: Name of the method
+            service_id: ID of the service to deregister
             
         Returns:
-            Timeout in seconds
+            Deregistration success
         """
-        timeouts = self.config.get('timeouts', {})
-        
-        # Check for specific method timeout
-        method_key = f"{service_name}_{method_name}"
-        if method_key in timeouts:
-            return timeouts[method_key]
-        
-        # Check for service timeout
-        if service_name in timeouts:
-            return timeouts[service_name]
-        
-        # Use default timeout
-        return timeouts.get('default', 30)
-    
-    def _update_service_status(self, service_name: str, error: Exception) -> None:
-        """
-        Update service status based on error.
-        
-        Args:
-            service_name: Name of the service
-            error: Exception that occurred
-        """
-        # This is a placeholder; a real implementation would analyze the error
-        # and update the service status accordingly
-        self.service_status[service_name] = ServiceStatus.DEGRADED
-    
-    def shutdown_service(self, service_name: str) -> bool:
-        """
-        Shutdown a service.
-        
-        Args:
-            service_name: Name of the service
-            
-        Returns:
-            Shutdown success
-        """
-        if service_name not in self.services:
-            self.logger.error(f"Service {service_name} not found")
+        if service_id not in self.services:
             return False
         
-        if service_name not in self.service_instances or not self.service_instances[service_name]:
-            self.logger.info(f"Service {service_name} is not initialized")
-            return True
+        service_info = self.services[service_id]
         
+        # Remove from registry
+        del self.services[service_id]
+        
+        # Remove service file
+        service_path = os.path.join(self.storage_dir, 'services', f"{service_id}.json")
+        if os.path.exists(service_path):
+            try:
+                os.remove(service_path)
+            except Exception as e:
+                self.logger.error(f"Error removing service file {service_path}: {e}")
+        
+        # Remove routes for this service
+        self.routes = {
+            key: route 
+            for key, route in self.routes.items() 
+            if route.target_service != service_id
+        }
+        
+        # Save routes
+        self._save_routes()
+        
+        self.logger.info(f"Deregistered service: {service_info.name} (ID: {service_id})")
+        return True
+    
+    def get_service_info(self, service_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get information about a service.
+        
+        Args:
+            service_id: ID of the service
+            
+        Returns:
+            Service info dictionary or None if not found
+        """
+        if service_id not in self.services:
+            return None
+        
+        return self.services[service_id].to_dict()
+    
+    def list_services(self, service_type: Optional[Union[str, ServiceType]] = None,
+                   status: Optional[Union[str, ServiceStatus]] = None) -> List[Dict[str, Any]]:
+        """
+        List services in the registry.
+        
+        Args:
+            service_type: Optional filter by service type
+            status: Optional filter by status
+            
+        Returns:
+            List of service info dictionaries
+        """
+        # Convert filters from strings if needed
+        if isinstance(service_type, str):
+            service_type = ServiceType(service_type)
+        
+        if isinstance(status, str):
+            status = ServiceStatus(status)
+        
+        # Apply filters
+        result = []
+        
+        for service_info in self.services.values():
+            # Apply service type filter
+            if service_type and service_info.service_type != service_type:
+                continue
+            
+            # Apply status filter
+            if status and service_info.status != status:
+                continue
+            
+            # Add to result
+            result.append(service_info.to_dict())
+        
+        return result
+    
+    def add_route(self, route_path: str, method: Union[str, EndpointMethod],
+                target_service: str, target_endpoint: str,
+                auth_level: Union[str, AuthLevel] = AuthLevel.NONE,
+                cache_ttl: int = 0,
+                rate_limit: Optional[int] = None,
+                description: Optional[str] = None,
+                metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Add a route to the gateway.
+        
+        Args:
+            route_path: Path of the route in the gateway
+            method: HTTP method
+            target_service: ID of the target service
+            target_endpoint: Endpoint path in the target service
+            auth_level: Authentication level required
+            cache_ttl: Cache time-to-live in seconds (0 = no caching)
+            rate_limit: Optional rate limit in requests per minute
+            description: Optional route description
+            metadata: Optional route metadata
+            
+        Returns:
+            Addition success
+        """
+        # Convert parameters from strings if needed
+        if isinstance(method, str):
+            method = EndpointMethod(method)
+        
+        if isinstance(auth_level, str):
+            auth_level = AuthLevel(auth_level)
+        
+        # Check if target service exists
+        if target_service not in self.services:
+            return False
+        
+        # Create route info
+        route_info = RouteInfo(
+            route_path=route_path,
+            method=method,
+            target_service=target_service,
+            target_endpoint=target_endpoint,
+            auth_level=auth_level,
+            cache_ttl=cache_ttl,
+            rate_limit=rate_limit,
+            description=description,
+            metadata=metadata
+        )
+        
+        # Add to routes
+        self.routes[(method, route_path)] = route_info
+        
+        # Save routes
+        self._save_routes()
+        
+        self.logger.info(f"Added route: {method.value} {route_path} -> {target_service}:{target_endpoint}")
+        return True
+    
+    def remove_route(self, route_path: str, method: Union[str, EndpointMethod]) -> bool:
+        """
+        Remove a route from the gateway.
+        
+        Args:
+            route_path: Path of the route in the gateway
+            method: HTTP method
+            
+        Returns:
+            Removal success
+        """
+        # Convert method from string if needed
+        if isinstance(method, str):
+            method = EndpointMethod(method)
+        
+        # Check if route exists
+        if (method, route_path) not in self.routes:
+            return False
+        
+        # Remove route
+        del self.routes[(method, route_path)]
+        
+        # Save routes
+        self._save_routes()
+        
+        self.logger.info(f"Removed route: {method.value} {route_path}")
+        return True
+    
+    def get_route_info(self, route_path: str, method: Union[str, EndpointMethod]) -> Optional[Dict[str, Any]]:
+        """
+        Get information about a route.
+        
+        Args:
+            route_path: Path of the route in the gateway
+            method: HTTP method
+            
+        Returns:
+            Route info dictionary or None if not found
+        """
+        # Convert method from string if needed
+        if isinstance(method, str):
+            method = EndpointMethod(method)
+        
+        # Check if route exists
+        if (method, route_path) not in self.routes:
+            return None
+        
+        return self.routes[(method, route_path)].to_dict()
+    
+    def list_routes(self, target_service: Optional[str] = None,
+                 auth_level: Optional[Union[str, AuthLevel]] = None) -> List[Dict[str, Any]]:
+        """
+        List routes in the gateway.
+        
+        Args:
+            target_service: Optional filter by target service
+            auth_level: Optional filter by authentication level
+            
+        Returns:
+            List of route info dictionaries
+        """
+        # Convert auth_level from string if needed
+        if isinstance(auth_level, str):
+            auth_level = AuthLevel(auth_level)
+        
+        # Apply filters
+        result = []
+        
+        for route_info in self.routes.values():
+            # Apply target service filter
+            if target_service and route_info.target_service != target_service:
+                continue
+            
+            # Apply auth level filter
+            if auth_level and route_info.auth_level != auth_level:
+                continue
+            
+            # Add to result
+            result.append(route_info.to_dict())
+        
+        return result
+    
+    def handle_request(self, path: str, method: Union[str, EndpointMethod],
+                    headers: Dict[str, str], body: Any,
+                    query_params: Dict[str, str], client_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Handle an API request.
+        
+        Args:
+            path: Request path
+            method: HTTP method
+            headers: Request headers
+            body: Request body
+            query_params: Query parameters
+            client_id: Optional client identifier for rate limiting
+            
+        Returns:
+            Response dictionary
+        """
+        # Convert method from string if needed
+        if isinstance(method, str):
+            method = EndpointMethod(method)
+        
+        # Find route
+        route_key = (method, path)
+        if route_key not in self.routes:
+            return {
+                'status': 404,
+                'body': {'error': 'Not Found'},
+                'headers': {'Content-Type': 'application/json'}
+            }
+        
+        route_info = self.routes[route_key]
+        
+        # Check rate limit
+        if self.config['enable_rate_limiting'] and route_info.rate_limit is not None and client_id is not None:
+            rate_limit_key = (client_id, method, path)
+            
+            if not self._check_rate_limit(rate_limit_key, route_info.rate_limit):
+                return {
+                    'status': 429,
+                    'body': {'error': 'Too Many Requests'},
+                    'headers': {'Content-Type': 'application/json'}
+                }
+        
+        # Check authentication
+        if self.config['authentication_enabled'] and route_info.auth_level != AuthLevel.NONE:
+            auth_result = self._authenticate_request(headers, route_info.auth_level)
+            
+            if not auth_result['success']:
+                return {
+                    'status': 401,
+                    'body': {'error': auth_result['error']},
+                    'headers': {'Content-Type': 'application/json'}
+                }
+        
+        # Check service status
+        target_service_id = route_info.target_service
+        if target_service_id not in self.services:
+            return {
+                'status': 503,
+                'body': {'error': 'Service Unavailable'},
+                'headers': {'Content-Type': 'application/json'}
+            }
+        
+        service_info = self.services[target_service_id]
+        
+        if service_info.status != ServiceStatus.ONLINE:
+            return {
+                'status': 503,
+                'body': {'error': 'Service Unavailable', 'details': service_info.error},
+                'headers': {'Content-Type': 'application/json'}
+            }
+        
+        # Check cache
+        request_hash = self._hash_request(body, query_params)
+        cache_key = (method, path, request_hash)
+        
+        if self.config['enable_caching'] and route_info.cache_ttl > 0 and method == EndpointMethod.GET:
+            cached_response = self._get_from_cache(cache_key, route_info.cache_ttl)
+            
+            if cached_response:
+                # Add cache header
+                cached_response['headers']['X-Cache'] = 'HIT'
+                return cached_response
+        
+        # Forward request to target service
+        response = self._forward_request(
+            service_info=service_info,
+            endpoint=route_info.target_endpoint,
+            method=method,
+            headers=headers,
+            body=body,
+            query_params=query_params
+        )
+        
+        # Cache response if successful and cacheable
+        if (self.config['enable_caching'] and 
+            route_info.cache_ttl > 0 and 
+            method == EndpointMethod.GET and 
+            response['status'] >= 200 and 
+            response['status'] < 300):
+            
+            self._add_to_cache(cache_key, response)
+        
+        return response
+    
+    def _check_rate_limit(self, rate_limit_key: Tuple, limit: int) -> bool:
+        """
+        Check if a request is within rate limits.
+        
+        Args:
+            rate_limit_key: Rate limit key (client_id, method, path)
+            limit: Rate limit in requests per minute
+            
+        Returns:
+            True if within rate limit
+        """
+        current_time = time.time()
+        
+        # Initialize list of timestamps if needed
+        if rate_limit_key not in self.rate_limits:
+            self.rate_limits[rate_limit_key] = []
+        
+        # Get list of timestamps
+        timestamps = self.rate_limits[rate_limit_key]
+        
+        # Remove timestamps older than 1 minute
+        one_minute_ago = current_time - 60
+        timestamps = [ts for ts in timestamps if ts > one_minute_ago]
+        
+        # Update list of timestamps
+        self.rate_limits[rate_limit_key] = timestamps
+        
+        # Check rate limit
+        if len(timestamps) >= limit:
+            return False
+        
+        # Add current timestamp
+        timestamps.append(current_time)
+        
+        return True
+    
+    def _authenticate_request(self, headers: Dict[str, str], required_level: AuthLevel) -> Dict[str, Any]:
+        """
+        Authenticate a request.
+        
+        Args:
+            headers: Request headers
+            required_level: Required authentication level
+            
+        Returns:
+            Authentication result
+        """
+        # In a real implementation, this would verify the authentication token
+        # and check if the user has the required access level.
+        # For this simplified implementation, we'll just simulate authentication.
+        
+        # Check if Authorization header is present
+        auth_header = headers.get('Authorization')
+        
+        if not auth_header:
+            return {'success': False, 'error': 'Authorization header required'}
+        
+        # Parse Authorization header
         try:
-            # Update status
-            self.service_status[service_name] = ServiceStatus.STOPPING
+            auth_type, token = auth_header.split(' ', 1)
             
-            # Get service instance
-            service = self.service_instances[service_name]
+            if auth_type.lower() != 'bearer':
+                return {'success': False, 'error': 'Bearer authentication required'}
             
-            # Call shutdown method if it exists
-            if hasattr(service, 'shutdown'):
-                service.shutdown()
+            # Verify token (simulated)
+            if token == 'user_token':
+                if required_level == AuthLevel.ADMIN or required_level == AuthLevel.SERVICE:
+                    return {'success': False, 'error': 'Insufficient privileges'}
+                
+                return {'success': True, 'user_id': 'user123', 'level': AuthLevel.USER.value}
             
-            # Remove instance
-            self.service_instances[service_name] = None
+            elif token == 'admin_token':
+                if required_level == AuthLevel.SERVICE:
+                    return {'success': False, 'error': 'Insufficient privileges'}
+                
+                return {'success': True, 'user_id': 'admin456', 'level': AuthLevel.ADMIN.value}
             
-            # Update status
-            self.service_status[service_name] = ServiceStatus.OFFLINE
+            elif token == 'service_token':
+                return {'success': True, 'service_id': 'service789', 'level': AuthLevel.SERVICE.value}
             
-            self.logger.info(f"Shutdown service: {service_name}")
-            return True
+            else:
+                return {'success': False, 'error': 'Invalid token'}
         
         except Exception as e:
-            self.logger.error(f"Error shutting down service {service_name}: {e}")
-            self.service_status[service_name] = ServiceStatus.UNKNOWN
-            return False
+            return {'success': False, 'error': f'Authentication error: {str(e)}'}
     
-    def shutdown_all_services(self) -> Dict[str, bool]:
+    def _hash_request(self, body: Any, query_params: Dict[str, str]) -> str:
         """
-        Shutdown all initialized services.
-        
-        Returns:
-            Dictionary mapping service names to shutdown success
-        """
-        results = {}
-        
-        for service_name in list(self.service_instances.keys()):
-            if self.service_instances[service_name]:
-                results[service_name] = self.shutdown_service(service_name)
-        
-        return results
-    
-    def execute_cross_service_operation(self, operation_name: str, 
-                                    parameters: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Execute a complex operation that spans multiple services.
+        Generate a hash for a request for caching.
         
         Args:
-            operation_name: Name of the operation
-            parameters: Parameters for the operation
+            body: Request body
+            query_params: Query parameters
             
         Returns:
-            Dictionary of operation results
+            Request hash
         """
-        # This is a placeholder for cross-service operations
-        # In a real implementation, this would define complex workflows
-        # that coordinate multiple service calls
-        
-        if operation_name == "analyze_repository":
-            return self._execute_repository_analysis(parameters)
-        
-        elif operation_name == "build_knowledge_graph":
-            return self._execute_knowledge_graph_build(parameters)
-        
-        elif operation_name == "apply_neuro_symbolic_reasoning":
-            return self._execute_neuro_symbolic_reasoning(parameters)
-        
-        elif operation_name == "perform_academic_research":
-            return self._execute_academic_research(parameters)
-        
+        # Convert body to string
+        if isinstance(body, dict) or isinstance(body, list):
+            body_str = json.dumps(body, sort_keys=True)
         else:
-            raise ValueError(f"Unknown operation: {operation_name}")
+            body_str = str(body)
+        
+        # Convert query params to string
+        query_str = '&'.join(f"{k}={v}" for k, v in sorted(query_params.items()))
+        
+        # Combine and hash
+        import hashlib
+        combined = f"{body_str}|{query_str}"
+        
+        return hashlib.md5(combined.encode()).hexdigest()
     
-    def _execute_repository_analysis(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+    def _get_from_cache(self, cache_key: Tuple, ttl: int) -> Optional[Dict[str, Any]]:
         """
-        Execute repository analysis operation.
+        Get a response from the cache.
         
         Args:
-            parameters: Operation parameters
+            cache_key: Cache key (method, path, request_hash)
+            ttl: Cache time-to-live in seconds
             
         Returns:
-            Operation results
+            Cached response or None if not found or expired
         """
-        results = {}
+        if cache_key not in self.cache:
+            return None
         
-        try:
-            # Get repository service
-            repo_service = self.get_service('repository')
-            if not repo_service:
-                raise ValueError("Repository service not available")
-            
-            # Clone repository
-            repo_url = parameters.get('repo_url')
-            repo_branch = parameters.get('repo_branch', 'main')
-            
-            if not repo_url:
-                raise ValueError("Repository URL is required")
-            
-            # Create repository
-            repo_id = repo_service.create_repository(
-                name=repo_url.split('/')[-1],
-                url=repo_url,
-                repo_type="git",
-                default_branch=repo_branch
-            )
-            
-            results['repository_id'] = repo_id
-            
-            # Clone repository
-            clone_success = repo_service.clone_repository(repo_id)
-            results['clone_success'] = clone_success
-            
-            if not clone_success:
-                raise ValueError(f"Failed to clone repository: {repo_url}")
-            
-            # Get files
-            files = repo_service.get_repository_files(repo_id)
-            results['file_count'] = len(files)
-            
-            # Get commits
-            commits = repo_service.get_repository_commits(repo_id)
-            results['commit_count'] = len(commits)
-            
-            # Get branches
-            branches = repo_service.get_repository_branches(repo_id)
-            results['branch_count'] = len(branches)
-            
-            # If code review requested
-            if parameters.get('analyze_code', True):
-                # This is a placeholder; in a real implementation, we would
-                # analyze code using appropriate services
-                results['code_analysis'] = {
-                    'status': 'success',
-                    'file_count': len(files)
-                }
-            
-            # If database analysis requested
-            if parameters.get('analyze_database', True):
-                # This is a placeholder
-                results['database_analysis'] = {
-                    'status': 'success',
-                    'model_count': 0,
-                    'table_count': 0
-                }
-            
-            # If modularization analysis requested
-            if parameters.get('analyze_modularization', True):
-                # This is a placeholder
-                results['modularization_analysis'] = {
-                    'status': 'success',
-                    'module_count': 0
-                }
-            
-            # If agent readiness evaluation requested
-            if parameters.get('analyze_agent_readiness', True):
-                # This is a placeholder
-                results['agent_readiness_analysis'] = {
-                    'status': 'success',
-                    'readiness_score': 0.0
-                }
-            
-            return results
+        response, timestamp = self.cache[cache_key]
         
-        except Exception as e:
-            self.logger.error(f"Error in repository analysis: {e}")
-            return {'error': str(e), 'partial_results': results}
+        # Check if expired
+        if time.time() - timestamp > ttl:
+            del self.cache[cache_key]
+            return None
+        
+        return response
     
-    def _execute_knowledge_graph_build(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+    def _add_to_cache(self, cache_key: Tuple, response: Dict[str, Any]) -> None:
         """
-        Execute knowledge graph build operation.
+        Add a response to the cache.
         
         Args:
-            parameters: Operation parameters
+            cache_key: Cache key (method, path, request_hash)
+            response: Response to cache
+        """
+        # Add to cache
+        self.cache[cache_key] = (response, time.time())
+        
+        # Check cache size
+        if len(self.cache) > self.config['max_cache_size']:
+            # Remove oldest entries
+            items = sorted(self.cache.items(), key=lambda x: x[1][1])
+            items_to_remove = items[:len(items) // 2]  # Remove half of the cache
             
-        Returns:
-            Operation results
-        """
-        # This is a placeholder for a knowledge graph build operation
-        return {'status': 'not_implemented'}
+            for key, _ in items_to_remove:
+                del self.cache[key]
     
-    def _execute_neuro_symbolic_reasoning(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+    def _forward_request(self, service_info: ServiceInfo, endpoint: str,
+                      method: EndpointMethod, headers: Dict[str, str],
+                      body: Any, query_params: Dict[str, str]) -> Dict[str, Any]:
         """
-        Execute neuro-symbolic reasoning operation.
+        Forward a request to a service.
         
         Args:
-            parameters: Operation parameters
+            service_info: Target service info
+            endpoint: Target endpoint
+            method: HTTP method
+            headers: Request headers
+            body: Request body
+            query_params: Query parameters
             
         Returns:
-            Operation results
+            Response from the service
         """
-        # This is a placeholder for a neuro-symbolic reasoning operation
-        return {'status': 'not_implemented'}
+        # In a real implementation, this would make an HTTP request
+        # to the target service. For this simplified implementation,
+        # we'll just simulate a response.
+        
+        # Construct target URL
+        base_url = service_info.base_url.rstrip('/')
+        endpoint = endpoint.lstrip('/')
+        target_url = f"{base_url}/{endpoint}"
+        
+        # Add query parameters
+        if query_params:
+            query_string = '&'.join(f"{k}={v}" for k, v in query_params.items())
+            target_url = f"{target_url}?{query_string}"
+        
+        # Log request
+        self.logger.info(f"Forwarding {method.value} request to {target_url}")
+        
+        # Simulate response
+        return {
+            'status': 200,
+            'body': {
+                'message': 'Success',
+                'service': service_info.name,
+                'endpoint': endpoint,
+                'method': method.value
+            },
+            'headers': {
+                'Content-Type': 'application/json',
+                'X-Service-ID': service_info.id
+            }
+        }
     
-    def _execute_academic_research(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+    def clear_cache(self) -> int:
         """
-        Execute academic research operation.
+        Clear the response cache.
+        
+        Returns:
+            Number of cache entries cleared
+        """
+        count = len(self.cache)
+        self.cache = {}
+        return count
+    
+    def update_config(self, config: Dict[str, Any]) -> bool:
+        """
+        Update the gateway configuration.
         
         Args:
-            parameters: Operation parameters
+            config: New configuration values
             
         Returns:
-            Operation results
+            Update success
         """
-        # This is a placeholder for an academic research operation
-        return {'status': 'not_implemented'}
-
-
-# Singleton instance for easy import
-_gateway_instance = None
-
-def get_gateway_instance(config_path: Optional[str] = None) -> APIGateway:
-    """
-    Get the singleton API Gateway instance.
-    
-    Args:
-        config_path: Optional path to configuration file
+        # Update configuration
+        self.config.update(config)
         
-    Returns:
-        API Gateway instance
-    """
-    global _gateway_instance
+        # Save configuration
+        self._save_config()
+        
+        # Update logging level if changed
+        if 'logging_level' in config:
+            logging_level = getattr(logging, self.config['logging_level'], logging.INFO)
+            self.logger.setLevel(logging_level)
+        
+        self.logger.info("Updated gateway configuration")
+        return True
     
-    if _gateway_instance is None:
-        _gateway_instance = APIGateway(config_path)
+    def get_config(self) -> Dict[str, Any]:
+        """
+        Get the gateway configuration.
+        
+        Returns:
+            Gateway configuration
+        """
+        return self.config.copy()
     
-    return _gateway_instance
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        Get gateway statistics.
+        
+        Returns:
+            Gateway statistics
+        """
+        return {
+            'services': {
+                'total': len(self.services),
+                'online': sum(1 for s in self.services.values() if s.status == ServiceStatus.ONLINE),
+                'offline': sum(1 for s in self.services.values() if s.status == ServiceStatus.OFFLINE),
+                'degraded': sum(1 for s in self.services.values() if s.status == ServiceStatus.DEGRADED)
+            },
+            'routes': len(self.routes),
+            'cache': {
+                'entries': len(self.cache),
+                'max_size': self.config['max_cache_size']
+            },
+            'rate_limits': {
+                'active_clients': len(self.rate_limits)
+            }
+        }

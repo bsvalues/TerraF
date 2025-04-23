@@ -1,305 +1,170 @@
 """
 Plugin System
 
-This module provides the core plugin system for the Code Deep Dive Analyzer platform,
-allowing third-party developers to extend the system's functionality.
+This module implements a plugin system for extending the Code Deep Dive Analyzer platform
+with third-party integrations and custom functionality.
 """
 import os
 import sys
 import json
 import logging
 import importlib
+import importlib.util
 import inspect
-import uuid
 import time
-from typing import Dict, List, Any, Optional, Union, Callable, Type, Set
-from abc import ABC, abstractmethod
+import uuid
+from enum import Enum
+from typing import Dict, List, Any, Optional, Union, Tuple, Set, Callable, Type
+
+class PluginType(Enum):
+    """Types of plugins supported by the system."""
+    ANALYZER = "analyzer"
+    VISUALIZER = "visualizer"
+    INTEGRATION = "integration"
+    AGENT = "agent"
+    MODEL = "model"
+    CUSTOM = "custom"
+
+
+class PluginStatus(Enum):
+    """Status of a plugin in the system."""
+    ENABLED = "enabled"
+    DISABLED = "disabled"
+    ERROR = "error"
+
 
 class PluginMetadata:
-    """Metadata for a plugin."""
-    def __init__(self, 
-                id: str,
-                name: str, 
-                version: str,
-                description: str,
-                author: str,
-                entry_point: str,
-                dependencies: Optional[List[str]] = None,
-                capabilities: Optional[List[str]] = None,
-                configuration_schema: Optional[Dict[str, Any]] = None,
-                min_platform_version: Optional[str] = None):
+    """
+    Metadata for a plugin.
+    """
+    
+    def __init__(self, plugin_id: str, name: str, version: str,
+               description: str, plugin_type: PluginType,
+               author: Optional[str] = None,
+               website: Optional[str] = None,
+               dependencies: Optional[List[str]] = None,
+               entrypoint: Optional[str] = None,
+               config_schema: Optional[Dict[str, Any]] = None):
         """
         Initialize plugin metadata.
         
         Args:
-            id: Unique identifier for the plugin
-            name: Human-readable name
-            version: Version string (semver)
+            plugin_id: Unique identifier for the plugin
+            name: Human-readable name for the plugin
+            version: Plugin version
             description: Description of the plugin
-            author: Author information
-            entry_point: Module.Class entry point
-            dependencies: Optional list of dependency plugins
-            capabilities: Optional list of capabilities provided
-            configuration_schema: Optional JSON schema for configuration
-            min_platform_version: Minimum required platform version
+            plugin_type: Type of plugin
+            author: Optional plugin author
+            website: Optional plugin website
+            dependencies: Optional list of plugin dependencies
+            entrypoint: Optional plugin entrypoint module
+            config_schema: Optional JSON schema for plugin configuration
         """
-        self.id = id
+        self.id = plugin_id
         self.name = name
         self.version = version
         self.description = description
+        self.plugin_type = plugin_type
         self.author = author
-        self.entry_point = entry_point
+        self.website = website
         self.dependencies = dependencies or []
-        self.capabilities = capabilities or []
-        self.configuration_schema = configuration_schema or {}
-        self.min_platform_version = min_platform_version or "1.0.0"
-        self.install_time = time.time()
-        self.last_loaded = None
-    
-    @staticmethod
-    def from_dict(data: Dict[str, Any]) -> 'PluginMetadata':
-        """Create metadata from a dictionary."""
-        return PluginMetadata(
-            id=data.get('id', str(uuid.uuid4())),
-            name=data['name'],
-            version=data['version'],
-            description=data['description'],
-            author=data['author'],
-            entry_point=data['entry_point'],
-            dependencies=data.get('dependencies'),
-            capabilities=data.get('capabilities'),
-            configuration_schema=data.get('configuration_schema'),
-            min_platform_version=data.get('min_platform_version')
-        )
+        self.entrypoint = entrypoint
+        self.config_schema = config_schema or {}
+        self.status = PluginStatus.DISABLED
+        self.error = None
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert metadata to a dictionary."""
+        """Convert plugin metadata to a dictionary."""
         return {
             'id': self.id,
             'name': self.name,
             'version': self.version,
             'description': self.description,
+            'plugin_type': self.plugin_type.value,
             'author': self.author,
-            'entry_point': self.entry_point,
+            'website': self.website,
             'dependencies': self.dependencies,
-            'capabilities': self.capabilities,
-            'configuration_schema': self.configuration_schema,
-            'min_platform_version': self.min_platform_version,
-            'install_time': self.install_time,
-            'last_loaded': self.last_loaded
+            'entrypoint': self.entrypoint,
+            'config_schema': self.config_schema,
+            'status': self.status.value,
+            'error': self.error
         }
-
-
-class PluginInterface(ABC):
-    """
-    Base interface that all plugins must implement.
     
-    This defines the lifecycle methods that the plugin system will call.
-    """
-    
-    @abstractmethod
-    def initialize(self, context: 'PluginContext') -> bool:
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'PluginMetadata':
         """
-        Initialize the plugin.
+        Create plugin metadata from a dictionary.
         
         Args:
-            context: Plugin context providing access to platform services
-            
-        Returns:
-            Initialization success
-        """
-        pass
-    
-    @abstractmethod
-    def activate(self) -> bool:
-        """
-        Activate the plugin.
+            data: Plugin metadata dictionary
         
         Returns:
-            Activation success
+            PluginMetadata instance
         """
-        pass
-    
-    @abstractmethod
-    def deactivate(self) -> bool:
-        """
-        Deactivate the plugin.
+        metadata = cls(
+            plugin_id=data['id'],
+            name=data['name'],
+            version=data['version'],
+            description=data['description'],
+            plugin_type=PluginType(data['plugin_type']),
+            author=data.get('author'),
+            website=data.get('website'),
+            dependencies=data.get('dependencies', []),
+            entrypoint=data.get('entrypoint'),
+            config_schema=data.get('config_schema', {})
+        )
         
-        Returns:
-            Deactivation success
-        """
-        pass
-    
-    @abstractmethod
-    def get_capabilities(self) -> List[str]:
-        """
-        Get the capabilities provided by this plugin.
+        if 'status' in data:
+            metadata.status = PluginStatus(data['status'])
         
-        Returns:
-            List of capability identifiers
-        """
-        pass
+        metadata.error = data.get('error')
+        
+        return metadata
 
 
-class PluginContext:
+class Plugin:
     """
-    Context provided to plugins during initialization.
-    
-    This gives plugins access to platform services and APIs.
+    Represents a plugin in the system.
     """
     
-    def __init__(self, 
-                service_registry: Dict[str, Any],
-                configuration: Dict[str, Any],
-                logger: logging.Logger,
-                plugin_manager: 'PluginManager',
-                metadata: PluginMetadata):
+    def __init__(self, metadata: PluginMetadata, module=None, instance=None):
         """
-        Initialize plugin context.
+        Initialize a plugin.
         
         Args:
-            service_registry: Registry of platform services
-            configuration: Plugin configuration
-            logger: Logger instance for the plugin
-            plugin_manager: Reference to the plugin manager
             metadata: Plugin metadata
+            module: Optional plugin module
+            instance: Optional plugin instance
         """
-        self.service_registry = service_registry
-        self.configuration = configuration
-        self.logger = logger
-        self.plugin_manager = plugin_manager
         self.metadata = metadata
+        self.module = module
+        self.instance = instance
+        self.config = {}
     
-    def get_service(self, service_name: str) -> Any:
+    def configure(self, config: Dict[str, Any]) -> bool:
         """
-        Get a platform service by name.
+        Configure the plugin.
         
         Args:
-            service_name: Name of the service
+            config: Plugin configuration
             
         Returns:
-            Service instance or None if not found
+            Configuration success
         """
-        return self.service_registry.get(service_name)
-    
-    def get_configuration(self, key: Optional[str] = None, default: Any = None) -> Any:
-        """
-        Get plugin configuration.
-        
-        Args:
-            key: Optional specific configuration key
-            default: Default value if key not found
-            
-        Returns:
-            Configuration value or entire configuration
-        """
-        if key is None:
-            return self.configuration
-        
-        return self.configuration.get(key, default)
-    
-    def get_plugin(self, plugin_id: str) -> Optional['PluginInstance']:
-        """
-        Get another plugin by ID.
-        
-        Args:
-            plugin_id: ID of the plugin
-            
-        Returns:
-            Plugin instance or None if not found
-        """
-        return self.plugin_manager.get_plugin(plugin_id)
-
-
-class ExtensionPoint:
-    """
-    Extension point that plugins can implement.
-    
-    This provides a way for plugins to register handlers for specific extension points.
-    """
-    
-    def __init__(self, name: str, description: str, interface: Type):
-        """
-        Initialize extension point.
-        
-        Args:
-            name: Name of the extension point
-            description: Description of the extension point
-            interface: Interface that handlers must implement
-        """
-        self.name = name
-        self.description = description
-        self.interface = interface
-        self.handlers = {}
-    
-    def register_handler(self, plugin_id: str, handler: Any) -> bool:
-        """
-        Register a handler for this extension point.
-        
-        Args:
-            plugin_id: ID of the plugin providing the handler
-            handler: Handler implementation
-            
-        Returns:
-            Registration success
-        """
-        # Validate handler against interface
-        if not isinstance(handler, self.interface):
+        if self.instance is None:
             return False
         
-        self.handlers[plugin_id] = handler
-        return True
-    
-    def unregister_handler(self, plugin_id: str) -> bool:
-        """
-        Unregister a handler.
-        
-        Args:
-            plugin_id: ID of the plugin
+        try:
+            if hasattr(self.instance, 'configure') and callable(self.instance.configure):
+                self.instance.configure(config)
             
-        Returns:
-            Unregistration success
-        """
-        if plugin_id in self.handlers:
-            del self.handlers[plugin_id]
+            self.config = config
             return True
         
-        return False
-    
-    def get_handlers(self) -> List[Any]:
-        """
-        Get all registered handlers.
-        
-        Returns:
-            List of handlers
-        """
-        return list(self.handlers.values())
-
-
-class PluginInstance:
-    """
-    Represents a loaded plugin instance.
-    
-    This wraps the actual plugin implementation and provides lifecycle management.
-    """
-    
-    def __init__(self, 
-                metadata: PluginMetadata,
-                instance: PluginInterface,
-                context: PluginContext):
-        """
-        Initialize plugin instance.
-        
-        Args:
-            metadata: Plugin metadata
-            instance: Actual plugin implementation
-            context: Plugin context
-        """
-        self.metadata = metadata
-        self.instance = instance
-        self.context = context
-        self.active = False
-        self.error = None
+        except Exception as e:
+            self.metadata.error = str(e)
+            self.metadata.status = PluginStatus.ERROR
+            return False
     
     def initialize(self) -> bool:
         """
@@ -308,419 +173,513 @@ class PluginInstance:
         Returns:
             Initialization success
         """
-        try:
-            result = self.instance.initialize(self.context)
-            if result:
-                self.context.logger.info(f"Plugin '{self.metadata.name}' initialized successfully")
-            else:
-                self.context.logger.error(f"Plugin '{self.metadata.name}' initialization returned False")
-                self.error = "Initialization failed"
-            
-            return result
-        except Exception as e:
-            self.context.logger.error(f"Error initializing plugin '{self.metadata.name}': {str(e)}")
-            self.error = str(e)
+        if self.instance is None:
             return False
-    
-    def activate(self) -> bool:
-        """
-        Activate the plugin.
         
-        Returns:
-            Activation success
-        """
-        if self.active:
+        try:
+            if hasattr(self.instance, 'initialize') and callable(self.instance.initialize):
+                self.instance.initialize()
+            
+            self.metadata.status = PluginStatus.ENABLED
             return True
         
-        try:
-            result = self.instance.activate()
-            if result:
-                self.active = True
-                self.context.logger.info(f"Plugin '{self.metadata.name}' activated successfully")
-            else:
-                self.context.logger.error(f"Plugin '{self.metadata.name}' activation returned False")
-                self.error = "Activation failed"
-            
-            return result
         except Exception as e:
-            self.context.logger.error(f"Error activating plugin '{self.metadata.name}': {str(e)}")
-            self.error = str(e)
+            self.metadata.error = str(e)
+            self.metadata.status = PluginStatus.ERROR
             return False
     
-    def deactivate(self) -> bool:
+    def shutdown(self) -> bool:
         """
-        Deactivate the plugin.
+        Shutdown the plugin.
         
         Returns:
-            Deactivation success
+            Shutdown success
         """
-        if not self.active:
+        if self.instance is None:
+            return False
+        
+        try:
+            if hasattr(self.instance, 'shutdown') and callable(self.instance.shutdown):
+                self.instance.shutdown()
+            
+            self.metadata.status = PluginStatus.DISABLED
             return True
         
-        try:
-            result = self.instance.deactivate()
-            if result:
-                self.active = False
-                self.context.logger.info(f"Plugin '{self.metadata.name}' deactivated successfully")
-            else:
-                self.context.logger.error(f"Plugin '{self.metadata.name}' deactivation returned False")
-            
-            return result
         except Exception as e:
-            self.context.logger.error(f"Error deactivating plugin '{self.metadata.name}': {str(e)}")
-            # Don't set error here, as we might want to force deactivation even with errors
+            self.metadata.error = str(e)
+            self.metadata.status = PluginStatus.ERROR
             return False
-    
-    def is_active(self) -> bool:
-        """
-        Check if the plugin is active.
-        
-        Returns:
-            Active status
-        """
-        return self.active
-    
-    def get_capabilities(self) -> List[str]:
-        """
-        Get plugin capabilities.
-        
-        Returns:
-            List of capabilities
-        """
-        return self.instance.get_capabilities()
 
 
 class PluginManager:
     """
-    Plugin manager for loading, activating, and managing plugins.
+    Manages plugins in the system.
     
-    This is the central component of the plugin system.
+    This class provides:
+    - Plugin discovery and loading
+    - Plugin configuration and initialization
+    - Plugin lifecycle management
+    - Plugin dependency resolution
     """
     
-    def __init__(self, plugin_dirs: List[str], service_registry: Dict[str, Any]):
+    def __init__(self, plugins_dir: Optional[str] = None, storage_dir: Optional[str] = None):
         """
-        Initialize plugin manager.
+        Initialize the plugin manager.
         
         Args:
-            plugin_dirs: List of directories to search for plugins
-            service_registry: Registry of platform services
+            plugins_dir: Optional directory for plugin modules
+            storage_dir: Optional directory for persistent storage
         """
-        self.plugin_dirs = plugin_dirs
-        self.service_registry = service_registry
-        self.plugins = {}  # plugin_id -> PluginInstance
-        self.metadata_cache = {}  # plugin_id -> PluginMetadata
-        self.extension_points = {}  # extension_point_name -> ExtensionPoint
+        # Set up plugins directory
+        if plugins_dir is None:
+            plugins_dir = os.path.join(os.getcwd(), 'plugins')
+        
+        self.plugins_dir = plugins_dir
+        os.makedirs(plugins_dir, exist_ok=True)
+        
+        # Set up storage directory
+        if storage_dir is None:
+            storage_dir = os.path.join(os.getcwd(), 'plugin_storage')
+        
+        self.storage_dir = storage_dir
+        os.makedirs(storage_dir, exist_ok=True)
+        
+        # Initialize logger
         self.logger = logging.getLogger('plugin_manager')
         
-        # Create plugin directories if they don't exist
-        for plugin_dir in plugin_dirs:
-            os.makedirs(plugin_dir, exist_ok=True)
+        # Initialize plugins
+        self.plugins = {}  # plugin_id -> Plugin
         
+        # Initialize hooks registry for event-based processing
+        self.hooks = {}  # hook_name -> List[Callable]
+        
+        # Load existing data
+        self._load_data()
+    
+    def _load_data(self) -> None:
+        """Load existing data from storage."""
         # Load plugin metadata
-        self._load_metadata()
-    
-    def _load_metadata(self) -> None:
-        """Load metadata for all available plugins."""
-        self.metadata_cache = {}
-        
-        for plugin_dir in self.plugin_dirs:
-            # Look for plugin.json files
-            for entry in os.listdir(plugin_dir):
-                entry_path = os.path.join(plugin_dir, entry)
-                
-                if os.path.isdir(entry_path):
-                    metadata_path = os.path.join(entry_path, 'plugin.json')
+        metadata_dir = os.path.join(self.storage_dir, 'metadata')
+        if os.path.exists(metadata_dir):
+            for filename in os.listdir(metadata_dir):
+                if filename.endswith('.json'):
+                    plugin_id = filename[:-5]  # Remove '.json'
+                    metadata_path = os.path.join(metadata_dir, filename)
                     
-                    if os.path.exists(metadata_path):
+                    try:
+                        with open(metadata_path, 'r') as f:
+                            metadata_dict = json.load(f)
+                        
+                        metadata = PluginMetadata.from_dict(metadata_dict)
+                        
+                        # Create plugin (without module/instance)
+                        self.plugins[plugin_id] = Plugin(metadata=metadata)
+                        
+                        self.logger.info(f"Loaded plugin metadata: {metadata.name} (ID: {plugin_id})")
+                    
+                    except Exception as e:
+                        self.logger.error(f"Error loading plugin metadata from {metadata_path}: {e}")
+        
+        # Load plugin configurations
+        config_dir = os.path.join(self.storage_dir, 'config')
+        if os.path.exists(config_dir):
+            for filename in os.listdir(config_dir):
+                if filename.endswith('.json'):
+                    plugin_id = filename[:-5]  # Remove '.json'
+                    config_path = os.path.join(config_dir, filename)
+                    
+                    if plugin_id in self.plugins:
                         try:
-                            with open(metadata_path, 'r') as f:
-                                data = json.load(f)
-                                
-                                metadata = PluginMetadata.from_dict(data)
-                                self.metadata_cache[metadata.id] = metadata
-                                
-                                self.logger.info(f"Found plugin: {metadata.name} (ID: {metadata.id}, Version: {metadata.version})")
+                            with open(config_path, 'r') as f:
+                                config = json.load(f)
+                            
+                            self.plugins[plugin_id].config = config
+                            
+                            self.logger.info(f"Loaded plugin config: {plugin_id}")
+                        
                         except Exception as e:
-                            self.logger.error(f"Error loading plugin metadata from {metadata_path}: {str(e)}")
+                            self.logger.error(f"Error loading plugin config from {config_path}: {e}")
     
-    def register_extension_point(self, name: str, description: str, interface: Type) -> ExtensionPoint:
+    def _save_plugin_metadata(self, plugin: Plugin) -> None:
         """
-        Register a new extension point.
+        Save plugin metadata to storage.
         
         Args:
-            name: Name of the extension point
-            description: Description of the extension point
-            interface: Interface that handlers must implement
-            
-        Returns:
-            Created extension point
+            plugin: Plugin to save metadata for
         """
-        if name in self.extension_points:
-            raise ValueError(f"Extension point '{name}' already exists")
+        metadata_dir = os.path.join(self.storage_dir, 'metadata')
+        os.makedirs(metadata_dir, exist_ok=True)
         
-        extension_point = ExtensionPoint(name, description, interface)
-        self.extension_points[name] = extension_point
+        metadata_path = os.path.join(metadata_dir, f"{plugin.metadata.id}.json")
         
-        self.logger.info(f"Registered extension point: {name}")
-        return extension_point
+        with open(metadata_path, 'w') as f:
+            json.dump(plugin.metadata.to_dict(), f, indent=2)
     
-    def get_extension_point(self, name: str) -> Optional[ExtensionPoint]:
+    def _save_plugin_config(self, plugin: Plugin) -> None:
         """
-        Get an extension point by name.
+        Save plugin configuration to storage.
         
         Args:
-            name: Name of the extension point
-            
-        Returns:
-            Extension point or None if not found
+            plugin: Plugin to save configuration for
         """
-        return self.extension_points.get(name)
+        config_dir = os.path.join(self.storage_dir, 'config')
+        os.makedirs(config_dir, exist_ok=True)
+        
+        config_path = os.path.join(config_dir, f"{plugin.metadata.id}.json")
+        
+        with open(config_path, 'w') as f:
+            json.dump(plugin.config, f, indent=2)
     
-    def register_extension(self, extension_point_name: str, plugin_id: str, handler: Any) -> bool:
+    def discover_plugins(self) -> List[str]:
         """
-        Register an extension handler.
+        Discover plugins in the plugins directory.
         
-        Args:
-            extension_point_name: Name of the extension point
-            plugin_id: ID of the plugin providing the handler
-            handler: Handler implementation
-            
         Returns:
-            Registration success
+            List of discovered plugin IDs
         """
-        extension_point = self.get_extension_point(extension_point_name)
-        if not extension_point:
-            self.logger.error(f"Extension point '{extension_point_name}' not found")
-            return False
+        discovered_plugins = []
         
-        result = extension_point.register_handler(plugin_id, handler)
-        if result:
-            self.logger.info(f"Registered handler for extension point '{extension_point_name}' from plugin '{plugin_id}'")
-        else:
-            self.logger.error(f"Failed to register handler for extension point '{extension_point_name}' from plugin '{plugin_id}'")
+        # Check if plugins directory exists
+        if not os.path.exists(self.plugins_dir):
+            return discovered_plugins
         
-        return result
+        # Iterate through subdirectories in plugins directory
+        for item in os.listdir(self.plugins_dir):
+            plugin_dir = os.path.join(self.plugins_dir, item)
+            
+            # Skip non-directories
+            if not os.path.isdir(plugin_dir):
+                continue
+            
+            # Check for plugin manifest
+            manifest_path = os.path.join(plugin_dir, 'plugin.json')
+            
+            if os.path.exists(manifest_path):
+                try:
+                    # Load manifest
+                    with open(manifest_path, 'r') as f:
+                        manifest = json.load(f)
+                    
+                    # Check required fields
+                    if not all(k in manifest for k in ['id', 'name', 'version', 'description', 'type']):
+                        self.logger.warning(f"Skipping plugin in {plugin_dir}: Missing required fields in manifest")
+                        continue
+                    
+                    plugin_id = manifest['id']
+                    
+                    # Create plugin metadata
+                    metadata = PluginMetadata(
+                        plugin_id=plugin_id,
+                        name=manifest['name'],
+                        version=manifest['version'],
+                        description=manifest['description'],
+                        plugin_type=PluginType(manifest['type']),
+                        author=manifest.get('author'),
+                        website=manifest.get('website'),
+                        dependencies=manifest.get('dependencies', []),
+                        entrypoint=manifest.get('entrypoint', 'plugin'),
+                        config_schema=manifest.get('config_schema', {})
+                    )
+                    
+                    # Create plugin (without module/instance)
+                    self.plugins[plugin_id] = Plugin(metadata=metadata)
+                    
+                    # Save metadata
+                    self._save_plugin_metadata(self.plugins[plugin_id])
+                    
+                    discovered_plugins.append(plugin_id)
+                    
+                    self.logger.info(f"Discovered plugin: {metadata.name} (ID: {plugin_id})")
+                
+                except Exception as e:
+                    self.logger.error(f"Error discovering plugin in {plugin_dir}: {e}")
+        
+        return discovered_plugins
     
-    def load_plugin(self, plugin_id: str, config: Optional[Dict[str, Any]] = None) -> Optional[PluginInstance]:
+    def load_plugin(self, plugin_id: str) -> bool:
         """
-        Load a plugin by ID.
+        Load a plugin module.
         
         Args:
             plugin_id: ID of the plugin to load
+            
+        Returns:
+            Loading success
+        """
+        if plugin_id not in self.plugins:
+            return False
+        
+        plugin = self.plugins[plugin_id]
+        
+        # Skip if already loaded
+        if plugin.module is not None:
+            return True
+        
+        try:
+            # Get plugin directory path
+            plugin_dir = os.path.join(self.plugins_dir, plugin_id)
+            
+            if not os.path.exists(plugin_dir):
+                self.logger.error(f"Plugin directory not found: {plugin_dir}")
+                return False
+            
+            # Add plugin directory to sys.path temporarily
+            sys.path.insert(0, plugin_dir)
+            
+            # Load module
+            module_name = plugin.metadata.entrypoint or 'plugin'
+            
+            if os.path.exists(os.path.join(plugin_dir, f"{module_name}.py")):
+                # Load as file
+                spec = importlib.util.spec_from_file_location(
+                    module_name, 
+                    os.path.join(plugin_dir, f"{module_name}.py")
+                )
+                
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+            else:
+                # Load as package
+                module = importlib.import_module(module_name)
+            
+            # Get plugin class
+            plugin_class = None
+            
+            for name, obj in inspect.getmembers(module):
+                if inspect.isclass(obj) and hasattr(obj, 'is_plugin') and obj.is_plugin:
+                    plugin_class = obj
+                    break
+            
+            if plugin_class is None:
+                # Fallback: look for classes that inherit from a Plugin base class
+                for name, obj in inspect.getmembers(module):
+                    if inspect.isclass(obj) and name.endswith('Plugin'):
+                        plugin_class = obj
+                        break
+            
+            if plugin_class is None:
+                self.logger.error(f"No plugin class found in {module_name}")
+                return False
+            
+            # Create plugin instance
+            instance = plugin_class()
+            
+            # Update plugin
+            plugin.module = module
+            plugin.instance = instance
+            
+            # Restore sys.path
+            sys.path.remove(plugin_dir)
+            
+            self.logger.info(f"Loaded plugin module: {plugin.metadata.name} (ID: {plugin_id})")
+            return True
+        
+        except Exception as e:
+            # Restore sys.path if needed
+            if plugin_dir in sys.path:
+                sys.path.remove(plugin_dir)
+            
+            # Update plugin status
+            plugin.metadata.status = PluginStatus.ERROR
+            plugin.metadata.error = str(e)
+            
+            # Save metadata
+            self._save_plugin_metadata(plugin)
+            
+            self.logger.error(f"Error loading plugin {plugin_id}: {e}")
+            return False
+    
+    def initialize_plugin(self, plugin_id: str, config: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Initialize a plugin.
+        
+        Args:
+            plugin_id: ID of the plugin to initialize
             config: Optional plugin configuration
             
         Returns:
-            Loaded plugin instance or None if loading failed
+            Initialization success
         """
-        # Check if plugin is already loaded
-        if plugin_id in self.plugins:
-            self.logger.info(f"Plugin '{plugin_id}' is already loaded")
-            return self.plugins[plugin_id]
+        if plugin_id not in self.plugins:
+            return False
         
-        # Check if metadata exists
-        if plugin_id not in self.metadata_cache:
-            self.logger.error(f"No metadata found for plugin '{plugin_id}'")
-            return None
+        plugin = self.plugins[plugin_id]
         
-        metadata = self.metadata_cache[plugin_id]
+        # Load plugin if not already loaded
+        if plugin.module is None and not self.load_plugin(plugin_id):
+            return False
+        
+        # Configure plugin if config provided
+        if config is not None:
+            if not plugin.configure(config):
+                return False
+            
+            # Save config
+            self._save_plugin_config(plugin)
         
         # Check dependencies
-        for dep_id in metadata.dependencies:
-            if dep_id not in self.plugins:
-                # Try to load the dependency
-                dep_instance = self.load_plugin(dep_id)
-                if not dep_instance:
-                    self.logger.error(f"Cannot load plugin '{plugin_id}' because dependency '{dep_id}' failed to load")
-                    return None
-        
-        try:
-            # Parse entry point
-            module_name, class_name = metadata.entry_point.rsplit('.', 1)
+        for dependency_id in plugin.metadata.dependencies:
+            if dependency_id not in self.plugins:
+                plugin.metadata.error = f"Dependency not found: {dependency_id}"
+                plugin.metadata.status = PluginStatus.ERROR
+                
+                # Save metadata
+                self._save_plugin_metadata(plugin)
+                
+                self.logger.error(f"Plugin {plugin_id} is missing dependency: {dependency_id}")
+                return False
             
-            # Add plugin directory to Python path
-            for plugin_dir in self.plugin_dirs:
-                plugin_path = os.path.join(plugin_dir, metadata.name)
-                if os.path.exists(plugin_path):
-                    if plugin_path not in sys.path:
-                        sys.path.append(plugin_path)
-                    break
+            dep_plugin = self.plugins[dependency_id]
             
-            # Import the module
-            module = importlib.import_module(module_name)
-            
-            # Get the plugin class
-            plugin_class = getattr(module, class_name)
-            
-            # Create plugin instance
-            plugin_instance = plugin_class()
-            
-            # Create plugin logger
-            plugin_logger = logging.getLogger(f'plugin.{metadata.name}')
-            
-            # Create plugin context
-            plugin_context = PluginContext(
-                service_registry=self.service_registry,
-                configuration=config or {},
-                logger=plugin_logger,
-                plugin_manager=self,
-                metadata=metadata
-            )
-            
-            # Create plugin wrapper
-            instance = PluginInstance(
-                metadata=metadata,
-                instance=plugin_instance,
-                context=plugin_context
-            )
-            
-            # Initialize the plugin
-            if not instance.initialize():
-                self.logger.error(f"Plugin '{metadata.name}' failed to initialize")
-                return None
-            
-            # Update metadata
-            metadata.last_loaded = time.time()
-            
-            # Store the instance
-            self.plugins[plugin_id] = instance
-            
-            self.logger.info(f"Loaded plugin: {metadata.name} (ID: {plugin_id})")
-            return instance
-        except Exception as e:
-            self.logger.error(f"Error loading plugin '{plugin_id}': {str(e)}")
-            return None
-    
-    def activate_plugin(self, plugin_id: str) -> bool:
-        """
-        Activate a plugin.
-        
-        Args:
-            plugin_id: ID of the plugin to activate
-            
-        Returns:
-            Activation success
-        """
-        if plugin_id not in self.plugins:
-            self.logger.error(f"Cannot activate plugin '{plugin_id}' because it is not loaded")
-            return False
-        
-        instance = self.plugins[plugin_id]
-        
-        # Check if already active
-        if instance.is_active():
-            return True
-        
-        # Activate dependencies first
-        metadata = instance.metadata
-        for dep_id in metadata.dependencies:
-            if not self.activate_plugin(dep_id):
-                self.logger.error(f"Cannot activate plugin '{plugin_id}' because dependency '{dep_id}' failed to activate")
+            if dep_plugin.metadata.status != PluginStatus.ENABLED:
+                plugin.metadata.error = f"Dependency not enabled: {dependency_id}"
+                plugin.metadata.status = PluginStatus.ERROR
+                
+                # Save metadata
+                self._save_plugin_metadata(plugin)
+                
+                self.logger.error(f"Plugin {plugin_id} depends on disabled plugin: {dependency_id}")
                 return False
         
-        # Activate the plugin
-        result = instance.activate()
-        
-        if result:
-            self.logger.info(f"Activated plugin: {metadata.name} (ID: {plugin_id})")
-        
-        return result
-    
-    def deactivate_plugin(self, plugin_id: str, force: bool = False) -> bool:
-        """
-        Deactivate a plugin.
-        
-        Args:
-            plugin_id: ID of the plugin to deactivate
-            force: Force deactivation even if dependencies exist
-            
-        Returns:
-            Deactivation success
-        """
-        if plugin_id not in self.plugins:
-            self.logger.error(f"Cannot deactivate plugin '{plugin_id}' because it is not loaded")
+        # Initialize plugin
+        if not plugin.initialize():
             return False
         
-        instance = self.plugins[plugin_id]
+        # Register hooks
+        self._register_plugin_hooks(plugin)
         
-        # Check if already inactive
-        if not instance.is_active():
-            return True
+        # Save metadata
+        self._save_plugin_metadata(plugin)
         
-        # Check for dependents
-        if not force:
-            dependents = self._find_dependents(plugin_id)
-            if dependents:
-                active_dependents = [dep_id for dep_id in dependents if self.plugins[dep_id].is_active()]
-                if active_dependents:
-                    self.logger.error(f"Cannot deactivate plugin '{plugin_id}' because it has active dependents: {', '.join(active_dependents)}")
-                    return False
-        
-        # Deactivate the plugin
-        result = instance.deactivate()
-        
-        if result:
-            self.logger.info(f"Deactivated plugin: {instance.metadata.name} (ID: {plugin_id})")
-        
-        return result
+        self.logger.info(f"Initialized plugin: {plugin.metadata.name} (ID: {plugin_id})")
+        return True
     
-    def _find_dependents(self, plugin_id: str) -> List[str]:
+    def _register_plugin_hooks(self, plugin: Plugin) -> None:
         """
-        Find plugins that depend on a given plugin.
+        Register hooks provided by a plugin.
         
         Args:
-            plugin_id: ID of the plugin
+            plugin: Plugin to register hooks for
+        """
+        if plugin.instance is None:
+            return
+        
+        # Look for hook methods in the plugin instance
+        for name, method in inspect.getmembers(plugin.instance, inspect.ismethod):
+            if name.startswith('hook_'):
+                hook_name = name[5:]  # Remove 'hook_' prefix
+                
+                # Initialize hook list if needed
+                if hook_name not in self.hooks:
+                    self.hooks[hook_name] = []
+                
+                # Add hook method
+                self.hooks[hook_name].append(method)
+                
+                self.logger.info(f"Registered hook '{hook_name}' from plugin {plugin.metadata.id}")
+    
+    def shutdown_plugin(self, plugin_id: str) -> bool:
+        """
+        Shutdown a plugin.
+        
+        Args:
+            plugin_id: ID of the plugin to shutdown
             
         Returns:
-            List of dependent plugin IDs
+            Shutdown success
         """
-        dependents = []
+        if plugin_id not in self.plugins:
+            return False
         
-        for other_id, instance in self.plugins.items():
-            if plugin_id in instance.metadata.dependencies:
-                dependents.append(other_id)
+        plugin = self.plugins[plugin_id]
         
-        return dependents
+        # Skip if not initialized
+        if plugin.metadata.status != PluginStatus.ENABLED:
+            return True
+        
+        # Check if other plugins depend on this one
+        dependent_plugins = []
+        
+        for other_id, other_plugin in self.plugins.items():
+            if other_id != plugin_id and plugin_id in other_plugin.metadata.dependencies:
+                dependent_plugins.append(other_id)
+        
+        if dependent_plugins:
+            plugin.metadata.error = f"Other plugins depend on this plugin: {', '.join(dependent_plugins)}"
+            
+            # Save metadata
+            self._save_plugin_metadata(plugin)
+            
+            self.logger.error(f"Cannot shutdown plugin {plugin_id} because other plugins depend on it: {dependent_plugins}")
+            return False
+        
+        # Unregister hooks
+        self._unregister_plugin_hooks(plugin)
+        
+        # Shutdown plugin
+        if not plugin.shutdown():
+            return False
+        
+        # Save metadata
+        self._save_plugin_metadata(plugin)
+        
+        self.logger.info(f"Shutdown plugin: {plugin.metadata.name} (ID: {plugin_id})")
+        return True
     
-    def unload_plugin(self, plugin_id: str, force: bool = False) -> bool:
+    def _unregister_plugin_hooks(self, plugin: Plugin) -> None:
         """
-        Unload a plugin.
+        Unregister hooks provided by a plugin.
+        
+        Args:
+            plugin: Plugin to unregister hooks for
+        """
+        if plugin.instance is None:
+            return
+        
+        # Look for hook methods in the plugin instance
+        for name, method in inspect.getmembers(plugin.instance, inspect.ismethod):
+            if name.startswith('hook_'):
+                hook_name = name[5:]  # Remove 'hook_' prefix
+                
+                # Remove hook method if registered
+                if hook_name in self.hooks and method in self.hooks[hook_name]:
+                    self.hooks[hook_name].remove(method)
+                    
+                    self.logger.info(f"Unregistered hook '{hook_name}' from plugin {plugin.metadata.id}")
+    
+    def unload_plugin(self, plugin_id: str) -> bool:
+        """
+        Unload a plugin module.
         
         Args:
             plugin_id: ID of the plugin to unload
-            force: Force unloading even if dependencies exist
             
         Returns:
             Unloading success
         """
         if plugin_id not in self.plugins:
-            self.logger.error(f"Cannot unload plugin '{plugin_id}' because it is not loaded")
             return False
         
-        instance = self.plugins[plugin_id]
+        plugin = self.plugins[plugin_id]
         
-        # Deactivate if active
-        if instance.is_active():
-            if not self.deactivate_plugin(plugin_id, force):
-                return False
+        # Shutdown plugin if enabled
+        if plugin.metadata.status == PluginStatus.ENABLED and not self.shutdown_plugin(plugin_id):
+            return False
         
-        # Check for dependents
-        if not force:
-            dependents = self._find_dependents(plugin_id)
-            if dependents:
-                self.logger.error(f"Cannot unload plugin '{plugin_id}' because it has dependents: {', '.join(dependents)}")
-                return False
+        # Clear module and instance
+        plugin.module = None
+        plugin.instance = None
         
-        # Remove from extension points
-        for extension_point in self.extension_points.values():
-            extension_point.unregister_handler(plugin_id)
+        # Update status
+        plugin.metadata.status = PluginStatus.DISABLED
         
-        # Remove the instance
-        del self.plugins[plugin_id]
+        # Save metadata
+        self._save_plugin_metadata(plugin)
         
-        self.logger.info(f"Unloaded plugin: {instance.metadata.name} (ID: {plugin_id})")
+        self.logger.info(f"Unloaded plugin: {plugin.metadata.name} (ID: {plugin_id})")
         return True
     
-    def get_plugin(self, plugin_id: str) -> Optional[PluginInstance]:
+    def get_plugin(self, plugin_id: str) -> Optional[Plugin]:
         """
         Get a plugin by ID.
         
@@ -728,351 +687,344 @@ class PluginManager:
             plugin_id: ID of the plugin
             
         Returns:
-            Plugin instance or None if not found
+            Plugin or None if not found
         """
         return self.plugins.get(plugin_id)
     
-    def get_plugins_by_capability(self, capability: str) -> List[PluginInstance]:
+    def get_plugin_metadata(self, plugin_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get plugins that provide a specific capability.
-        
-        Args:
-            capability: Capability identifier
-            
-        Returns:
-            List of plugin instances
-        """
-        result = []
-        
-        for instance in self.plugins.values():
-            if capability in instance.get_capabilities():
-                result.append(instance)
-        
-        return result
-    
-    def get_active_plugins(self) -> List[PluginInstance]:
-        """
-        Get all active plugins.
-        
-        Returns:
-            List of active plugin instances
-        """
-        return [instance for instance in self.plugins.values() if instance.is_active()]
-    
-    def get_plugin_metadata(self, plugin_id: str) -> Optional[PluginMetadata]:
-        """
-        Get metadata for a plugin.
+        Get plugin metadata by ID.
         
         Args:
             plugin_id: ID of the plugin
             
         Returns:
-            Plugin metadata or None if not found
+            Plugin metadata dictionary or None if not found
         """
-        # Check loaded plugins first
-        if plugin_id in self.plugins:
-            return self.plugins[plugin_id].metadata
+        if plugin_id not in self.plugins:
+            return None
         
-        # Check metadata cache
-        return self.metadata_cache.get(plugin_id)
+        return self.plugins[plugin_id].metadata.to_dict()
     
-    def get_available_plugins(self) -> List[PluginMetadata]:
+    def list_plugins(self, plugin_type: Optional[Union[str, PluginType]] = None,
+                  status: Optional[Union[str, PluginStatus]] = None) -> List[Dict[str, Any]]:
         """
-        Get metadata for all available plugins.
-        
-        Returns:
-            List of plugin metadata
-        """
-        return list(self.metadata_cache.values())
-    
-    def refresh_metadata(self) -> None:
-        """Refresh the plugin metadata cache."""
-        self._load_metadata()
-        self.logger.info("Refreshed plugin metadata cache")
-
-
-class PluginSDK:
-    """
-    SDK for plugin developers.
-    
-    This provides utilities for plugin development and testing.
-    """
-    
-    @staticmethod
-    def create_plugin_structure(output_dir: str, metadata: Dict[str, Any]) -> str:
-        """
-        Create a basic plugin structure.
+        List plugins in the system.
         
         Args:
-            output_dir: Directory to create the plugin in
-            metadata: Plugin metadata
+            plugin_type: Optional filter by plugin type
+            status: Optional filter by status
             
         Returns:
-            Path to the created plugin directory
+            List of plugin metadata dictionaries
         """
-        name = metadata['name']
-        plugin_dir = os.path.join(output_dir, name)
+        # Convert filters from strings if needed
+        if isinstance(plugin_type, str):
+            plugin_type = PluginType(plugin_type)
         
-        # Create plugin directory
-        os.makedirs(plugin_dir, exist_ok=True)
+        if isinstance(status, str):
+            status = PluginStatus(status)
         
-        # Create metadata file
-        with open(os.path.join(plugin_dir, 'plugin.json'), 'w') as f:
-            json.dump(metadata, f, indent=2)
+        # Apply filters
+        result = []
         
-        # Create Python package
-        os.makedirs(os.path.join(plugin_dir, name), exist_ok=True)
+        for plugin in self.plugins.values():
+            # Apply plugin type filter
+            if plugin_type and plugin.metadata.plugin_type != plugin_type:
+                continue
+            
+            # Apply status filter
+            if status and plugin.metadata.status != status:
+                continue
+            
+            # Add to result
+            result.append(plugin.metadata.to_dict())
         
-        # Create __init__.py
-        with open(os.path.join(plugin_dir, name, '__init__.py'), 'w') as f:
-            f.write(f'"""Plugin package for {name}."""\n')
-        
-        # Extract class name from entry point
-        module_name, class_name = metadata['entry_point'].rsplit('.', 1)
-        
-        # Create main plugin file
-        plugin_file = os.path.join(plugin_dir, name, 'plugin.py')
-        with open(plugin_file, 'w') as f:
-            f.write(f'''"""
-{name} Plugin
-
-{metadata['description']}
-"""
-from typing import List, Dict, Any, Optional
-
-class {class_name}:
-    """
-    {name} plugin implementation.
-    """
+        return result
     
-    def initialize(self, context):
+    def call_hook(self, hook_name: str, *args, **kwargs) -> List[Any]:
         """
-        Initialize the plugin.
+        Call all registered hook methods for a specific hook.
         
         Args:
-            context: Plugin context
+            hook_name: Name of the hook to call
+            *args: Positional arguments to pass to the hook methods
+            **kwargs: Keyword arguments to pass to the hook methods
             
         Returns:
-            Initialization success
+            List of results from the hook methods
         """
-        self.context = context
-        self.logger = context.logger
+        if hook_name not in self.hooks:
+            return []
         
-        self.logger.info("{name} plugin initialized")
-        return True
-    
-    def activate(self):
-        """
-        Activate the plugin.
+        results = []
         
-        Returns:
-            Activation success
-        """
-        self.logger.info("{name} plugin activated")
-        return True
-    
-    def deactivate(self):
-        """
-        Deactivate the plugin.
-        
-        Returns:
-            Deactivation success
-        """
-        self.logger.info("{name} plugin deactivated")
-        return True
-    
-    def get_capabilities(self):
-        """
-        Get plugin capabilities.
-        
-        Returns:
-            List of capabilities
-        """
-        return {metadata.get('capabilities', [])}
-''')
-        
-        # Create README.md
-        with open(os.path.join(plugin_dir, 'README.md'), 'w') as f:
-            f.write(f'''# {name}
-
-{metadata['description']}
-
-## Author
-
-{metadata['author']}
-
-## Version
-
-{metadata['version']}
-
-## Installation
-
-1. Copy this directory to the plugins directory of the Code Deep Dive Analyzer.
-2. Restart the application.
-3. Enable the plugin in the plugin manager.
-
-## Configuration
-
-TODO: Add configuration instructions.
-
-## Usage
-
-TODO: Add usage instructions.
-''')
-        
-        return plugin_dir
-    
-    @staticmethod
-    def validate_plugin(plugin_dir: str) -> Dict[str, Any]:
-        """
-        Validate a plugin.
-        
-        Args:
-            plugin_dir: Path to the plugin directory
+        for hook_method in self.hooks[hook_name]:
+            try:
+                result = hook_method(*args, **kwargs)
+                results.append(result)
             
-        Returns:
-            Validation results
-        """
-        results = {
-            'valid': True,
-            'errors': [],
-            'warnings': []
-        }
-        
-        # Check if plugin.json exists
-        metadata_path = os.path.join(plugin_dir, 'plugin.json')
-        if not os.path.exists(metadata_path):
-            results['valid'] = False
-            results['errors'].append(f"Missing plugin.json file")
-            return results
-        
-        # Load and validate metadata
-        try:
-            with open(metadata_path, 'r') as f:
-                metadata = json.load(f)
-            
-            # Check required fields
-            required_fields = ['name', 'version', 'description', 'author', 'entry_point']
-            for field in required_fields:
-                if field not in metadata:
-                    results['valid'] = False
-                    results['errors'].append(f"Missing required field in plugin.json: {field}")
-            
-            # Parse entry point
-            if 'entry_point' in metadata:
-                try:
-                    module_name, class_name = metadata['entry_point'].rsplit('.', 1)
-                    
-                    # Check if the module exists
-                    sys.path.append(plugin_dir)
-                    try:
-                        module = importlib.import_module(module_name)
-                        
-                        # Check if the class exists
-                        if not hasattr(module, class_name):
-                            results['valid'] = False
-                            results['errors'].append(f"Entry point class '{class_name}' not found in module '{module_name}'")
-                        else:
-                            # Check if the class implements the required methods
-                            plugin_class = getattr(module, class_name)
-                            
-                            required_methods = ['initialize', 'activate', 'deactivate', 'get_capabilities']
-                            for method in required_methods:
-                                if not hasattr(plugin_class, method):
-                                    results['valid'] = False
-                                    results['errors'].append(f"Plugin class is missing required method: {method}")
-                    except ImportError as e:
-                        results['valid'] = False
-                        results['errors'].append(f"Failed to import plugin module '{module_name}': {str(e)}")
-                    finally:
-                        if plugin_dir in sys.path:
-                            sys.path.remove(plugin_dir)
-                except ValueError:
-                    results['valid'] = False
-                    results['errors'].append(f"Invalid entry point format: {metadata['entry_point']}")
-        
-        except Exception as e:
-            results['valid'] = False
-            results['errors'].append(f"Error loading plugin.json: {str(e)}")
+            except Exception as e:
+                self.logger.error(f"Error calling hook '{hook_name}': {e}")
         
         return results
-
-
-# Define some commonly used extension point interfaces
-
-class CodeAnalyzerExtension(ABC):
-    """Interface for code analyzer extensions."""
     
-    @abstractmethod
-    def analyze_code(self, code: str, language: str, options: Dict[str, Any]) -> Dict[str, Any]:
+    def call_plugin_method(self, plugin_id: str, method_name: str, *args, **kwargs) -> Any:
         """
-        Analyze code.
+        Call a method on a plugin instance.
         
         Args:
-            code: Source code to analyze
-            language: Programming language of the code
-            options: Analysis options
+            plugin_id: ID of the plugin
+            method_name: Name of the method to call
+            *args: Positional arguments to pass to the method
+            **kwargs: Keyword arguments to pass to the method
             
         Returns:
-            Analysis results
+            Result of the method call or None if not found or error
         """
-        pass
-
-
-class VisualizationExtension(ABC):
-    """Interface for visualization extensions."""
+        if plugin_id not in self.plugins:
+            return None
+        
+        plugin = self.plugins[plugin_id]
+        
+        if plugin.instance is None:
+            return None
+        
+        if not hasattr(plugin.instance, method_name) or not callable(getattr(plugin.instance, method_name)):
+            return None
+        
+        try:
+            method = getattr(plugin.instance, method_name)
+            return method(*args, **kwargs)
+        
+        except Exception as e:
+            self.logger.error(f"Error calling method '{method_name}' on plugin {plugin_id}: {e}")
+            return None
     
-    @abstractmethod
-    def generate_visualization(self, data: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
+    def install_plugin(self, plugin_source: str) -> Optional[str]:
         """
-        Generate visualization.
+        Install a plugin from a source (directory).
         
         Args:
-            data: Data to visualize
-            options: Visualization options
+            plugin_source: Source directory containing the plugin
             
         Returns:
-            Visualization results
+            Plugin ID or None if installation failed
         """
-        pass
-
-
-class ModelProviderExtension(ABC):
-    """Interface for model provider extensions."""
-    
-    @abstractmethod
-    def get_available_models(self) -> List[Dict[str, Any]]:
-        """
-        Get available models.
+        try:
+            # Check if source exists
+            if not os.path.exists(plugin_source) or not os.path.isdir(plugin_source):
+                self.logger.error(f"Plugin source not found: {plugin_source}")
+                return None
+            
+            # Check for plugin manifest
+            manifest_path = os.path.join(plugin_source, 'plugin.json')
+            
+            if not os.path.exists(manifest_path):
+                self.logger.error(f"Plugin manifest not found: {manifest_path}")
+                return None
+            
+            # Load manifest
+            with open(manifest_path, 'r') as f:
+                manifest = json.load(f)
+            
+            # Check required fields
+            if not all(k in manifest for k in ['id', 'name', 'version', 'description', 'type']):
+                self.logger.error(f"Missing required fields in plugin manifest: {manifest_path}")
+                return None
+            
+            plugin_id = manifest['id']
+            
+            # Check if plugin already exists
+            if plugin_id in self.plugins:
+                self.logger.error(f"Plugin already exists: {plugin_id}")
+                return None
+            
+            # Create plugin directory
+            plugin_dir = os.path.join(self.plugins_dir, plugin_id)
+            
+            if os.path.exists(plugin_dir):
+                self.logger.error(f"Plugin directory already exists: {plugin_dir}")
+                return None
+            
+            # Copy plugin files
+            import shutil
+            shutil.copytree(plugin_source, plugin_dir)
+            
+            # Create plugin metadata
+            metadata = PluginMetadata(
+                plugin_id=plugin_id,
+                name=manifest['name'],
+                version=manifest['version'],
+                description=manifest['description'],
+                plugin_type=PluginType(manifest['type']),
+                author=manifest.get('author'),
+                website=manifest.get('website'),
+                dependencies=manifest.get('dependencies', []),
+                entrypoint=manifest.get('entrypoint', 'plugin'),
+                config_schema=manifest.get('config_schema', {})
+            )
+            
+            # Create plugin (without module/instance)
+            self.plugins[plugin_id] = Plugin(metadata=metadata)
+            
+            # Save metadata
+            self._save_plugin_metadata(self.plugins[plugin_id])
+            
+            self.logger.info(f"Installed plugin: {metadata.name} (ID: {plugin_id})")
+            return plugin_id
         
-        Returns:
-            List of available models with metadata
-        """
-        pass
+        except Exception as e:
+            self.logger.error(f"Error installing plugin: {e}")
+            return None
     
-    @abstractmethod
-    def load_model(self, model_id: str) -> Any:
+    def uninstall_plugin(self, plugin_id: str) -> bool:
         """
-        Load a model.
+        Uninstall a plugin.
         
         Args:
-            model_id: ID of the model to load
+            plugin_id: ID of the plugin to uninstall
             
         Returns:
-            Loaded model
+            Uninstallation success
         """
-        pass
+        if plugin_id not in self.plugins:
+            return False
+        
+        # Unload plugin if loaded
+        if self.plugins[plugin_id].module is not None and not self.unload_plugin(plugin_id):
+            return False
+        
+        # Check if other plugins depend on this one
+        dependent_plugins = []
+        
+        for other_id, other_plugin in self.plugins.items():
+            if other_id != plugin_id and plugin_id in other_plugin.metadata.dependencies:
+                dependent_plugins.append(other_id)
+        
+        if dependent_plugins:
+            self.logger.error(f"Cannot uninstall plugin {plugin_id} because other plugins depend on it: {dependent_plugins}")
+            return False
+        
+        # Remove plugin files
+        plugin_dir = os.path.join(self.plugins_dir, plugin_id)
+        
+        if os.path.exists(plugin_dir):
+            try:
+                import shutil
+                shutil.rmtree(plugin_dir)
+            except Exception as e:
+                self.logger.error(f"Error removing plugin directory {plugin_dir}: {e}")
+        
+        # Remove plugin metadata
+        metadata_path = os.path.join(self.storage_dir, 'metadata', f"{plugin_id}.json")
+        
+        if os.path.exists(metadata_path):
+            try:
+                os.remove(metadata_path)
+            except Exception as e:
+                self.logger.error(f"Error removing plugin metadata {metadata_path}: {e}")
+        
+        # Remove plugin config
+        config_path = os.path.join(self.storage_dir, 'config', f"{plugin_id}.json")
+        
+        if os.path.exists(config_path):
+            try:
+                os.remove(config_path)
+            except Exception as e:
+                self.logger.error(f"Error removing plugin config {config_path}: {e}")
+        
+        # Remove from plugins dictionary
+        del self.plugins[plugin_id]
+        
+        self.logger.info(f"Uninstalled plugin: {plugin_id}")
+        return True
     
-    @abstractmethod
-    def infer(self, model: Any, input_data: Any) -> Any:
+    def update_plugin(self, plugin_id: str, plugin_source: str) -> bool:
         """
-        Perform inference with a model.
+        Update a plugin from a source (directory).
         
         Args:
-            model: Loaded model
-            input_data: Input data for inference
+            plugin_id: ID of the plugin to update
+            plugin_source: Source directory containing the updated plugin
             
         Returns:
-            Inference result
+            Update success
         """
-        pass
+        if plugin_id not in self.plugins:
+            return False
+        
+        # Unload plugin if loaded
+        if self.plugins[plugin_id].module is not None and not self.unload_plugin(plugin_id):
+            return False
+        
+        # Uninstall plugin
+        if not self.uninstall_plugin(plugin_id):
+            return False
+        
+        # Install updated plugin
+        new_plugin_id = self.install_plugin(plugin_source)
+        
+        if new_plugin_id is None or new_plugin_id != plugin_id:
+            self.logger.error(f"Failed to install updated plugin: {plugin_id}")
+            return False
+        
+        self.logger.info(f"Updated plugin: {plugin_id}")
+        return True
+    
+    def validate_plugin_dependencies(self) -> Dict[str, List[str]]:
+        """
+        Validate plugin dependencies.
+        
+        Returns:
+            Dictionary mapping plugin IDs to lists of missing dependency IDs
+        """
+        missing_dependencies = {}
+        
+        for plugin_id, plugin in self.plugins.items():
+            missing = []
+            
+            for dependency_id in plugin.metadata.dependencies:
+                if dependency_id not in self.plugins:
+                    missing.append(dependency_id)
+            
+            if missing:
+                missing_dependencies[plugin_id] = missing
+        
+        return missing_dependencies
+    
+    def auto_configure_plugin(self, plugin_id: str) -> bool:
+        """
+        Automatically configure a plugin using default values from its config schema.
+        
+        Args:
+            plugin_id: ID of the plugin to configure
+            
+        Returns:
+            Configuration success
+        """
+        if plugin_id not in self.plugins:
+            return False
+        
+        plugin = self.plugins[plugin_id]
+        
+        # Generate default configuration from schema
+        config = {}
+        
+        if plugin.metadata.config_schema:
+            schema = plugin.metadata.config_schema
+            
+            # Process properties
+            for prop_name, prop_schema in schema.get('properties', {}).items():
+                if 'default' in prop_schema:
+                    config[prop_name] = prop_schema['default']
+        
+        # Configure plugin
+        if config:
+            if not plugin.configure(config):
+                return False
+            
+            # Save config
+            self._save_plugin_config(plugin)
+        
+        return True

@@ -1,6 +1,6 @@
 """
 API Gateway Package
 
-This service provides a unified interface for accessing all other microservices
-in the Code Deep Dive Analyzer system.
+This service provides a unified API interface that routes requests to the appropriate
+microservices, handles authentication, and manages cross-service communication.
 """
