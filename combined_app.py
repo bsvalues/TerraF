@@ -52,6 +52,13 @@ try:
 except ImportError:
     AGENT_SYSTEM_AVAILABLE = False
 
+# Import agent orchestration UI
+try:
+    from agent_orchestration_ui import add_agent_orchestration_to_app
+    AGENT_ORCHESTRATION_AVAILABLE = True
+except ImportError:
+    AGENT_ORCHESTRATION_AVAILABLE = False
+
 # Initialize state
 if 'app_mode' not in st.session_state:
     st.session_state.app_mode = "original"
@@ -119,6 +126,11 @@ def initialize_enhanced_session_state():
         
         # Initialize enhanced UI state
         st.session_state.enhanced_current_tab = "Repository Analysis"
+        
+        # Initialize agent orchestration state if available
+        if AGENT_ORCHESTRATION_AVAILABLE:
+            from agent_orchestration_ui import initialize_agent_orchestration_state
+            initialize_agent_orchestration_state()
         
         # Mark as initialized
         st.session_state.enhanced_initialized = True
@@ -482,6 +494,10 @@ def render_enhanced_tabs():
     with tabs[1]:
         render_knowledge_graph_tab()
     
+    # Agent Orchestration tab
+    with tabs[4]:
+        render_agent_orchestration_tab()
+    
     # Add other tabs from the enhanced app...
     # These would be copied from the enhanced_app.py
     
@@ -608,6 +624,16 @@ def render_repository_analysis_tab():
             st.metric("Branches", results.get('branch_count', 0))
         
         # Add additional result display
+
+def render_agent_orchestration_tab():
+    """Render the agent orchestration tab"""
+    if not AGENT_ORCHESTRATION_AVAILABLE:
+        st.warning("Agent Orchestration is not available. Please check that the agent_orchestration_ui.py file exists.")
+        return
+    
+    # Use the agent orchestration UI
+    from agent_orchestration_ui import add_agent_orchestration_to_app
+    add_agent_orchestration_to_app()
 
 def render_knowledge_graph_tab():
     """Render the knowledge graph tab"""
