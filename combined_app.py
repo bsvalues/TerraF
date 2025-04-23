@@ -130,7 +130,14 @@ def initialize_enhanced_session_state():
         st.session_state.multimodal_analysis = None
         st.session_state.sdk_plugins = []
         st.session_state.academic_research = None
-        st.session_state.api_gateway = None
+        
+        # Initialize API Gateway (this was the missing part)
+        try:
+            st.session_state.api_gateway = st.session_state.services_connector.api_gateway_service()
+            logger.info("API Gateway initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize API Gateway: {str(e)}")
+            st.session_state.api_gateway = None
         
         # Initialize enhanced UI state
         st.session_state.enhanced_current_tab = "Repository Analysis"
