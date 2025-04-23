@@ -4,6 +4,7 @@ AI Service
 This module provides a unified interface to multiple AI models for various capabilities.
 """
 import os
+import json
 import logging
 from typing import Dict, List, Any, Optional, Union
 
@@ -139,6 +140,9 @@ class AIService:
                 analysis_type=analysis_type,
                 language=language
             )
+        
+        # Return error if no provider was used
+        return {"error": "Failed to analyze code with any provider"}
     
     def analyze_image(self, image_path: str, provider: str = "auto") -> Dict[str, Any]:
         """
@@ -212,6 +216,88 @@ class AIService:
                 code=code
             )
     
+    def generate_structured_output(self, prompt: str, output_schema: Dict[str, Any],
+                          provider: str = "auto", temperature: float = 0.1) -> Dict[str, Any]:
+        """
+        Generate structured output using AI models.
+        
+        Args:
+            prompt: The prompt for which to generate a structured response
+            output_schema: Schema defining the expected output structure
+            provider: AI provider to use ("openai", "anthropic", or "auto")
+            temperature: Temperature setting (0.0 to 1.0)
+            
+        Returns:
+            Dictionary with the structured output and metadata
+        """
+        # Determine the provider to use
+        if provider == "auto":
+            if self.available_services["openai"]:  # Prefer OpenAI for structured output
+                provider = "openai"
+            elif self.available_services["anthropic"]:
+                provider = "anthropic"
+            else:
+                return {"error": "No AI services available"}
+        
+        # Validate the provider
+        if provider not in self.available_services or not self.available_services[provider]:
+            return {"error": f"AI provider '{provider}' not available"}
+        
+        # Create a unified prompt that specifies the output format
+        schema_instruction = f"""
+        Analyze the information and provide a response in the following JSON format:
+        {json.dumps(output_schema, indent=2)}
+        
+        Ensure the response is valid JSON that matches this schema exactly.
+        """
+        
+        unified_prompt = f"{prompt}\n\n{schema_instruction}"
+        
+        # Generate the structured output
+        result = self.generate_text(
+            prompt=unified_prompt,
+            provider=provider,
+            temperature=temperature,
+            max_tokens=2000
+        )
+        
+        if "error" in result:
+            return result
+        
+        # Extract and parse the JSON from the response
+        try:
+            # Try to find JSON in the response
+            text = result.get("text", "")
+            json_start = text.find("{")
+            json_end = text.rfind("}")
+            
+            if json_start >= 0 and json_end > json_start:
+                json_str = text[json_start:json_end+1]
+                data = json.loads(json_str)
+                
+                # Return the structured data with metadata
+                return {
+                    "status": "success",
+                    "data": data,
+                    "model": result.get("model", "unknown"),
+                    "provider": provider
+                }
+            else:
+                return {
+                    "error": "Could not find valid JSON in the response",
+                    "raw_text": text
+                }
+        except json.JSONDecodeError:
+            return {
+                "error": "Failed to parse JSON from response",
+                "raw_text": result.get("text", "")
+            }
+        except Exception as e:
+            return {
+                "error": f"Error processing structured output: {str(e)}",
+                "raw_text": result.get("text", "")
+            }
+
     def analyze_repository(self, repo_path: str, analysis_areas: Optional[List[str]] = None,
                         provider: str = "auto") -> Dict[str, Any]:
         """
