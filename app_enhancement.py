@@ -428,7 +428,12 @@ class AgentSystemUI:
         server.task_orchestrator.submit_task(task)
         
         # Add to activity log
-        self._add_activity_log(agent_id, f"Assigned task: {task_type} - {description}")
+        current_time = time.strftime('%H:%M:%S')
+        st.session_state.agent_activity_log.append({
+            "agent": agent_id,
+            "activity": f"Assigned task: {task_type} - {description}",
+            "time": current_time
+        })
     
     def _update_activity_log(self):
         """Update the agent activity log with simulated data"""
@@ -638,7 +643,7 @@ class EnhancedAnalyzerUI:
             with st.spinner("Agents are analyzing your request..."):
                 time.sleep(3)  # Simulate processing time
                 st.session_state.waiting_for_response = False
-                st.experimental_rerun()
+                st.rerun()
     
     def render_insight_visualization_tab(self):
         """Render the insight visualization tab"""
@@ -1114,4 +1119,4 @@ def add_agent_system_to_app():
     for i, tab_name in enumerate(tab_names):
         if tabs[i]._active and st.session_state.current_tab != tab_name:
             st.session_state.current_tab = tab_name
-            st.experimental_rerun()
+            st.rerun()

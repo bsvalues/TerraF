@@ -547,7 +547,12 @@ class ModelUpdateManager:
         
         if not relevant_patterns:
             logger.warning(f"No relevant patterns found for model {model_id}")
-            return None
+            # Return empty training file path
+            filename = f"{model_id}_empty.jsonl"
+            file_path = os.path.join(self.training_data_path, filename)
+            with open(file_path, 'w') as f:
+                f.write("")
+            return file_path
         
         # Create training examples from patterns
         training_examples = []
@@ -560,7 +565,12 @@ class ModelUpdateManager:
         
         if not training_examples:
             logger.warning(f"No training examples generated for model {model_id}")
-            return None
+            # Return empty training file path instead of None
+            filename = f"{model_id}_empty_examples.jsonl"
+            file_path = os.path.join(self.training_data_path, filename)
+            with open(file_path, 'w') as f:
+                f.write("")
+            return file_path
         
         # Save training data to file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

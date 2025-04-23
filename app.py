@@ -18,6 +18,13 @@ from report_generator import generate_summary_report
 from utils import save_analysis_results, load_analysis_results
 import visualizations
 
+# Import agent system enhancement (conditionally, as it may not exist yet)
+try:
+    from app_enhancement import add_agent_system_to_app
+    AGENT_SYSTEM_AVAILABLE = True
+except ImportError:
+    AGENT_SYSTEM_AVAILABLE = False
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -857,6 +864,17 @@ def render_workflow_tab():
 def main():
     """Main application function"""
     initialize_session_state()
+    
+    # Check if agent system enhancement is available and should be used
+    if AGENT_SYSTEM_AVAILABLE and st.session_state.get('use_agent_system', True):
+        # Add the agent system UI to the app
+        add_agent_system_to_app()
+        
+        # The add_agent_system_to_app function will handle rendering the original app
+        # in the first tab, so we can return here
+        return
+    
+    # Original app rendering (used if agent system is not available)
     render_header()
     
     # Define tabs
