@@ -59,6 +59,13 @@ try:
 except ImportError:
     AGENT_ORCHESTRATION_AVAILABLE = False
 
+# Import workflow mapper UI
+try:
+    from workflow_mapper_ui import render_workflow_mapper_tab, add_workflow_mapper_tab
+    WORKFLOW_MAPPER_AVAILABLE = True
+except ImportError:
+    WORKFLOW_MAPPER_AVAILABLE = False
+
 # Initialize state
 if 'app_mode' not in st.session_state:
     st.session_state.app_mode = "original"
@@ -409,9 +416,17 @@ def render_original_app():
     
     # Create tabs
     current_tab = st.session_state.get('current_tab', 'Input')
-    tabs = st.tabs(["Input", "Summary", "Repository Structure", "Code Review", 
-                    "Database Analysis", "Modularization", "Agent Readiness", 
-                    "Workflow Patterns"])
+    
+    # Define tabs list
+    tabs_list = ["Input", "Summary", "Repository Structure", "Code Review", 
+               "Database Analysis", "Modularization", "Agent Readiness", 
+               "Workflow Patterns"]
+    
+    # Add Intelligent Workflow Mapper tab if available
+    if WORKFLOW_MAPPER_AVAILABLE:
+        tabs_list = add_workflow_mapper_tab(tabs_list)
+    
+    tabs = st.tabs(tabs_list)
     
     # Render content for selected tab
     with tabs[0]:  # Input tab
