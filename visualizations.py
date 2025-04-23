@@ -50,477 +50,373 @@ def visualize_repository_structure(repo_structure):
             parents=parents,
             values=values,
             branchvalues="total",
-            hovertemplate='<b>%{label}</b><br>Files: %{value}<br>',
-            maxdepth=2
+            textinfo="label+value",
+            hoverinfo="label+value+percent parent"
         ))
         
         fig.update_layout(
-            title="Repository File Type Distribution",
-            margin=dict(t=30, l=0, r=0, b=0)
+            title="Repository File Structure",
+            margin=dict(t=30, l=0, r=0, b=0),
+            height=500
         )
         
         return fig
     except Exception as e:
         logger.error(f"Error creating repository structure visualization: {str(e)}")
-        
-        # Return a fallback visualization
-        return create_fallback_visualization(
-            "Repository Structure", 
-            "Error creating visualization"
-        )
+        # Return a placeholder figure with error message
+        fig = go.Figure()
+        fig.add_annotation(text=f"Error creating visualization: {str(e)}", 
+                          showarrow=False, font=dict(size=14, color="red"))
+        return fig
 
 def visualize_code_complexity(code_review):
     """
-    Create a visualization of code complexity metrics
+    Create a visualization of code complexity
     
     Parameters:
-    - code_review: Code review analysis data
+    - code_review: Code review results
     
     Returns:
-    - plotly figure: Visualization of code complexity
+    - plotly figure: Complexity visualization
     """
     logger.info("Generating code complexity visualization...")
     
     try:
-        # Get complex files data
+        # Extract complex files data
         complex_files = code_review.get('top_complex_files', [])
         
-        if complex_files:
-            # Prepare data for visualization
-            files = [f.get('file', '').split('/')[-1] for f in complex_files]
-            complexity = [f.get('complexity', 0) for f in complex_files]
-            loc = [f.get('loc', 0) for f in complex_files]
-            
-            # Create a bubble chart
+        if not complex_files:
+            # Return a placeholder figure if no data
             fig = go.Figure()
-            
-            # Add a scatter trace for complexity vs. LOC
-            fig.add_trace(go.Scatter(
-                x=loc,
-                y=complexity,
-                mode='markers',
-                marker=dict(
-                    size=[min(c/2, 50) for c in complexity],  # Size based on complexity, but capped
-                    color=complexity,
-                    colorscale='Viridis',
-                    colorbar=dict(title="Complexity"),
-                    showscale=True
-                ),
-                text=files,
-                hovertemplate='<b>%{text}</b><br>Complexity: %{y}<br>Lines: %{x}<br>'
-            ))
-            
-            fig.update_layout(
-                title="Code Complexity vs. Size",
-                xaxis_title="Lines of Code",
-                yaxis_title="Cyclomatic Complexity",
-                hovermode='closest'
-            )
-            
+            fig.add_annotation(text="No complexity data available", 
+                              showarrow=False, font=dict(size=14))
             return fig
-        else:
-            # Create a bar chart of issue types if no complex files data
-            issue_counts = defaultdict(int)
-            for file_issue in code_review.get('files_with_issues', []):
-                for detail in file_issue.get('details', []):
-                    for issue_type in ['long_method', 'complex_method', 'large_class', 
-                                      'magic_numbers', 'commented_code', 'nested_conditionals']:
-                        if issue_type in detail:
-                            issue_counts[issue_type.replace('_', ' ')] += 1
-            
-            if issue_counts:
-                issues = list(issue_counts.keys())
-                counts = list(issue_counts.values())
-                
-                fig = go.Figure([go.Bar(x=issues, y=counts)])
-                
-                fig.update_layout(
-                    title="Code Issues by Type",
-                    xaxis_title="Issue Type",
-                    yaxis_title="Count",
-                    yaxis=dict(rangemode='nonnegative')
-                )
-                
-                return fig
-            
-            return create_fallback_visualization(
-                "Code Complexity", 
-                "No complexity data available"
-            )
+        
+        # Prepare data for visualization
+        files = [f.get('file', 'unknown') for f in complex_files]
+        complexity = [f.get('complexity', 0) for f in complex_files]
+        loc = [f.get('loc', 0) for f in complex_files]
+        
+        # Create bubble chart
+        fig = go.Figure()
+        
+        # Add scatter plot with size representing lines of code
+        fig.add_trace(go.Scatter(
+            x=complexity,
+            y=list(range(len(files))),
+            text=files,
+            mode='markers',
+            marker=dict(
+                size=[min(max(10, l / 10), 50) for l in loc],  # Scale LOC to reasonable marker sizes
+                color=complexity,
+                colorscale='Viridis',
+                colorbar=dict(title="Complexity"),
+                line=dict(width=1, color='black')
+            ),
+            hovertemplate='<b>%{text}</b><br>Complexity: %{x}<br>Lines of Code: %{marker.size:.0f}<extra></extra>'
+        ))
+        
+        # Update layout
+        fig.update_layout(
+            title="Code Complexity Analysis",
+            xaxis_title="Complexity",
+            yaxis=dict(
+                title="Files",
+                tickvals=list(range(len(files))),
+                ticktext=files,
+                automargin=True
+            ),
+            height=max(400, len(files) * 30),  # Dynamic height based on number of files
+            margin=dict(l=10, r=10, t=30, b=10)
+        )
+        
+        return fig
     except Exception as e:
         logger.error(f"Error creating code complexity visualization: {str(e)}")
-        
-        # Return a fallback visualization
-        return create_fallback_visualization(
-            "Code Complexity", 
-            "Error creating visualization"
-        )
+        # Return a placeholder figure with error message
+        fig = go.Figure()
+        fig.add_annotation(text=f"Error creating visualization: {str(e)}", 
+                          showarrow=False, font=dict(size=14, color="red"))
+        return fig
 
-def visualize_database_relations(database_analysis):
+def visualize_database_relations(db_analysis):
     """
     Create a visualization of database relations
     
     Parameters:
-    - database_analysis: Database analysis data
+    - db_analysis: Database analysis results
     
     Returns:
-    - plotly figure: Visualization of database relations
+    - plotly figure: Relations visualization
     """
     logger.info("Generating database relations visualization...")
     
     try:
         # Extract database models
-        models = database_analysis.get('database_models', {})
+        models = db_analysis.get('database_models', {})
         
-        if models:
-            # Create a directed graph
-            G = nx.DiGraph()
-            
-            # Add nodes for each model
-            for model_name in models:
-                G.add_node(model_name, type='model')
-            
-            # Add edges for relationships
-            for model_name, model_info in models.items():
-                for relationship in model_info.get('relationships', []):
-                    related_model = relationship.get('related_model')
-                    if related_model in models:
-                        G.add_edge(model_name, related_model, 
-                                  relation=relationship.get('type', 'relationship'))
-            
-            # Create a network visualization
-            if len(G.nodes) > 1:
-                # Create positions for nodes using spring layout
-                pos = nx.spring_layout(G, seed=42)
-                
-                # Create edge traces
-                edge_x = []
-                edge_y = []
-                edge_texts = []
-                
-                for edge in G.edges(data=True):
-                    x0, y0 = pos[edge[0]]
-                    x1, y1 = pos[edge[1]]
-                    edge_x.extend([x0, x1, None])
-                    edge_y.extend([y0, y1, None])
-                    edge_texts.append(edge[2].get('relation', 'relationship'))
-                
-                edge_trace = go.Scatter(
-                    x=edge_x, y=edge_y,
-                    line=dict(width=1, color='#888'),
-                    hoverinfo='none',
-                    mode='lines')
-                
-                # Create node traces
-                node_x = []
-                node_y = []
-                node_text = []
-                
-                for node in G.nodes():
-                    x, y = pos[node]
-                    node_x.append(x)
-                    node_y.append(y)
-                    
-                    # Format node text with model fields
-                    fields = []
-                    if node in models:
-                        for field in models[node].get('fields', []):
-                            fields.append(f"{field.get('name')}: {field.get('type', '')}")
-                    
-                    text = f"<b>{node}</b><br>" + "<br>".join(fields[:5])
-                    if len(fields) > 5:
-                        text += "<br>..."
-                    
-                    node_text.append(text)
-                
-                node_trace = go.Scatter(
-                    x=node_x, y=node_y,
-                    mode='markers',
-                    hoverinfo='text',
-                    marker=dict(
-                        showscale=False,
-                        colorscale='YlGnBu',
-                        size=15,
-                        line_width=2))
-                
-                node_trace.text = node_text
-                
-                # Create the figure
-                fig = go.Figure(data=[edge_trace, node_trace],
-                             layout=go.Layout(
-                                title="Database Model Relationships",
-                                titlefont_size=16,
-                                showlegend=False,
-                                hovermode='closest',
-                                margin=dict(b=20,l=5,r=5,t=40),
-                                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
-                            ))
-                
-                return fig
-            else:
-                # Create a bar chart of model field counts
-                model_field_counts = {}
-                for model_name, model_info in models.items():
-                    model_field_counts[model_name] = len(model_info.get('fields', []))
-                
-                if model_field_counts:
-                    model_names = list(model_field_counts.keys())
-                    field_counts = list(model_field_counts.values())
-                    
-                    fig = go.Figure([go.Bar(x=model_names, y=field_counts, 
-                                          text=field_counts, textposition='auto')])
-                    
-                    fig.update_layout(
-                        title="Database Model Fields",
-                        xaxis_title="Model",
-                        yaxis_title="Number of Fields",
-                        yaxis=dict(rangemode='nonnegative')
-                    )
-                    
-                    return fig
+        if not models:
+            # Return a placeholder figure if no data
+            fig = go.Figure()
+            fig.add_annotation(text="No database models available", 
+                              showarrow=False, font=dict(size=14))
+            return fig
         
-        # If no models or visualization failed, create a pie chart of file types
-        db_files = database_analysis.get('database_files', [])
-        if db_files:
-            # Count files by extension
-            file_types = Counter()
-            for file_info in db_files:
-                ext = file_info.get('path', '').split('.')[-1]
-                file_types[ext] += 1
-            
-            if file_types:
-                labels = list(file_types.keys())
-                values = list(file_types.values())
-                
-                fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.3)])
-                
-                fig.update_layout(
-                    title="Database Files by Type"
-                )
-                
-                return fig
+        # Create a directed graph
+        G = nx.DiGraph()
         
-        return create_fallback_visualization(
-            "Database Relations", 
-            "No database models available"
+        # Add model nodes
+        for model_name in models.keys():
+            G.add_node(model_name)
+        
+        # Add relationship edges
+        for model_name, model_info in models.items():
+            # Handle different ORM types
+            if model_info.get('orm') == 'sqlalchemy' and 'relationships' in model_info:
+                for rel_name, rel_info in model_info.get('relationships', {}).items():
+                    target = rel_info.get('target')
+                    if target:
+                        G.add_edge(model_name, target, label=rel_name)
+            
+            # Basic field-based relationships (look for foreign keys)
+            for field_name, field_info in model_info.get('fields', {}).items():
+                if 'ForeignKey' in str(field_info.get('type', '')) or field_name.endswith('_id'):
+                    # Try to guess the target model
+                    if field_name.endswith('_id'):
+                        target = field_name[:-3].title()  # Convert user_id to User
+                        if target in models:
+                            G.add_edge(model_name, target, label=field_name)
+        
+        # If the graph is empty, return a placeholder
+        if not G.edges():
+            fig = go.Figure()
+            fig.add_annotation(text="No relationships detected between models", 
+                              showarrow=False, font=dict(size=14))
+            return fig
+        
+        # Create a spring layout
+        pos = nx.spring_layout(G)
+        
+        # Create edge traces
+        edge_x = []
+        edge_y = []
+        edge_text = []
+        
+        for edge in G.edges(data=True):
+            x0, y0 = pos[edge[0]]
+            x1, y1 = pos[edge[1]]
+            
+            edge_x.extend([x0, x1, None])
+            edge_y.extend([y0, y1, None])
+            edge_text.append(edge[2].get('label', ''))
+        
+        edge_trace = go.Scatter(
+            x=edge_x, y=edge_y,
+            line=dict(width=1, color='#888'),
+            hoverinfo='none',
+            mode='lines'
         )
+        
+        # Create node traces
+        node_x = []
+        node_y = []
+        node_text = []
+        
+        for node in G.nodes():
+            x, y = pos[node]
+            node_x.append(x)
+            node_y.append(y)
+            node_text.append(node)
+        
+        node_trace = go.Scatter(
+            x=node_x, y=node_y,
+            mode='markers+text',
+            text=node_text,
+            textposition="top center",
+            marker=dict(
+                showscale=False,
+                color='skyblue',
+                size=15,
+                line=dict(width=2, color='black')
+            ),
+            hoverinfo='text'
+        )
+        
+        # Create figure
+        fig = go.Figure(data=[edge_trace, node_trace],
+                      layout=go.Layout(
+                          title='Database Model Relationships',
+                          showlegend=False,
+                          hovermode='closest',
+                          margin=dict(b=20, l=5, r=5, t=40),
+                          xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                          yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                          height=600
+                      ))
+        
+        return fig
     except Exception as e:
         logger.error(f"Error creating database relations visualization: {str(e)}")
-        
-        # Return a fallback visualization
-        return create_fallback_visualization(
-            "Database Relations", 
-            "Error creating visualization"
-        )
+        # Return a placeholder figure with error message
+        fig = go.Figure()
+        fig.add_annotation(text=f"Error creating visualization: {str(e)}", 
+                          showarrow=False, font=dict(size=14, color="red"))
+        return fig
 
 def visualize_modularization_opportunities(modularization):
     """
     Create a visualization of modularization opportunities
     
     Parameters:
-    - modularization: Modularization analysis data
+    - modularization: Modularization analysis results
     
     Returns:
-    - plotly figure: Visualization of modularization opportunities
+    - plotly figure: Modularization visualization
     """
-    logger.info("Generating modularization opportunities visualization...")
+    logger.info("Generating modularization visualization...")
     
     try:
-        # Try to create a visualization of the dependency graph
-        dependency_graph = modularization.get('dependency_graph', {})
+        # Extract dependency graph
+        graph_data = modularization.get('dependency_graph', {})
         
-        if dependency_graph and 'nodes' in dependency_graph and 'edges' in dependency_graph:
-            nodes = dependency_graph['nodes']
-            edges = dependency_graph['edges']
-            
-            if nodes and edges and len(nodes) <= 30:  # Only create network vis for small to medium graphs
-                # Create a directed graph
-                G = nx.DiGraph()
-                
-                # Add nodes
-                for node in nodes:
-                    G.add_node(node['id'], type=node.get('type', 'file'))
-                
-                # Add edges
-                for edge in edges:
-                    G.add_edge(edge['source'], edge['target'], label=edge.get('label', ''))
-                
-                # Create positions for nodes using spring layout
-                pos = nx.spring_layout(G, seed=42)
-                
-                # Create edge traces
-                edge_x = []
-                edge_y = []
-                
-                for edge in G.edges():
-                    x0, y0 = pos[edge[0]]
-                    x1, y1 = pos[edge[1]]
-                    edge_x.extend([x0, x1, None])
-                    edge_y.extend([y0, y1, None])
-                
-                edge_trace = go.Scatter(
-                    x=edge_x, y=edge_y,
-                    line=dict(width=0.7, color='#888'),
-                    hoverinfo='none',
-                    mode='lines')
-                
-                # Create node traces
-                node_x = []
-                node_y = []
-                node_sizes = []
-                node_colors = []
-                node_text = []
-                
-                # Calculate node degrees for sizing
-                degrees = dict(G.degree())
-                
-                for node in G.nodes():
-                    x, y = pos[node]
-                    node_x.append(x)
-                    node_y.append(y)
-                    
-                    # Size based on degree
-                    degree = degrees[node]
-                    node_sizes.append(10 + degree * 3)
-                    
-                    # Color based on in-degree vs out-degree
-                    in_degree = G.in_degree(node)
-                    out_degree = G.out_degree(node)
-                    
-                    if in_degree > out_degree:
-                        # More dependencies on this node
-                        node_colors.append('rgba(31, 119, 180, 0.8)')  # Blue
-                    elif out_degree > in_degree:
-                        # This node depends on many others
-                        node_colors.append('rgba(255, 127, 14, 0.8)')  # Orange
-                    else:
-                        # Balanced dependencies
-                        node_colors.append('rgba(44, 160, 44, 0.8)')  # Green
-                    
-                    # Node text
-                    file_name = node.split('/')[-1]
-                    node_text.append(f"<b>{file_name}</b><br>File: {node}<br>In: {in_degree}, Out: {out_degree}")
-                
-                node_trace = go.Scatter(
-                    x=node_x, y=node_y,
-                    mode='markers',
-                    hoverinfo='text',
-                    marker=dict(
-                        color=node_colors,
-                        size=node_sizes,
-                        line=dict(width=1, color='#333')
-                    ))
-                
-                node_trace.text = node_text
-                
-                # Create the figure
-                fig = go.Figure(data=[edge_trace, node_trace],
-                             layout=go.Layout(
-                                title="Module Dependencies",
-                                titlefont_size=16,
-                                showlegend=False,
-                                hovermode='closest',
-                                margin=dict(b=20,l=5,r=5,t=40),
-                                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                                annotations=[
-                                    dict(
-                                        text="Blue: Depended on by others<br>Orange: Depends on others<br>Green: Balanced",
-                                        showarrow=False,
-                                        xref="paper", yref="paper",
-                                        x=0.01, y=0.01
-                                    )
-                                ]
-                            ))
-                
-                return fig
-        
-        # Alternative: Create a visualization of natural modules
-        modules = modularization.get('current_modules', [])
-        if modules:
-            module_names = [m.get('name', 'Unknown') for m in modules]
-            file_counts = [m.get('file_count', 0) for m in modules]
-            
-            # Create a bar chart of modules by file count
-            fig = go.Figure([go.Bar(
-                x=module_names,
-                y=file_counts,
-                text=file_counts,
-                textposition='auto',
-                marker_color='rgb(55, 83, 109)'
-            )])
-            
-            fig.update_layout(
-                title="Natural Modules by Size",
-                xaxis_title="Module",
-                yaxis_title="Number of Files",
-                yaxis=dict(rangemode='nonnegative')
-            )
-            
+        if not graph_data or 'nodes' not in graph_data or 'edges' not in graph_data:
+            # Return a placeholder figure if no data
+            fig = go.Figure()
+            fig.add_annotation(text="No dependency graph data available", 
+                              showarrow=False, font=dict(size=14))
             return fig
         
-        # Alternative: Create a visualization of high coupling files
-        high_coupling = modularization.get('high_coupling', [])
-        if high_coupling:
-            files = [h.get('file', '').split('/')[-1] for h in high_coupling]
-            in_degrees = [h.get('in_degree', 0) for h in high_coupling]
-            out_degrees = [h.get('out_degree', 0) for h in high_coupling]
-            
-            # Create a stacked bar chart of in-degree vs out-degree
-            fig = go.Figure(data=[
-                go.Bar(name='Incoming Dependencies', x=files, y=in_degrees),
-                go.Bar(name='Outgoing Dependencies', x=files, y=out_degrees)
-            ])
-            
-            fig.update_layout(
-                title="Files with High Coupling",
-                xaxis_title="File",
-                yaxis_title="Dependencies",
-                barmode='stack',
-                yaxis=dict(rangemode='nonnegative')
-            )
-            
-            return fig
+        # Create a directed graph
+        G = nx.DiGraph()
         
-        return create_fallback_visualization(
-            "Modularization Opportunities", 
-            "No modularization data available"
+        # Add nodes
+        for node in graph_data.get('nodes', []):
+            G.add_node(node.get('id'), file=node.get('file', 'unknown'))
+        
+        # Add edges
+        for edge in graph_data.get('edges', []):
+            G.add_edge(edge.get('source'), edge.get('target'))
+        
+        # Check if the graph is too large for visualization
+        if len(G.nodes()) > 50:
+            # Find the most central nodes
+            centrality = nx.betweenness_centrality(G)
+            top_nodes = sorted(centrality.items(), key=lambda x: x[1], reverse=True)[:50]
+            
+            # Create a subgraph with just the most important nodes
+            nodes_to_keep = [node for node, _ in top_nodes]
+            G = G.subgraph(nodes_to_keep)
+        
+        # Find circular dependencies
+        try:
+            cycles = list(nx.simple_cycles(G))
+            cycle_nodes = set()
+            for cycle in cycles:
+                cycle_nodes.update(cycle)
+        except:
+            cycles = []
+            cycle_nodes = set()
+        
+        # Create a spring layout
+        pos = nx.spring_layout(G)
+        
+        # Create edge traces
+        edge_x = []
+        edge_y = []
+        
+        for edge in G.edges():
+            x0, y0 = pos[edge[0]]
+            x1, y1 = pos[edge[1]]
+            
+            edge_x.extend([x0, x1, None])
+            edge_y.extend([y0, y1, None])
+        
+        edge_trace = go.Scatter(
+            x=edge_x, y=edge_y,
+            line=dict(width=1, color='#888'),
+            hoverinfo='none',
+            mode='lines'
         )
+        
+        # Create regular node trace
+        regular_node_x = []
+        regular_node_y = []
+        regular_node_text = []
+        
+        # Create cycle node trace (highlight nodes in cycles)
+        cycle_node_x = []
+        cycle_node_y = []
+        cycle_node_text = []
+        
+        for node in G.nodes():
+            x, y = pos[node]
+            file_path = G.nodes[node].get('file', node)
+            
+            if node in cycle_nodes:
+                cycle_node_x.append(x)
+                cycle_node_y.append(y)
+                cycle_node_text.append(file_path)
+            else:
+                regular_node_x.append(x)
+                regular_node_y.append(y)
+                regular_node_text.append(file_path)
+        
+        regular_node_trace = go.Scatter(
+            x=regular_node_x, y=regular_node_y,
+            mode='markers',
+            hovertext=regular_node_text,
+            marker=dict(
+                showscale=False,
+                color='skyblue',
+                size=10,
+                line=dict(width=1, color='black')
+            ),
+            name='Modules'
+        )
+        
+        cycle_node_trace = go.Scatter(
+            x=cycle_node_x, y=cycle_node_y,
+            mode='markers',
+            hovertext=cycle_node_text,
+            marker=dict(
+                showscale=False,
+                color='red',
+                size=12,
+                line=dict(width=1, color='black')
+            ),
+            name='Circular Dependencies'
+        )
+        
+        # Create figure
+        traces = [edge_trace, regular_node_trace]
+        if cycle_node_x:  # Only add cycle trace if there are cycles
+            traces.append(cycle_node_trace)
+            
+        fig = go.Figure(data=traces,
+                      layout=go.Layout(
+                          title='Module Dependency Graph',
+                          showlegend=True,
+                          hovermode='closest',
+                          margin=dict(b=20, l=5, r=5, t=40),
+                          xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                          yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                          height=600
+                      ))
+        
+        # Add annotation if subgraph was created
+        if len(G.nodes()) < len(graph_data.get('nodes', [])):
+            fig.add_annotation(
+                text=f"Showing only the {len(G.nodes())} most central modules out of {len(graph_data.get('nodes', []))}",
+                xref="paper", yref="paper",
+                x=0.5, y=1,
+                showarrow=False
+            )
+        
+        return fig
     except Exception as e:
         logger.error(f"Error creating modularization visualization: {str(e)}")
-        
-        # Return a fallback visualization
-        return create_fallback_visualization(
-            "Modularization Opportunities", 
-            "Error creating visualization"
-        )
-
-def create_fallback_visualization(title, message):
-    """
-    Create a fallback visualization when data is missing or an error occurs
-    
-    Parameters:
-    - title: Title for the visualization
-    - message: Message to display
-    
-    Returns:
-    - plotly figure: Simple fallback visualization
-    """
-    fig = go.Figure()
-    
-    fig.add_annotation(
-        text=message,
-        font=dict(size=14),
-        showarrow=False,
-        xref="paper", yref="paper",
-        x=0.5, y=0.5
-    )
-    
-    fig.update_layout(
-        title=title,
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
-    )
-    
-    return fig
+        # Return a placeholder figure with error message
+        fig = go.Figure()
+        fig.add_annotation(text=f"Error creating visualization: {str(e)}", 
+                          showarrow=False, font=dict(size=14, color="red"))
+        return fig

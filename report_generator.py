@@ -1,6 +1,5 @@
 import logging
-import pandas as pd
-from collections import Counter, defaultdict
+from collections import defaultdict
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -18,256 +17,262 @@ def generate_summary_report(analysis_results):
     """
     logger.info("Generating summary report...")
     
-    # Initialize the summary report
-    summary_report = {
+    # Initialize summary structure
+    summary = {
         'key_findings': {},
-        'recommendations': {},
-        'metrics': {},
-        'priority_areas': []
+        'recommendations': {}
     }
     
-    # Extract repository structure information
+    # Extract repo structure findings
     if 'repository_structure' in analysis_results:
         repo_structure = analysis_results['repository_structure']
+        structure_findings = []
         
-        summary_report['metrics']['Repository Size'] = {
-            'Files': repo_structure.get('file_count', 0),
-            'Directories': repo_structure.get('directory_count', 0),
-            'Deepest Nesting': repo_structure.get('deepest_nesting', 0)
-        }
-        
-        # Add file type distribution
+        file_count = repo_structure.get('file_count', 0)
+        directory_count = repo_structure.get('directory_count', 0)
         file_types = repo_structure.get('file_types', [])
+        
+        if file_count > 0:
+            structure_findings.append(f"Repository contains {file_count} files in {directory_count} directories")
+        
+        # Identify main file types
         if file_types:
-            file_type_findings = []
+            main_types = []
             for file_type in file_types[:5]:  # Top 5 file types
-                file_type_findings.append(
-                    f"{file_type.get('extension', 'unknown')}: {file_type.get('count', 0)} files"
-                )
+                ext = file_type.get('extension', 'unknown')
+                count = file_type.get('count', 0)
+                if count > 0:
+                    main_types.append(f"{ext.lstrip('.')} ({count} files)")
             
-            summary_report['key_findings']['Repository Structure'] = [
-                f"Total of {repo_structure.get('file_count', 0)} files across {repo_structure.get('directory_count', 0)} directories",
-                f"Main file types: {', '.join(file_type_findings)}"
-            ]
+            if main_types:
+                structure_findings.append(f"Main file types: {', '.join(main_types)}")
+        
+        if structure_findings:
+            summary['key_findings']['Repository Structure'] = structure_findings
     
     # Extract code review findings
     if 'code_review' in analysis_results:
         code_review = analysis_results['code_review']
-        
-        # Add metrics
-        if 'metrics' in code_review:
-            for metric, value in code_review.get('metrics', {}).items():
-                summary_report['metrics'][metric] = value
-        
-        # Add key findings
         code_findings = []
         
-        # Issues by type
-        issues_by_type = Counter()
-        for file_issue in code_review.get('files_with_issues', []):
-            for detail in file_issue.get('details', []):
-                for code_smell in ['long_method', 'complex_method', 'duplicated_code', 'large_class', 
-                                  'magic_numbers', 'commented_code', 'nested_conditionals']:
-                    if code_smell in detail:
-                        issues_by_type[code_smell] += 1
+        metrics = code_review.get('metrics', {})
+        if metrics:
+            if 'total_loc' in metrics:
+                code_findings.append(f"Total lines of code: {metrics['total_loc']}")
+            
+            if 'average_complexity' in metrics:
+                avg_complexity = metrics['average_complexity']
+                complexity_assessment = "low"
+                if avg_complexity > 7:
+                    complexity_assessment = "high"
+                elif avg_complexity > 4:
+                    complexity_assessment = "moderate"
+                
+                code_findings.append(f"Average code complexity: {avg_complexity} ({complexity_assessment})")
+            
+            if 'issue_density' in metrics:
+                issue_density = metrics['issue_density']
+                quality_assessment = "high"
+                if issue_density > 5:
+                    quality_assessment = "low"
+                elif issue_density > 2:
+                    quality_assessment = "moderate"
+                
+                code_findings.append(f"Code quality is {quality_assessment} ({issue_density:.1f} issues per 1000 lines)")
         
-        # Add findings about issues
-        if issues_by_type:
-            top_issues = issues_by_type.most_common(3)
-            for issue, count in top_issues:
-                code_findings.append(f"{count} instances of {issue.replace('_', ' ')}")
-        
-        # Add findings about complex files
-        complex_files = code_review.get('top_complex_files', [])
-        if complex_files:
-            avg_complexity = sum(f.get('complexity', 0) for f in complex_files) / len(complex_files)
-            code_findings.append(
-                f"Average complexity of {avg_complexity:.1f} in the most complex files"
-            )
-        
-        # Add findings about duplications
-        duplications = code_review.get('duplications', [])
-        if duplications:
-            code_findings.append(f"Found {len(duplications)} instances of code duplication")
+        # Extract top issues
+        files_with_issues = code_review.get('files_with_issues', [])
+        if files_with_issues:
+            # Group by issue type
+            issue_counts = defaultdict(int)
+            for file_issue in files_with_issues:
+                for detail in file_issue.get('details', []):
+                    if 'long method' in detail.lower():
+                        issue_counts['long_methods'] += 1
+                    elif 'complex method' in detail.lower():
+                        issue_counts['complex_methods'] += 1
+                    elif 'nested conditional' in detail.lower():
+                        issue_counts['nested_conditionals'] += 1
+                    elif 'commented code' in detail.lower():
+                        issue_counts['commented_code'] += 1
+                    elif 'too many parameters' in detail.lower():
+                        issue_counts['too_many_parameters'] += 1
+            
+            # Report top issues
+            top_issues = []
+            for issue_type, count in issue_counts.items():
+                if count > 0:
+                    issue_name = issue_type.replace('_', ' ').title()
+                    top_issues.append(f"{issue_name}: {count}")
+            
+            if top_issues:
+                code_findings.append(f"Main code issues: {', '.join(top_issues[:3])}")
         
         if code_findings:
-            summary_report['key_findings']['Code Quality'] = code_findings
+            summary['key_findings']['Code Quality'] = code_findings
         
-        # Add recommendations from code review
-        if 'improvement_opportunities' in code_review:
-            for category, opportunities in code_review.get('improvement_opportunities', {}).items():
-                if category not in summary_report['recommendations']:
-                    summary_report['recommendations'][category] = []
-                
-                summary_report['recommendations'][category].extend(opportunities)
+        # Add code improvement recommendations
+        code_recommendations = []
+        for category, opportunities in code_review.get('improvement_opportunities', {}).items():
+            for opportunity in opportunities[:2]:  # Top 2 recommendations per category
+                code_recommendations.append(opportunity)
         
-        # Add to priority areas if significant issues found
-        if issues_by_type and sum(issues_by_type.values()) > 10:
-            summary_report['priority_areas'].append('Code Quality')
+        if code_recommendations:
+            summary['recommendations']['Code Improvements'] = code_recommendations
     
     # Extract database analysis findings
     if 'database_analysis' in analysis_results:
         db_analysis = analysis_results['database_analysis']
-        
         db_findings = []
         
-        # Database models
+        db_files = db_analysis.get('database_files', [])
+        if db_files:
+            db_findings.append(f"Found {len(db_files)} database-related files")
+        
         models = db_analysis.get('database_models', {})
         if models:
-            db_findings.append(f"Found {len(models)} database models")
+            db_findings.append(f"Identified {len(models)} database models")
             
-            # ORM frameworks
-            orm_frameworks = db_analysis.get('orm_frameworks', [])
-            if orm_frameworks:
-                db_findings.append(f"Using {', '.join(orm_frameworks)} ORM framework(s)")
+            # Extract ORM frameworks
+            orm_types = db_analysis.get('orm_types', [])
+            if orm_types:
+                db_findings.append(f"Database ORM frameworks: {', '.join(orm_types)}")
         
-        # Raw SQL queries
-        sql_queries = db_analysis.get('sql_queries', [])
-        if sql_queries:
-            db_findings.append(f"Found {len(sql_queries)} raw SQL queries")
+        raw_sql = db_analysis.get('raw_sql_queries', [])
+        if raw_sql:
+            db_findings.append(f"Found {len(raw_sql)} raw SQL queries in the codebase")
         
-        # Database redundancies
         redundancies = db_analysis.get('redundancies', [])
         if redundancies:
-            db_findings.append(f"Detected {len(redundancies)} potential database redundancies")
+            similar_models = len([r for r in redundancies if r.get('type') == 'similar_models'])
+            inconsistent_fields = len([r for r in redundancies if r.get('type') == 'inconsistent_field_types'])
+            
+            if similar_models > 0:
+                db_findings.append(f"Detected {similar_models} potentially redundant models")
+            
+            if inconsistent_fields > 0:
+                db_findings.append(f"Found {inconsistent_fields} inconsistent field types across models")
         
         if db_findings:
-            summary_report['key_findings']['Database Structure'] = db_findings
+            summary['key_findings']['Database Structure'] = db_findings
         
-        # Add recommendations from database analysis
-        recommendations = db_analysis.get('consolidation_recommendations', [])
-        if recommendations:
-            summary_report['recommendations']['Database Design'] = recommendations[:5]  # Top 5 recommendations
-            
-            # Add to priority areas if significant issues found
-            if redundancies or len(models) > 5:
-                summary_report['priority_areas'].append('Database Design')
+        # Add database recommendations
+        db_recommendations = db_analysis.get('consolidation_recommendations', [])
+        if db_recommendations:
+            summary['recommendations']['Database Improvements'] = db_recommendations[:5]  # Top 5 recommendations
     
     # Extract modularization findings
     if 'modularization' in analysis_results:
         modularization = analysis_results['modularization']
-        
         mod_findings = []
         
-        # Current modules
-        current_modules = modularization.get('current_modules', [])
-        if current_modules:
-            mod_findings.append(f"Identified {len(current_modules)} natural modules in the codebase")
+        modules = modularization.get('current_modules', [])
+        if modules:
+            mod_findings.append(f"Identified {len(modules)} natural modules in the codebase")
         
-        # High coupling
-        high_coupling = modularization.get('high_coupling', [])
+        high_coupling = modularization.get('highly_coupled_files', [])
         if high_coupling:
             mod_findings.append(f"Found {len(high_coupling)} files with high coupling")
         
-        # Circular dependencies
-        circular_deps = modularization.get('circular_dependencies', [])
-        if circular_deps:
-            mod_findings.append(f"Detected {len(circular_deps)} circular dependencies")
+        cycles = modularization.get('circular_dependencies', [])
+        if cycles:
+            mod_findings.append(f"Detected {len(cycles)} circular dependency cycles")
         
         if mod_findings:
-            summary_report['key_findings']['Code Modularization'] = mod_findings
+            summary['key_findings']['Code Modularization'] = mod_findings
         
-        # Add recommendations from modularization analysis
-        recommendations = modularization.get('recommendations', [])
-        if recommendations:
-            summary_report['recommendations']['Code Architecture'] = recommendations[:5]  # Top 5 recommendations
-            
-            # Add to priority areas if significant issues found
-            if circular_deps or (high_coupling and len(high_coupling) > 3):
-                summary_report['priority_areas'].append('Code Architecture')
+        # Add modularization recommendations
+        mod_recommendations = modularization.get('recommendations', [])
+        if mod_recommendations:
+            summary['recommendations']['Modularization Improvements'] = mod_recommendations[:5]  # Top 5 recommendations
     
     # Extract agent readiness findings
     if 'agent_readiness' in analysis_results:
         agent_readiness = analysis_results['agent_readiness']
-        
         agent_findings = []
         
-        # ML components
         ml_components = agent_readiness.get('ml_components', [])
         if ml_components:
             agent_findings.append(f"Found {len(ml_components)} machine learning components")
             
-            # Agent libraries
-            agent_libraries = agent_readiness.get('agent_libraries', [])
-            if agent_libraries:
-                agent_findings.append(f"Using {', '.join(agent_libraries)} agent-friendly libraries")
-            else:
-                agent_findings.append("No agent-specific libraries detected")
-        else:
-            agent_findings.append("No machine learning components detected")
+            # Extract ML libraries used
+            all_libraries = set()
+            for component in ml_components:
+                all_libraries.update(component.get('ml_libraries', []))
+                all_libraries.update(component.get('agent_libraries', []))
+            
+            if all_libraries:
+                top_libraries = list(all_libraries)[:5]  # Top 5 libraries
+                agent_findings.append(f"ML/AI libraries used: {', '.join(top_libraries)}")
         
-        # Assessment scores
-        assessment = agent_readiness.get('assessment', {})
+        assessment = agent_readiness.get('assessment', [])
         if assessment:
-            avg_score = sum(assessment.values()) / len(assessment) if assessment else 0
-            agent_findings.append(f"Average agent-readiness score: {avg_score:.1f}/10")
+            scores = [item.get('score', 0) for item in assessment]
+            avg_score = sum(scores) / len(scores) if scores else 0
+            
+            readiness_level = "low"
+            if avg_score > 7:
+                readiness_level = "high"
+            elif avg_score > 4:
+                readiness_level = "moderate"
+            
+            agent_findings.append(f"Agent-readiness level: {readiness_level} (score: {avg_score:.1f}/10)")
         
         if agent_findings:
-            summary_report['key_findings']['Agent Readiness'] = agent_findings
+            summary['key_findings']['Agent Readiness'] = agent_findings
         
-        # Add recommendations from agent readiness analysis
-        recommendations = agent_readiness.get('recommendations', [])
-        if recommendations:
-            summary_report['recommendations']['Agent Integration'] = recommendations[:5]  # Top 5 recommendations
-            
-            # Add to priority areas if ML components but low readiness
-            if ml_components and (not agent_libraries or avg_score < 5):
-                summary_report['priority_areas'].append('Agent Integration')
+        # Add agent readiness recommendations
+        agent_recommendations = agent_readiness.get('recommendations', [])
+        if agent_recommendations:
+            summary['recommendations']['Agent Integration'] = agent_recommendations[:5]  # Top 5 recommendations
     
     # Extract workflow patterns findings
     if 'workflow_patterns' in analysis_results:
         workflow = analysis_results['workflow_patterns']
-        
         workflow_findings = []
         
-        # Workflows
         workflows = workflow.get('workflows', [])
         if workflows:
-            # Count pattern occurrences
-            pattern_counts = Counter()
+            # Extract unique workflow patterns
+            all_patterns = set()
             for wf in workflows:
-                for pattern in wf.get('patterns', []):
-                    pattern_counts[pattern] += 1
+                all_patterns.update(wf.get('patterns', []))
             
-            if pattern_counts:
-                top_patterns = pattern_counts.most_common(3)
-                patterns_str = ", ".join(f"{pattern} ({count})" for pattern, count in top_patterns)
-                workflow_findings.append(f"Main workflow patterns: {patterns_str}")
+            if all_patterns:
+                workflow_findings.append(f"Identified workflow patterns: {', '.join(all_patterns)}")
             else:
                 workflow_findings.append(f"Found {len(workflows)} files with workflow components")
         
-        # Entry points
         entry_points = workflow.get('entry_points', [])
         if entry_points:
-            workflow_findings.append(f"Identified {len(entry_points)} workflow entry points")
+            entry_types = defaultdict(int)
+            for entry in entry_points:
+                entry_types[entry.get('type', 'unknown')] += 1
+            
+            entry_summary = []
+            for entry_type, count in entry_types.items():
+                entry_name = entry_type.replace('_', ' ').title()
+                entry_summary.append(f"{entry_name}: {count}")
+            
+            if entry_summary:
+                workflow_findings.append(f"Workflow entry points: {', '.join(entry_summary)}")
         
         if workflow_findings:
-            summary_report['key_findings']['Workflow Patterns'] = workflow_findings
+            summary['key_findings']['Workflow Patterns'] = workflow_findings
         
-        # Add recommendations from workflow analysis
-        recommendations = workflow.get('standardization_recommendations', [])
-        if recommendations:
-            summary_report['recommendations']['Workflow Standardization'] = recommendations[:5]  # Top 5 recommendations
-            
-            # Add to priority areas if mixed patterns detected
-            if pattern_counts and len(pattern_counts) > 2:
-                summary_report['priority_areas'].append('Workflow Standardization')
+        # Add workflow recommendations
+        workflow_recommendations = workflow.get('standardization_recommendations', [])
+        if workflow_recommendations:
+            summary['recommendations']['Workflow Standardization'] = workflow_recommendations[:5]  # Top 5 recommendations
     
-    # Ensure recommendations for all areas
-    if not summary_report['recommendations']:
-        summary_report['recommendations'] = {
-            'General Improvements': [
-                "Implement comprehensive documentation for the codebase",
-                "Add or improve test coverage across the repository",
-                "Standardize code formatting and style",
-                "Implement continuous integration and linting",
-                "Review and update dependencies to latest versions"
-            ]
-        }
+    # Add general recommendations if needed
+    if not summary['recommendations']:
+        summary['recommendations']['General'] = [
+            "Start by addressing high-complexity code areas to improve maintainability",
+            "Document architecture and module boundaries",
+            "Implement consistent coding standards across the codebase",
+            "Add automated tests to ensure code quality"
+        ]
     
-    # Sort priority areas by frequency of appearance in findings
-    priority_counts = Counter(summary_report['priority_areas'])
-    summary_report['priority_areas'] = [area for area, _ in priority_counts.most_common()]
-    
-    logger.info("Summary report generation complete.")
-    return summary_report
+    logger.info("Summary report generation complete")
+    return summary
