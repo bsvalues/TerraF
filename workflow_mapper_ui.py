@@ -42,6 +42,10 @@ def initialize_workflow_mapper_state():
         st.session_state.dependency_analysis_mode = "workflow"  # or "all"
         st.session_state.highlight_bottlenecks = True
         st.session_state.optimization_recommendations = []
+        
+        # Set default repo path if not already set
+        if 'repo_path' not in st.session_state:
+            st.session_state.repo_path = os.getcwd()
 
 def render_workflow_mapper_tab():
     """Render the Intelligent Workflow Mapper tab"""
