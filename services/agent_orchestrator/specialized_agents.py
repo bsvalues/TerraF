@@ -29,30 +29,36 @@ class CodeAnalysisAgent(Agent):
     
     def __init__(
         self,
-        ai_service: Optional[AIService] = None,
         name: str = "CodeAnalysisAgent",
         description: str = "Analyzes code quality, structure, and patterns",
+        capabilities: Optional[List[Union[AgentCapability, str]]] = None,
         max_concurrent_tasks: int = 2,
-        agent_id: Optional[str] = None
+        agent_id: Optional[str] = None,
+        ai_service: Optional[AIService] = None
     ):
         """
         Initialize the code analysis agent.
         
         Args:
-            ai_service: Optional AI service for code analysis
             name: Agent name
             description: Agent description
+            capabilities: Optional list of capabilities (will be set to default capabilities if not provided)
             max_concurrent_tasks: Maximum number of concurrent tasks
             agent_id: Optional agent ID (generated if not provided)
+            ai_service: Optional AI service for code analysis
         """
-        super().__init__(
-            name=name,
-            description=description,
-            capabilities=[
+        # Set default capabilities if none provided
+        if capabilities is None:
+            capabilities = [
                 AgentCapability.CODE_ANALYSIS,
                 AgentCapability.CODE_COMPLEXITY,
                 AgentCapability.DOCUMENTATION_ANALYSIS
-            ],
+            ]
+            
+        super().__init__(
+            name=name,
+            description=description,
+            capabilities=capabilities,
             max_concurrent_tasks=max_concurrent_tasks,
             agent_id=agent_id
         )
@@ -146,29 +152,35 @@ class SecurityAnalysisAgent(Agent):
     
     def __init__(
         self,
-        ai_service: Optional[AIService] = None,
         name: str = "SecurityAnalysisAgent",
         description: str = "Identifies security vulnerabilities and recommends mitigations",
+        capabilities: Optional[List[Union[AgentCapability, str]]] = None,
         max_concurrent_tasks: int = 2,
-        agent_id: Optional[str] = None
+        agent_id: Optional[str] = None,
+        ai_service: Optional[AIService] = None
     ):
         """
         Initialize the security analysis agent.
         
         Args:
-            ai_service: Optional AI service for security analysis
             name: Agent name
             description: Agent description
+            capabilities: Optional list of capabilities (will be set to default capabilities if not provided)
             max_concurrent_tasks: Maximum number of concurrent tasks
             agent_id: Optional agent ID (generated if not provided)
+            ai_service: Optional AI service for security analysis
         """
+        # Set default capabilities if none provided
+        if capabilities is None:
+            capabilities = [
+                AgentCapability.SECURITY_REVIEW,
+                AgentCapability.CODE_ANALYSIS
+            ]
+            
         super().__init__(
             name=name,
             description=description,
-            capabilities=[
-                AgentCapability.SECURITY_REVIEW,
-                AgentCapability.CODE_ANALYSIS
-            ],
+            capabilities=capabilities,
             max_concurrent_tasks=max_concurrent_tasks,
             agent_id=agent_id
         )
@@ -262,29 +274,35 @@ class ArchitectureAnalysisAgent(Agent):
     
     def __init__(
         self,
-        ai_service: Optional[AIService] = None,
         name: str = "ArchitectureAnalysisAgent",
         description: str = "Analyzes software architecture and design patterns",
+        capabilities: Optional[List[Union[AgentCapability, str]]] = None,
         max_concurrent_tasks: int = 1,
-        agent_id: Optional[str] = None
+        agent_id: Optional[str] = None,
+        ai_service: Optional[AIService] = None
     ):
         """
         Initialize the architecture analysis agent.
         
         Args:
-            ai_service: Optional AI service for architecture analysis
             name: Agent name
             description: Agent description
+            capabilities: Optional list of capabilities (will be set to default capabilities if not provided)
             max_concurrent_tasks: Maximum number of concurrent tasks
             agent_id: Optional agent ID (generated if not provided)
+            ai_service: Optional AI service for architecture analysis
         """
+        # Set default capabilities if none provided
+        if capabilities is None:
+            capabilities = [
+                AgentCapability.ARCHITECTURE_REVIEW,
+                AgentCapability.DEPENDENCY_ANALYSIS
+            ]
+            
         super().__init__(
             name=name,
             description=description,
-            capabilities=[
-                AgentCapability.ARCHITECTURE_REVIEW,
-                AgentCapability.DEPENDENCY_ANALYSIS
-            ],
+            capabilities=capabilities,
             max_concurrent_tasks=max_concurrent_tasks,
             agent_id=agent_id
         )
@@ -446,29 +464,35 @@ class DatabaseAnalysisAgent(Agent):
     
     def __init__(
         self,
-        ai_service: Optional[AIService] = None,
         name: str = "DatabaseAnalysisAgent",
         description: str = "Analyzes database schemas and database usage patterns",
+        capabilities: Optional[List[Union[AgentCapability, str]]] = None,
         max_concurrent_tasks: int = 2,
-        agent_id: Optional[str] = None
+        agent_id: Optional[str] = None,
+        ai_service: Optional[AIService] = None
     ):
         """
         Initialize the database analysis agent.
         
         Args:
-            ai_service: Optional AI service for database analysis
             name: Agent name
             description: Agent description
+            capabilities: Optional list of capabilities (will be set to default capabilities if not provided)
             max_concurrent_tasks: Maximum number of concurrent tasks
             agent_id: Optional agent ID (generated if not provided)
+            ai_service: Optional AI service for database analysis
         """
+        # Set default capabilities if none provided
+        if capabilities is None:
+            capabilities = [
+                AgentCapability.DATABASE_ANALYSIS,
+                AgentCapability.CODE_ANALYSIS
+            ]
+            
         super().__init__(
             name=name,
             description=description,
-            capabilities=[
-                AgentCapability.DATABASE_ANALYSIS,
-                AgentCapability.CODE_ANALYSIS
-            ],
+            capabilities=capabilities,
             max_concurrent_tasks=max_concurrent_tasks,
             agent_id=agent_id
         )
