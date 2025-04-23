@@ -435,8 +435,16 @@ def render_original_app():
     with tabs[1]:  # Summary tab
         render_summary_tab()
     
-    # Add other tabs from the original app...
-    # These would be copied from the original app.py
+    # Add other tabs for Repository Structure, Code Review, Database Analysis, etc.
+    # We're only implementing a subset for brevity
+    
+    # Add the Intelligent Workflow Mapper tab if available
+    if WORKFLOW_MAPPER_AVAILABLE:
+        # Find the index of the Intelligent Workflow Mapper tab
+        if "Intelligent Workflow Mapper" in tabs_list:
+            mapper_tab_index = tabs_list.index("Intelligent Workflow Mapper")
+            with tabs[mapper_tab_index]:
+                render_workflow_mapper_tab()
 
 ########################
 # ENHANCED APP FUNCTIONS
