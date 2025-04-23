@@ -1,6 +1,6 @@
 """
-Academic Integration Package
+Academic Framework Package
 
-This package provides components for academic research integration,
-including benchmark datasets, experiment protocols, and statistical analysis tools.
+This service provides integration with academic research papers, facilitating the
+application of cutting-edge research findings and citations to code analysis.
 """

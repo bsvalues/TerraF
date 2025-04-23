@@ -1,1575 +1,238 @@
 """
-Academic Research Framework
+Academic Framework
 
-This module provides tools and utilities for academic research, including:
-- Benchmark dataset management
-- Experiment tracking and reproducibility
-- Statistical analysis tools
-- Publication-ready visualization generation
-- Research paper template generation
+This module implements an academic framework that integrates with research papers,
+tracks citations, and facilitates the application of cutting-edge research to code analysis.
 """
 import os
 import json
 import logging
 import time
 import uuid
-import numpy as np
-import pandas as pd
-from typing import Dict, List, Any, Optional, Union, Tuple, Set
+import re
+import requests
 from enum import Enum
+from typing import Dict, List, Any, Optional, Union, Tuple, Set
 from datetime import datetime
 
-class BenchmarkType(Enum):
-    """Types of benchmarks for system evaluation."""
-    CODE_QUALITY = "code_quality"
-    ARCHITECTURE = "architecture"
-    PATTERN_RECOGNITION = "pattern_recognition"
-    COMPLEXITY = "complexity"
-    MAINTAINABILITY = "maintainability"
-    PERFORMANCE = "performance"
-    CORRECTNESS = "correctness"
-    SECURITY = "security"
-    EXTENSIBILITY = "extensibility"
+class PaperType(Enum):
+    """Types of academic papers in the system."""
+    RESEARCH = "research"
+    SURVEY = "survey"
+    THESIS = "thesis"
+    TECHNICAL_REPORT = "technical_report"
+    WORKSHOP = "workshop"
+    BOOK_CHAPTER = "book_chapter"
 
 
-class ExperimentType(Enum):
-    """Types of experiments that can be conducted."""
-    COMPARATIVE = "comparative"
-    ABLATION = "ablation"
-    SCALE = "scale"
-    ROBUSTNESS = "robustness"
-    HUMAN_EVALUATION = "human_evaluation"
-    LONGITUDINAL = "longitudinal"
-    CROSS_DOMAIN = "cross_domain"
-
-
-class AnalysisType(Enum):
-    """Types of statistical analysis."""
-    DESCRIPTIVE = "descriptive"
-    INFERENTIAL = "inferential"
-    CORRELATION = "correlation"
-    REGRESSION = "regression"
-    CLASSIFICATION = "classification"
-    CLUSTERING = "clustering"
-    TIME_SERIES = "time_series"
-
-
-class BenchmarkDataset:
+class Paper:
     """
-    Benchmark dataset for evaluating the system.
-    
-    This class provides functionality for:
-    - Loading and managing benchmark datasets
-    - Computing ground truth metrics
-    - Evaluating system performance against benchmarks
+    Represents an academic paper in the system.
     """
     
-    def __init__(self, name: str, benchmark_type: Union[str, BenchmarkType],
-               description: str, version: str = "1.0.0",
-               storage_dir: Optional[str] = None):
+    def __init__(self, paper_id: str, title: str, authors: List[str],
+               abstract: str, publication_date: str, 
+               paper_type: PaperType = PaperType.RESEARCH,
+               venue: Optional[str] = None,
+               doi: Optional[str] = None,
+               url: Optional[str] = None,
+               pdf_url: Optional[str] = None,
+               keywords: Optional[List[str]] = None,
+               citations: Optional[List[str]] = None,
+               references: Optional[List[str]] = None,
+               metadata: Optional[Dict[str, Any]] = None):
         """
-        Initialize a benchmark dataset.
+        Initialize a paper.
         
         Args:
-            name: Name of the benchmark
-            benchmark_type: Type of benchmark
-            description: Description of the benchmark
-            version: Version of the benchmark
-            storage_dir: Optional directory for storage
-        """
-        self.name = name
-        
-        # Convert benchmark_type to enum if string
-        if isinstance(benchmark_type, str):
-            benchmark_type = BenchmarkType(benchmark_type)
-        
-        self.benchmark_type = benchmark_type
-        self.description = description
-        self.version = version
-        self.created_at = time.time()
-        self.samples = []
-        self.metadata = {}
-        
-        # Set up storage directory
-        if storage_dir is None:
-            storage_dir = os.path.join(os.getcwd(), 'benchmark_storage')
-        
-        self.storage_dir = storage_dir
-        os.makedirs(storage_dir, exist_ok=True)
-        
-        # Initialize logger
-        self.logger = logging.getLogger('benchmark_dataset')
-    
-    def add_sample(self, sample_id: str, data: Dict[str, Any],
-                 ground_truth: Dict[str, Any],
-                 metadata: Optional[Dict[str, Any]] = None) -> None:
-        """
-        Add a sample to the benchmark dataset.
-        
-        Args:
-            sample_id: Unique identifier for the sample
-            data: Sample data
-            ground_truth: Ground truth for the sample
-            metadata: Optional sample metadata
-        """
-        sample = {
-            'id': sample_id,
-            'data': data,
-            'ground_truth': ground_truth,
-            'metadata': metadata or {}
-        }
-        
-        self.samples.append(sample)
-        self.logger.info(f"Added sample {sample_id} to benchmark {self.name}")
-    
-    def remove_sample(self, sample_id: str) -> bool:
-        """
-        Remove a sample from the benchmark dataset.
-        
-        Args:
-            sample_id: ID of the sample to remove
-            
-        Returns:
-            Removal success
-        """
-        for i, sample in enumerate(self.samples):
-            if sample['id'] == sample_id:
-                del self.samples[i]
-                self.logger.info(f"Removed sample {sample_id} from benchmark {self.name}")
-                return True
-        
-        return False
-    
-    def get_sample(self, sample_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get a sample from the benchmark dataset.
-        
-        Args:
-            sample_id: ID of the sample to get
-            
-        Returns:
-            Sample or None if not found
-        """
-        for sample in self.samples:
-            if sample['id'] == sample_id:
-                return sample
-        
-        return None
-    
-    def save(self) -> None:
-        """Save the benchmark dataset to storage."""
-        # Create directory for this benchmark
-        benchmark_dir = os.path.join(self.storage_dir, self.name)
-        os.makedirs(benchmark_dir, exist_ok=True)
-        
-        # Save metadata
-        metadata = {
-            'name': self.name,
-            'benchmark_type': self.benchmark_type.value,
-            'description': self.description,
-            'version': self.version,
-            'created_at': self.created_at,
-            'sample_count': len(self.samples),
-            'metadata': self.metadata
-        }
-        
-        metadata_path = os.path.join(benchmark_dir, 'metadata.json')
-        
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
-        
-        # Save samples
-        samples_path = os.path.join(benchmark_dir, 'samples.json')
-        
-        with open(samples_path, 'w') as f:
-            json.dump(self.samples, f, indent=2)
-        
-        self.logger.info(f"Saved benchmark {self.name} with {len(self.samples)} samples")
-    
-    @classmethod
-    def load(cls, name: str, storage_dir: Optional[str] = None) -> 'BenchmarkDataset':
-        """
-        Load a benchmark dataset from storage.
-        
-        Args:
-            name: Name of the benchmark
-            storage_dir: Optional directory for storage
-            
-        Returns:
-            Loaded benchmark dataset
-        """
-        if storage_dir is None:
-            storage_dir = os.path.join(os.getcwd(), 'benchmark_storage')
-        
-        benchmark_dir = os.path.join(storage_dir, name)
-        
-        if not os.path.exists(benchmark_dir):
-            raise FileNotFoundError(f"Benchmark {name} not found in {storage_dir}")
-        
-        # Load metadata
-        metadata_path = os.path.join(benchmark_dir, 'metadata.json')
-        
-        with open(metadata_path, 'r') as f:
-            metadata = json.load(f)
-        
-        # Create benchmark dataset
-        benchmark = cls(
-            name=metadata['name'],
-            benchmark_type=metadata['benchmark_type'],
-            description=metadata['description'],
-            version=metadata['version'],
-            storage_dir=storage_dir
-        )
-        
-        benchmark.created_at = metadata['created_at']
-        benchmark.metadata = metadata['metadata']
-        
-        # Load samples
-        samples_path = os.path.join(benchmark_dir, 'samples.json')
-        
-        with open(samples_path, 'r') as f:
-            benchmark.samples = json.load(f)
-        
-        benchmark.logger.info(f"Loaded benchmark {name} with {len(benchmark.samples)} samples")
-        return benchmark
-    
-    def evaluate(self, results: Dict[str, Dict[str, Any]],
-               metrics: Optional[List[str]] = None) -> Dict[str, Any]:
-        """
-        Evaluate results against the benchmark.
-        
-        Args:
-            results: Dictionary mapping sample IDs to result dictionaries
-            metrics: Optional list of metrics to compute
-            
-        Returns:
-            Evaluation results
-        """
-        if not metrics:
-            # Use default metrics based on benchmark type
-            if self.benchmark_type == BenchmarkType.CODE_QUALITY:
-                metrics = ['precision', 'recall', 'f1_score']
-            elif self.benchmark_type == BenchmarkType.PATTERN_RECOGNITION:
-                metrics = ['accuracy', 'precision', 'recall', 'f1_score']
-            elif self.benchmark_type == BenchmarkType.COMPLEXITY:
-                metrics = ['mean_absolute_error', 'root_mean_squared_error']
-            else:
-                metrics = ['accuracy', 'precision', 'recall', 'f1_score']
-        
-        # Compute metrics for each sample
-        sample_metrics = {}
-        
-        for sample in self.samples:
-            sample_id = sample['id']
-            
-            if sample_id not in results:
-                continue
-            
-            result = results[sample_id]
-            ground_truth = sample['ground_truth']
-            
-            # Compute metrics for this sample
-            sample_metrics[sample_id] = self._compute_metrics(
-                result=result,
-                ground_truth=ground_truth,
-                metrics=metrics
-            )
-        
-        # Compute aggregate metrics
-        aggregate_metrics = {}
-        
-        for metric in metrics:
-            values = [m[metric] for m in sample_metrics.values() if metric in m]
-            
-            if values:
-                aggregate_metrics[metric] = {
-                    'mean': np.mean(values),
-                    'std': np.std(values),
-                    'min': np.min(values),
-                    'max': np.max(values),
-                    'median': np.median(values)
-                }
-        
-        return {
-            'benchmark': self.name,
-            'benchmark_type': self.benchmark_type.value,
-            'sample_count': len(self.samples),
-            'evaluated_count': len(sample_metrics),
-            'metrics': metrics,
-            'sample_metrics': sample_metrics,
-            'aggregate_metrics': aggregate_metrics
-        }
-    
-    def _compute_metrics(self, result: Dict[str, Any],
-                      ground_truth: Dict[str, Any],
-                      metrics: List[str]) -> Dict[str, float]:
-        """
-        Compute metrics for a single sample.
-        
-        Args:
-            result: Result dictionary
-            ground_truth: Ground truth dictionary
-            metrics: List of metrics to compute
-            
-        Returns:
-            Dictionary of computed metrics
-        """
-        computed_metrics = {}
-        
-        for metric in metrics:
-            if metric == 'accuracy':
-                computed_metrics[metric] = self._compute_accuracy(result, ground_truth)
-            elif metric == 'precision':
-                computed_metrics[metric] = self._compute_precision(result, ground_truth)
-            elif metric == 'recall':
-                computed_metrics[metric] = self._compute_recall(result, ground_truth)
-            elif metric == 'f1_score':
-                precision = self._compute_precision(result, ground_truth)
-                recall = self._compute_recall(result, ground_truth)
-                
-                if precision + recall > 0:
-                    computed_metrics[metric] = 2 * (precision * recall) / (precision + recall)
-                else:
-                    computed_metrics[metric] = 0.0
-            elif metric == 'mean_absolute_error':
-                computed_metrics[metric] = self._compute_mae(result, ground_truth)
-            elif metric == 'root_mean_squared_error':
-                computed_metrics[metric] = self._compute_rmse(result, ground_truth)
-        
-        return computed_metrics
-    
-    def _compute_accuracy(self, result: Dict[str, Any],
-                       ground_truth: Dict[str, Any]) -> float:
-        """
-        Compute accuracy metric.
-        
-        Args:
-            result: Result dictionary
-            ground_truth: Ground truth dictionary
-            
-        Returns:
-            Accuracy value
-        """
-        # Implementation depends on the benchmark type and data structure
-        # This is a simplified example
-        if 'predictions' in result and 'labels' in ground_truth:
-            predictions = result['predictions']
-            labels = ground_truth['labels']
-            
-            if len(predictions) != len(labels):
-                return 0.0
-            
-            correct = sum(1 for p, l in zip(predictions, labels) if p == l)
-            return correct / len(predictions) if predictions else 0.0
-        
-        return 0.0
-    
-    def _compute_precision(self, result: Dict[str, Any],
-                        ground_truth: Dict[str, Any]) -> float:
-        """
-        Compute precision metric.
-        
-        Args:
-            result: Result dictionary
-            ground_truth: Ground truth dictionary
-            
-        Returns:
-            Precision value
-        """
-        # Implementation depends on the benchmark type and data structure
-        # This is a simplified example
-        if 'predictions' in result and 'labels' in ground_truth:
-            predictions = result['predictions']
-            labels = ground_truth['labels']
-            
-            if not predictions:
-                return 0.0
-            
-            true_positives = sum(1 for p, l in zip(predictions, labels) if p == 1 and l == 1)
-            false_positives = sum(1 for p, l in zip(predictions, labels) if p == 1 and l == 0)
-            
-            if true_positives + false_positives > 0:
-                return true_positives / (true_positives + false_positives)
-            else:
-                return 0.0
-        
-        return 0.0
-    
-    def _compute_recall(self, result: Dict[str, Any],
-                     ground_truth: Dict[str, Any]) -> float:
-        """
-        Compute recall metric.
-        
-        Args:
-            result: Result dictionary
-            ground_truth: Ground truth dictionary
-            
-        Returns:
-            Recall value
-        """
-        # Implementation depends on the benchmark type and data structure
-        # This is a simplified example
-        if 'predictions' in result and 'labels' in ground_truth:
-            predictions = result['predictions']
-            labels = ground_truth['labels']
-            
-            true_positives = sum(1 for p, l in zip(predictions, labels) if p == 1 and l == 1)
-            false_negatives = sum(1 for p, l in zip(predictions, labels) if p == 0 and l == 1)
-            
-            if true_positives + false_negatives > 0:
-                return true_positives / (true_positives + false_negatives)
-            else:
-                return 0.0
-        
-        return 0.0
-    
-    def _compute_mae(self, result: Dict[str, Any],
-                  ground_truth: Dict[str, Any]) -> float:
-        """
-        Compute mean absolute error.
-        
-        Args:
-            result: Result dictionary
-            ground_truth: Ground truth dictionary
-            
-        Returns:
-            MAE value
-        """
-        # Implementation depends on the benchmark type and data structure
-        # This is a simplified example
-        if 'predictions' in result and 'values' in ground_truth:
-            predictions = result['predictions']
-            values = ground_truth['values']
-            
-            if len(predictions) != len(values):
-                return float('inf')
-            
-            return np.mean([abs(p - v) for p, v in zip(predictions, values)])
-        
-        return float('inf')
-    
-    def _compute_rmse(self, result: Dict[str, Any],
-                   ground_truth: Dict[str, Any]) -> float:
-        """
-        Compute root mean squared error.
-        
-        Args:
-            result: Result dictionary
-            ground_truth: Ground truth dictionary
-            
-        Returns:
-            RMSE value
-        """
-        # Implementation depends on the benchmark type and data structure
-        # This is a simplified example
-        if 'predictions' in result and 'values' in ground_truth:
-            predictions = result['predictions']
-            values = ground_truth['values']
-            
-            if len(predictions) != len(values):
-                return float('inf')
-            
-            return np.sqrt(np.mean([(p - v) ** 2 for p, v in zip(predictions, values)]))
-        
-        return float('inf')
-
-
-class Experiment:
-    """
-    Experiment class for running and tracking experiments.
-    
-    This class provides functionality for:
-    - Defining experiment protocols
-    - Tracking experiment runs
-    - Ensuring reproducibility
-    - Analyzing results
-    """
-    
-    def __init__(self, name: str, experiment_type: Union[str, ExperimentType],
-               description: str, version: str = "1.0.0",
-               storage_dir: Optional[str] = None):
-        """
-        Initialize an experiment.
-        
-        Args:
-            name: Name of the experiment
-            experiment_type: Type of experiment
-            description: Description of the experiment
-            version: Version of the experiment
-            storage_dir: Optional directory for storage
-        """
-        self.name = name
-        
-        # Convert experiment_type to enum if string
-        if isinstance(experiment_type, str):
-            experiment_type = ExperimentType(experiment_type)
-        
-        self.experiment_type = experiment_type
-        self.description = description
-        self.version = version
-        self.created_at = time.time()
-        self.runs = []
-        self.metadata = {}
-        self.parameters = {}
-        
-        # Set up storage directory
-        if storage_dir is None:
-            storage_dir = os.path.join(os.getcwd(), 'experiment_storage')
-        
-        self.storage_dir = storage_dir
-        os.makedirs(storage_dir, exist_ok=True)
-        
-        # Initialize logger
-        self.logger = logging.getLogger('experiment')
-    
-    def set_parameters(self, parameters: Dict[str, Any]) -> None:
-        """
-        Set experiment parameters.
-        
-        Args:
-            parameters: Dictionary of parameter name -> value
-        """
-        self.parameters = parameters
-        self.logger.info(f"Set parameters for experiment {self.name}")
-    
-    def add_run(self, run_id: str, parameters: Dict[str, Any],
-              results: Dict[str, Any],
-              metrics: Dict[str, float],
-              metadata: Optional[Dict[str, Any]] = None) -> None:
-        """
-        Add a run to the experiment.
-        
-        Args:
-            run_id: Unique identifier for the run
-            parameters: Parameters used for the run
-            results: Results of the run
-            metrics: Metrics computed for the run
-            metadata: Optional run metadata
-        """
-        run = {
-            'id': run_id,
-            'parameters': parameters,
-            'results': results,
-            'metrics': metrics,
-            'timestamp': time.time(),
-            'metadata': metadata or {}
-        }
-        
-        self.runs.append(run)
-        self.logger.info(f"Added run {run_id} to experiment {self.name}")
-    
-    def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get a run from the experiment.
-        
-        Args:
-            run_id: ID of the run to get
-            
-        Returns:
-            Run or None if not found
-        """
-        for run in self.runs:
-            if run['id'] == run_id:
-                return run
-        
-        return None
-    
-    def save(self) -> None:
-        """Save the experiment to storage."""
-        # Create directory for this experiment
-        experiment_dir = os.path.join(self.storage_dir, self.name)
-        os.makedirs(experiment_dir, exist_ok=True)
-        
-        # Save metadata
-        metadata = {
-            'name': self.name,
-            'experiment_type': self.experiment_type.value,
-            'description': self.description,
-            'version': self.version,
-            'created_at': self.created_at,
-            'run_count': len(self.runs),
-            'parameters': self.parameters,
-            'metadata': self.metadata
-        }
-        
-        metadata_path = os.path.join(experiment_dir, 'metadata.json')
-        
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
-        
-        # Save runs
-        runs_path = os.path.join(experiment_dir, 'runs.json')
-        
-        with open(runs_path, 'w') as f:
-            json.dump(self.runs, f, indent=2)
-        
-        self.logger.info(f"Saved experiment {self.name} with {len(self.runs)} runs")
-    
-    @classmethod
-    def load(cls, name: str, storage_dir: Optional[str] = None) -> 'Experiment':
-        """
-        Load an experiment from storage.
-        
-        Args:
-            name: Name of the experiment
-            storage_dir: Optional directory for storage
-            
-        Returns:
-            Loaded experiment
-        """
-        if storage_dir is None:
-            storage_dir = os.path.join(os.getcwd(), 'experiment_storage')
-        
-        experiment_dir = os.path.join(storage_dir, name)
-        
-        if not os.path.exists(experiment_dir):
-            raise FileNotFoundError(f"Experiment {name} not found in {storage_dir}")
-        
-        # Load metadata
-        metadata_path = os.path.join(experiment_dir, 'metadata.json')
-        
-        with open(metadata_path, 'r') as f:
-            metadata = json.load(f)
-        
-        # Create experiment
-        experiment = cls(
-            name=metadata['name'],
-            experiment_type=metadata['experiment_type'],
-            description=metadata['description'],
-            version=metadata['version'],
-            storage_dir=storage_dir
-        )
-        
-        experiment.created_at = metadata['created_at']
-        experiment.parameters = metadata['parameters']
-        experiment.metadata = metadata['metadata']
-        
-        # Load runs
-        runs_path = os.path.join(experiment_dir, 'runs.json')
-        
-        with open(runs_path, 'r') as f:
-            experiment.runs = json.load(f)
-        
-        experiment.logger.info(f"Loaded experiment {name} with {len(experiment.runs)} runs")
-        return experiment
-    
-    def analyze(self, analysis_type: Union[str, AnalysisType] = AnalysisType.DESCRIPTIVE,
-              parameters: Optional[List[str]] = None,
-              metrics: Optional[List[str]] = None) -> Dict[str, Any]:
-        """
-        Analyze experiment results.
-        
-        Args:
-            analysis_type: Type of analysis to perform
-            parameters: Optional list of parameters to include in the analysis
-            metrics: Optional list of metrics to include in the analysis
-            
-        Returns:
-            Analysis results
-        """
-        # Convert analysis_type to enum if string
-        if isinstance(analysis_type, str):
-            analysis_type = AnalysisType(analysis_type)
-        
-        # Extract data from runs
-        data = []
-        
-        for run in self.runs:
-            run_data = {}
-            
-            # Add parameters
-            for param, value in run['parameters'].items():
-                if parameters is None or param in parameters:
-                    run_data[f"param_{param}"] = value
-            
-            # Add metrics
-            for metric, value in run['metrics'].items():
-                if metrics is None or metric in metrics:
-                    run_data[f"metric_{metric}"] = value
-            
-            # Add run information
-            run_data['run_id'] = run['id']
-            run_data['timestamp'] = run['timestamp']
-            
-            data.append(run_data)
-        
-        # Create DataFrame
-        df = pd.DataFrame(data)
-        
-        # Perform analysis
-        if analysis_type == AnalysisType.DESCRIPTIVE:
-            return self._descriptive_analysis(df, parameters, metrics)
-        elif analysis_type == AnalysisType.INFERENTIAL:
-            return self._inferential_analysis(df, parameters, metrics)
-        elif analysis_type == AnalysisType.CORRELATION:
-            return self._correlation_analysis(df, parameters, metrics)
-        elif analysis_type == AnalysisType.REGRESSION:
-            return self._regression_analysis(df, parameters, metrics)
-        else:
-            # Default to descriptive analysis
-            return self._descriptive_analysis(df, parameters, metrics)
-    
-    def _descriptive_analysis(self, df: pd.DataFrame,
-                           parameters: Optional[List[str]] = None,
-                           metrics: Optional[List[str]] = None) -> Dict[str, Any]:
-        """
-        Perform descriptive analysis on experiment results.
-        
-        Args:
-            df: DataFrame containing run data
-            parameters: Optional list of parameters to include
-            metrics: Optional list of metrics to include
-            
-        Returns:
-            Analysis results
-        """
-        results = {
-            'experiment': self.name,
-            'experiment_type': self.experiment_type.value,
-            'analysis_type': AnalysisType.DESCRIPTIVE.value,
-            'run_count': len(self.runs),
-            'parameters': {},
-            'metrics': {}
-        }
-        
-        # Extract parameter columns
-        param_cols = [col for col in df.columns if col.startswith('param_')]
-        
-        # Filter by specified parameters
-        if parameters:
-            param_cols = [col for col in param_cols if col[6:] in parameters]
-        
-        # Compute statistics for parameters
-        for col in param_cols:
-            param_name = col[6:]  # Remove 'param_' prefix
-            
-            # Skip non-numeric parameters
-            if not pd.api.types.is_numeric_dtype(df[col]):
-                continue
-            
-            results['parameters'][param_name] = {
-                'mean': df[col].mean(),
-                'std': df[col].std(),
-                'min': df[col].min(),
-                'max': df[col].max(),
-                'median': df[col].median()
-            }
-        
-        # Extract metric columns
-        metric_cols = [col for col in df.columns if col.startswith('metric_')]
-        
-        # Filter by specified metrics
-        if metrics:
-            metric_cols = [col for col in metric_cols if col[7:] in metrics]
-        
-        # Compute statistics for metrics
-        for col in metric_cols:
-            metric_name = col[7:]  # Remove 'metric_' prefix
-            
-            results['metrics'][metric_name] = {
-                'mean': df[col].mean(),
-                'std': df[col].std(),
-                'min': df[col].min(),
-                'max': df[col].max(),
-                'median': df[col].median(),
-                'quartiles': [
-                    df[col].quantile(0.25),
-                    df[col].quantile(0.5),
-                    df[col].quantile(0.75)
-                ]
-            }
-        
-        return results
-    
-    def _inferential_analysis(self, df: pd.DataFrame,
-                           parameters: Optional[List[str]] = None,
-                           metrics: Optional[List[str]] = None) -> Dict[str, Any]:
-        """
-        Perform inferential analysis on experiment results.
-        
-        Args:
-            df: DataFrame containing run data
-            parameters: Optional list of parameters to include
-            metrics: Optional list of metrics to include
-            
-        Returns:
-            Analysis results
-        """
-        # In a real implementation, this would perform hypothesis tests,
-        # confidence intervals, etc.
-        # For now, just return a placeholder
-        
-        return {
-            'experiment': self.name,
-            'experiment_type': self.experiment_type.value,
-            'analysis_type': AnalysisType.INFERENTIAL.value,
-            'run_count': len(self.runs),
-            'note': "Inferential analysis not implemented yet"
-        }
-    
-    def _correlation_analysis(self, df: pd.DataFrame,
-                           parameters: Optional[List[str]] = None,
-                           metrics: Optional[List[str]] = None) -> Dict[str, Any]:
-        """
-        Perform correlation analysis on experiment results.
-        
-        Args:
-            df: DataFrame containing run data
-            parameters: Optional list of parameters to include
-            metrics: Optional list of metrics to include
-            
-        Returns:
-            Analysis results
-        """
-        results = {
-            'experiment': self.name,
-            'experiment_type': self.experiment_type.value,
-            'analysis_type': AnalysisType.CORRELATION.value,
-            'run_count': len(self.runs),
-            'parameter_correlations': {},
-            'metric_correlations': {},
-            'parameter_metric_correlations': {}
-        }
-        
-        # Extract parameter columns
-        param_cols = [col for col in df.columns if col.startswith('param_')]
-        
-        # Filter by specified parameters
-        if parameters:
-            param_cols = [col for col in param_cols if col[6:] in parameters]
-        
-        # Extract metric columns
-        metric_cols = [col for col in df.columns if col.startswith('metric_')]
-        
-        # Filter by specified metrics
-        if metrics:
-            metric_cols = [col for col in metric_cols if col[7:] in metrics]
-        
-        # Compute parameter correlations
-        if len(param_cols) > 1:
-            param_corr = df[param_cols].corr()
-            
-            for i, param1 in enumerate(param_cols):
-                param_name1 = param1[6:]  # Remove 'param_' prefix
-                results['parameter_correlations'][param_name1] = {}
-                
-                for j, param2 in enumerate(param_cols):
-                    if i != j:
-                        param_name2 = param2[6:]  # Remove 'param_' prefix
-                        results['parameter_correlations'][param_name1][param_name2] = param_corr.loc[param1, param2]
-        
-        # Compute metric correlations
-        if len(metric_cols) > 1:
-            metric_corr = df[metric_cols].corr()
-            
-            for i, metric1 in enumerate(metric_cols):
-                metric_name1 = metric1[7:]  # Remove 'metric_' prefix
-                results['metric_correlations'][metric_name1] = {}
-                
-                for j, metric2 in enumerate(metric_cols):
-                    if i != j:
-                        metric_name2 = metric2[7:]  # Remove 'metric_' prefix
-                        results['metric_correlations'][metric_name1][metric_name2] = metric_corr.loc[metric1, metric2]
-        
-        # Compute parameter-metric correlations
-        if param_cols and metric_cols:
-            param_metric_corr = df[param_cols + metric_cols].corr()
-            
-            for param in param_cols:
-                param_name = param[6:]  # Remove 'param_' prefix
-                results['parameter_metric_correlations'][param_name] = {}
-                
-                for metric in metric_cols:
-                    metric_name = metric[7:]  # Remove 'metric_' prefix
-                    results['parameter_metric_correlations'][param_name][metric_name] = param_metric_corr.loc[param, metric]
-        
-        return results
-    
-    def _regression_analysis(self, df: pd.DataFrame,
-                          parameters: Optional[List[str]] = None,
-                          metrics: Optional[List[str]] = None) -> Dict[str, Any]:
-        """
-        Perform regression analysis on experiment results.
-        
-        Args:
-            df: DataFrame containing run data
-            parameters: Optional list of parameters to include
-            metrics: Optional list of metrics to include
-            
-        Returns:
-            Analysis results
-        """
-        # In a real implementation, this would fit regression models
-        # For now, just return a placeholder
-        
-        return {
-            'experiment': self.name,
-            'experiment_type': self.experiment_type.value,
-            'analysis_type': AnalysisType.REGRESSION.value,
-            'run_count': len(self.runs),
-            'note': "Regression analysis not implemented yet"
-        }
-    
-    def plot(self, plot_type: str,
-           x_param: Optional[str] = None,
-           y_metric: Optional[str] = None,
-           output_file: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Generate a plot of experiment results.
-        
-        Args:
-            plot_type: Type of plot to generate
-            x_param: Optional parameter to use for the x-axis
-            y_metric: Optional metric to use for the y-axis
-            output_file: Optional file to save the plot to
-            
-        Returns:
-            Plot data
-        """
-        try:
-            import matplotlib.pyplot as plt
-            
-            # Extract data from runs
-            data = []
-            
-            for run in self.runs:
-                run_data = {}
-                
-                # Add parameters
-                for param, value in run['parameters'].items():
-                    run_data[f"param_{param}"] = value
-                
-                # Add metrics
-                for metric, value in run['metrics'].items():
-                    run_data[f"metric_{metric}"] = value
-                
-                # Add run information
-                run_data['run_id'] = run['id']
-                run_data['timestamp'] = run['timestamp']
-                
-                data.append(run_data)
-            
-            # Create DataFrame
-            df = pd.DataFrame(data)
-            
-            # Generate plot
-            plt.figure(figsize=(10, 6))
-            
-            if plot_type == 'line':
-                self._generate_line_plot(df, x_param, y_metric)
-            elif plot_type == 'scatter':
-                self._generate_scatter_plot(df, x_param, y_metric)
-            elif plot_type == 'bar':
-                self._generate_bar_plot(df, x_param, y_metric)
-            elif plot_type == 'box':
-                self._generate_box_plot(df, x_param, y_metric)
-            elif plot_type == 'histogram':
-                self._generate_histogram_plot(df, y_metric)
-            else:
-                raise ValueError(f"Unknown plot type: {plot_type}")
-            
-            plt.title(f"{self.name} - {plot_type.capitalize()} Plot")
-            plt.grid(True, linestyle='--', alpha=0.7)
-            
-            # Save to file if specified
-            if output_file:
-                plt.savefig(output_file, dpi=300, bbox_inches='tight')
-                plt.close()
-            
-            return {
-                'experiment': self.name,
-                'plot_type': plot_type,
-                'x_param': x_param,
-                'y_metric': y_metric,
-                'output_file': output_file
-            }
-        
-        except Exception as e:
-            self.logger.error(f"Error generating plot: {str(e)}")
-            return {'error': str(e)}
-    
-    def _generate_line_plot(self, df: pd.DataFrame,
-                         x_param: Optional[str] = None,
-                         y_metric: Optional[str] = None) -> None:
-        """
-        Generate a line plot.
-        
-        Args:
-            df: DataFrame containing run data
-            x_param: Parameter to use for the x-axis
-            y_metric: Metric to use for the y-axis
-        """
-        x_col = f"param_{x_param}" if x_param else 'timestamp'
-        y_col = f"metric_{y_metric}" if y_metric else None
-        
-        if not y_col:
-            # If no y metric specified, use all metrics
-            metric_cols = [col for col in df.columns if col.startswith('metric_')]
-            
-            for col in metric_cols:
-                metric_name = col[7:]  # Remove 'metric_' prefix
-                plt.plot(df[x_col], df[col], marker='o', label=metric_name)
-        else:
-            plt.plot(df[x_col], df[y_col], marker='o')
-        
-        plt.xlabel(x_param if x_param else 'Time')
-        plt.ylabel(y_metric if y_metric else 'Metrics')
-        
-        if not y_metric and len([col for col in df.columns if col.startswith('metric_')]) > 1:
-            plt.legend()
-    
-    def _generate_scatter_plot(self, df: pd.DataFrame,
-                            x_param: Optional[str] = None,
-                            y_metric: Optional[str] = None) -> None:
-        """
-        Generate a scatter plot.
-        
-        Args:
-            df: DataFrame containing run data
-            x_param: Parameter to use for the x-axis
-            y_metric: Metric to use for the y-axis
-        """
-        if not x_param or not y_metric:
-            raise ValueError("Both x_param and y_metric must be specified for scatter plots")
-        
-        x_col = f"param_{x_param}"
-        y_col = f"metric_{y_metric}"
-        
-        plt.scatter(df[x_col], df[y_col], alpha=0.7)
-        plt.xlabel(x_param)
-        plt.ylabel(y_metric)
-    
-    def _generate_bar_plot(self, df: pd.DataFrame,
-                        x_param: Optional[str] = None,
-                        y_metric: Optional[str] = None) -> None:
-        """
-        Generate a bar plot.
-        
-        Args:
-            df: DataFrame containing run data
-            x_param: Parameter to use for the x-axis
-            y_metric: Metric to use for the y-axis
-        """
-        if not x_param or not y_metric:
-            raise ValueError("Both x_param and y_metric must be specified for bar plots")
-        
-        x_col = f"param_{x_param}"
-        y_col = f"metric_{y_metric}"
-        
-        # If x is categorical, use as is
-        if pd.api.types.is_numeric_dtype(df[x_col]):
-            # If x is numeric, bin it
-            df['x_binned'] = pd.cut(df[x_col], bins=10)
-            x_col = 'x_binned'
-        
-        # Compute mean y values for each x bin
-        grouped = df.groupby(x_col)[y_col].mean()
-        
-        grouped.plot(kind='bar')
-        plt.xlabel(x_param)
-        plt.ylabel(y_metric)
-    
-    def _generate_box_plot(self, df: pd.DataFrame,
-                        x_param: Optional[str] = None,
-                        y_metric: Optional[str] = None) -> None:
-        """
-        Generate a box plot.
-        
-        Args:
-            df: DataFrame containing run data
-            x_param: Parameter to use for the x-axis
-            y_metric: Metric to use for the y-axis
-        """
-        if not y_metric:
-            raise ValueError("y_metric must be specified for box plots")
-        
-        y_col = f"metric_{y_metric}"
-        
-        if x_param:
-            x_col = f"param_{x_param}"
-            
-            # If x is categorical, use as is
-            if pd.api.types.is_numeric_dtype(df[x_col]):
-                # If x is numeric, bin it
-                df['x_binned'] = pd.cut(df[x_col], bins=5)
-                x_col = 'x_binned'
-            
-            df.boxplot(column=y_col, by=x_col)
-            plt.xlabel(x_param)
-        else:
-            plt.boxplot(df[y_col])
-            plt.xticks([1], [y_metric])
-        
-        plt.ylabel(y_metric)
-    
-    def _generate_histogram_plot(self, df: pd.DataFrame,
-                              y_metric: Optional[str] = None) -> None:
-        """
-        Generate a histogram plot.
-        
-        Args:
-            df: DataFrame containing run data
-            y_metric: Metric to use for the histogram
-        """
-        if not y_metric:
-            raise ValueError("y_metric must be specified for histogram plots")
-        
-        y_col = f"metric_{y_metric}"
-        
-        plt.hist(df[y_col], bins=20, alpha=0.7, edgecolor='black')
-        plt.xlabel(y_metric)
-        plt.ylabel('Frequency')
-
-
-class ResearchPaper:
-    """
-    Research paper generator.
-    
-    This class provides functionality for:
-    - Generating research paper templates
-    - Formatting experimental results for publication
-    - Creating publication-ready figures
-    """
-    
-    def __init__(self, title: str, authors: List[str],
-               abstract: str, storage_dir: Optional[str] = None):
-        """
-        Initialize a research paper.
-        
-        Args:
+            paper_id: Unique identifier for the paper
             title: Paper title
-            authors: List of authors
+            authors: List of author names
             abstract: Paper abstract
-            storage_dir: Optional directory for storage
+            publication_date: Publication date (ISO format: YYYY-MM-DD)
+            paper_type: Type of paper
+            venue: Optional publication venue
+            doi: Optional DOI (Digital Object Identifier)
+            url: Optional URL to the paper
+            pdf_url: Optional URL to the PDF
+            keywords: Optional list of keywords
+            citations: Optional list of papers citing this paper
+            references: Optional list of papers referenced by this paper
+            metadata: Optional paper metadata
         """
+        self.id = paper_id
         self.title = title
         self.authors = authors
         self.abstract = abstract
-        self.sections = {}
-        self.figures = {}
-        self.tables = {}
-        self.bibliography = []
-        self.metadata = {}
-        
-        # Set up storage directory
-        if storage_dir is None:
-            storage_dir = os.path.join(os.getcwd(), 'paper_storage')
-        
-        self.storage_dir = storage_dir
-        os.makedirs(storage_dir, exist_ok=True)
-        
-        # Initialize logger
-        self.logger = logging.getLogger('research_paper')
+        self.publication_date = publication_date
+        self.paper_type = paper_type
+        self.venue = venue
+        self.doi = doi
+        self.url = url
+        self.pdf_url = pdf_url
+        self.keywords = keywords or []
+        self.citations = citations or []
+        self.references = references or []
+        self.metadata = metadata or {}
+        self.created_at = time.time()
+        self.updated_at = self.created_at
     
-    def add_section(self, section_name: str, content: str) -> None:
-        """
-        Add a section to the paper.
-        
-        Args:
-            section_name: Name of the section
-            content: Content of the section
-        """
-        self.sections[section_name] = content
-        self.logger.info(f"Added section: {section_name}")
-    
-    def add_figure(self, figure_id: str, caption: str, 
-                 file_path: Optional[str] = None,
-                 data: Optional[Dict[str, Any]] = None) -> None:
-        """
-        Add a figure to the paper.
-        
-        Args:
-            figure_id: Unique identifier for the figure
-            caption: Caption for the figure
-            file_path: Optional path to the figure file
-            data: Optional figure data for generation
-        """
-        self.figures[figure_id] = {
-            'caption': caption,
-            'file_path': file_path,
-            'data': data
-        }
-        
-        self.logger.info(f"Added figure: {figure_id}")
-    
-    def add_table(self, table_id: str, caption: str, 
-                data: List[List[str]]) -> None:
-        """
-        Add a table to the paper.
-        
-        Args:
-            table_id: Unique identifier for the table
-            caption: Caption for the table
-            data: Table data as a list of rows, each row being a list of cells
-        """
-        self.tables[table_id] = {
-            'caption': caption,
-            'data': data
-        }
-        
-        self.logger.info(f"Added table: {table_id}")
-    
-    def add_reference(self, reference: Dict[str, str]) -> None:
-        """
-        Add a reference to the bibliography.
-        
-        Args:
-            reference: Reference data (authors, title, year, etc.)
-        """
-        self.bibliography.append(reference)
-        self.logger.info(f"Added reference: {reference.get('title', 'Unknown')}")
-    
-    def save(self) -> None:
-        """Save the paper to storage."""
-        # Create directory for this paper
-        paper_dir = os.path.join(self.storage_dir, self._get_filename())
-        os.makedirs(paper_dir, exist_ok=True)
-        
-        # Save metadata
-        metadata = {
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert paper to a dictionary."""
+        return {
+            'id': self.id,
             'title': self.title,
             'authors': self.authors,
             'abstract': self.abstract,
-            'sections': list(self.sections.keys()),
-            'figures': list(self.figures.keys()),
-            'tables': list(self.tables.keys()),
-            'bibliography_count': len(self.bibliography),
-            'metadata': self.metadata
+            'publication_date': self.publication_date,
+            'paper_type': self.paper_type.value,
+            'venue': self.venue,
+            'doi': self.doi,
+            'url': self.url,
+            'pdf_url': self.pdf_url,
+            'keywords': self.keywords,
+            'citations': self.citations,
+            'references': self.references,
+            'metadata': self.metadata,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at
         }
-        
-        metadata_path = os.path.join(paper_dir, 'metadata.json')
-        
-        with open(metadata_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
-        
-        # Save sections
-        sections_dir = os.path.join(paper_dir, 'sections')
-        os.makedirs(sections_dir, exist_ok=True)
-        
-        for section_name, content in self.sections.items():
-            section_path = os.path.join(sections_dir, f"{self._sanitize_filename(section_name)}.txt")
-            
-            with open(section_path, 'w') as f:
-                f.write(content)
-        
-        # Save figures
-        figures_dir = os.path.join(paper_dir, 'figures')
-        os.makedirs(figures_dir, exist_ok=True)
-        
-        for figure_id, figure_data in self.figures.items():
-            figure_path = os.path.join(figures_dir, f"{figure_id}.json")
-            
-            with open(figure_path, 'w') as f:
-                json.dump(figure_data, f, indent=2)
-        
-        # Save tables
-        tables_dir = os.path.join(paper_dir, 'tables')
-        os.makedirs(tables_dir, exist_ok=True)
-        
-        for table_id, table_data in self.tables.items():
-            table_path = os.path.join(tables_dir, f"{table_id}.json")
-            
-            with open(table_path, 'w') as f:
-                json.dump(table_data, f, indent=2)
-        
-        # Save bibliography
-        bibliography_path = os.path.join(paper_dir, 'bibliography.json')
-        
-        with open(bibliography_path, 'w') as f:
-            json.dump(self.bibliography, f, indent=2)
-        
-        self.logger.info(f"Saved paper: {self.title}")
-    
-    def _get_filename(self) -> str:
-        """
-        Get a filename for the paper based on its title.
-        
-        Returns:
-            Sanitized filename
-        """
-        return self._sanitize_filename(self.title)
-    
-    def _sanitize_filename(self, name: str) -> str:
-        """
-        Sanitize a string for use as a filename.
-        
-        Args:
-            name: String to sanitize
-            
-        Returns:
-            Sanitized string
-        """
-        # Replace spaces with underscores
-        name = name.replace(' ', '_')
-        
-        # Remove special characters
-        name = ''.join(c for c in name if c.isalnum() or c in '_-')
-        
-        # Limit length
-        name = name[:100]
-        
-        return name
     
     @classmethod
-    def load(cls, title: str, storage_dir: Optional[str] = None) -> 'ResearchPaper':
+    def from_dict(cls, data: Dict[str, Any]) -> 'Paper':
         """
-        Load a paper from storage.
+        Create a paper from a dictionary.
         
         Args:
-            title: Title of the paper (used to find the file)
-            storage_dir: Optional directory for storage
-            
+            data: Paper data dictionary
+        
         Returns:
-            Loaded paper
+            Paper instance
         """
-        if storage_dir is None:
-            storage_dir = os.path.join(os.getcwd(), 'paper_storage')
-        
-        # Sanitize title for filename
-        filename = title.replace(' ', '_')
-        filename = ''.join(c for c in filename if c.isalnum() or c in '_-')
-        filename = filename[:100]
-        
-        paper_dir = os.path.join(storage_dir, filename)
-        
-        if not os.path.exists(paper_dir):
-            raise FileNotFoundError(f"Paper '{title}' not found in {storage_dir}")
-        
-        # Load metadata
-        metadata_path = os.path.join(paper_dir, 'metadata.json')
-        
-        with open(metadata_path, 'r') as f:
-            metadata = json.load(f)
-        
-        # Create paper
         paper = cls(
-            title=metadata['title'],
-            authors=metadata['authors'],
-            abstract=metadata['abstract'],
-            storage_dir=storage_dir
+            paper_id=data['id'],
+            title=data['title'],
+            authors=data['authors'],
+            abstract=data['abstract'],
+            publication_date=data['publication_date'],
+            paper_type=PaperType(data['paper_type']),
+            venue=data.get('venue'),
+            doi=data.get('doi'),
+            url=data.get('url'),
+            pdf_url=data.get('pdf_url'),
+            keywords=data.get('keywords', []),
+            citations=data.get('citations', []),
+            references=data.get('references', []),
+            metadata=data.get('metadata', {})
         )
         
-        paper.metadata = metadata.get('metadata', {})
-        
-        # Load sections
-        sections_dir = os.path.join(paper_dir, 'sections')
-        
-        if os.path.exists(sections_dir):
-            for section_file in os.listdir(sections_dir):
-                if section_file.endswith('.txt'):
-                    section_name = section_file[:-4]  # Remove '.txt'
-                    section_path = os.path.join(sections_dir, section_file)
-                    
-                    with open(section_path, 'r') as f:
-                        content = f.read()
-                    
-                    paper.sections[section_name] = content
-        
-        # Load figures
-        figures_dir = os.path.join(paper_dir, 'figures')
-        
-        if os.path.exists(figures_dir):
-            for figure_file in os.listdir(figures_dir):
-                if figure_file.endswith('.json'):
-                    figure_id = figure_file[:-5]  # Remove '.json'
-                    figure_path = os.path.join(figures_dir, figure_file)
-                    
-                    with open(figure_path, 'r') as f:
-                        figure_data = json.load(f)
-                    
-                    paper.figures[figure_id] = figure_data
-        
-        # Load tables
-        tables_dir = os.path.join(paper_dir, 'tables')
-        
-        if os.path.exists(tables_dir):
-            for table_file in os.listdir(tables_dir):
-                if table_file.endswith('.json'):
-                    table_id = table_file[:-5]  # Remove '.json'
-                    table_path = os.path.join(tables_dir, table_file)
-                    
-                    with open(table_path, 'r') as f:
-                        table_data = json.load(f)
-                    
-                    paper.tables[table_id] = table_data
-        
-        # Load bibliography
-        bibliography_path = os.path.join(paper_dir, 'bibliography.json')
-        
-        if os.path.exists(bibliography_path):
-            with open(bibliography_path, 'r') as f:
-                paper.bibliography = json.load(f)
-        
-        paper.logger.info(f"Loaded paper: {title}")
-        return paper
-    
-    def generate_latex(self, output_path: Optional[str] = None) -> str:
-        """
-        Generate LaTeX source for the paper.
-        
-        Args:
-            output_path: Optional path to write LaTeX file
-            
-        Returns:
-            LaTeX source
-        """
-        latex = []
-        
-        # Document class
-        latex.append("\\documentclass[conference]{IEEEtran}")
-        latex.append("\\usepackage{graphicx}")
-        latex.append("\\usepackage{amsmath}")
-        latex.append("\\usepackage{algorithm}")
-        latex.append("\\usepackage{algorithmic}")
-        latex.append("\\usepackage{booktabs}")
-        latex.append("\\usepackage{multirow}")
-        latex.append("")
-        
-        # Begin document
-        latex.append("\\begin{document}")
-        latex.append("")
-        
-        # Title
-        latex.append(f"\\title{{{self.title}}}")
-        latex.append("")
-        
-        # Authors
-        if self.authors:
-            author_str = " \\and ".join(self.authors)
-            latex.append(f"\\author{{{author_str}}}")
-            latex.append("")
-        
-        # Maketitle
-        latex.append("\\maketitle")
-        latex.append("")
-        
-        # Abstract
-        latex.append("\\begin{abstract}")
-        latex.append(self.abstract)
-        latex.append("\\end{abstract}")
-        latex.append("")
-        
-        # Sections
-        for section_name, content in self.sections.items():
-            latex.append(f"\\section{{{section_name}}}")
-            latex.append(content)
-            latex.append("")
-        
-        # Figures
-        for figure_id, figure_data in self.figures.items():
-            if figure_data.get('file_path'):
-                latex.append("\\begin{figure}[t]")
-                latex.append("\\centering")
-                latex.append(f"\\includegraphics[width=\\columnwidth]{{{figure_data['file_path']}}}")
-                latex.append(f"\\caption{{{figure_data['caption']}}}")
-                latex.append(f"\\label{{fig:{figure_id}}}")
-                latex.append("\\end{figure}")
-                latex.append("")
-        
-        # Tables
-        for table_id, table_data in self.tables.items():
-            data = table_data['data']
-            if data and all(isinstance(row, list) for row in data):
-                latex.append("\\begin{table}[t]")
-                latex.append("\\centering")
-                latex.append("\\begin{tabular}{" + "c" * len(data[0]) + "}")
-                latex.append("\\toprule")
-                
-                # Header
-                latex.append(" & ".join(data[0]) + " \\\\")
-                latex.append("\\midrule")
-                
-                # Body
-                for row in data[1:]:
-                    latex.append(" & ".join(row) + " \\\\")
-                
-                latex.append("\\bottomrule")
-                latex.append("\\end{tabular}")
-                latex.append(f"\\caption{{{table_data['caption']}}}")
-                latex.append(f"\\label{{tab:{table_id}}}")
-                latex.append("\\end{table}")
-                latex.append("")
-        
-        # Bibliography
-        if self.bibliography:
-            latex.append("\\begin{thebibliography}{" + str(len(self.bibliography)) + "}")
-            latex.append("")
-            
-            for i, ref in enumerate(self.bibliography, 1):
-                if 'authors' in ref and 'title' in ref and 'year' in ref:
-                    latex.append(f"\\bibitem{{{i}}}")
-                    latex.append(f"{ref['authors']}, ``{ref['title']},'' {ref.get('journal', '')}, {ref.get('volume', '')}, {ref.get('number', '')}, {ref['year']}.")
-                    latex.append("")
-            
-            latex.append("\\end{thebibliography}")
-            latex.append("")
-        
-        # End document
-        latex.append("\\end{document}")
-        
-        # Join and return
-        latex_source = "\n".join(latex)
-        
-        # Write to file if requested
-        if output_path:
-            with open(output_path, 'w') as f:
-                f.write(latex_source)
-            
-            self.logger.info(f"Generated LaTeX source and saved to {output_path}")
-        
-        return latex_source
-    
-    @staticmethod
-    def generate_template(title: str, authors: List[str], 
-                       abstract: str) -> 'ResearchPaper':
-        """
-        Generate a template for a research paper.
-        
-        Args:
-            title: Paper title
-            authors: List of authors
-            abstract: Paper abstract
-            
-        Returns:
-            Research paper template
-        """
-        paper = ResearchPaper(title, authors, abstract)
-        
-        # Add standard sections
-        paper.add_section("Introduction", "The introduction provides background and context for the research. It should clearly state the problem being addressed and why it's important.")
-        
-        paper.add_section("Related Work", "This section discusses prior research related to the current work. It should highlight the gaps in existing research that the current paper aims to fill.")
-        
-        paper.add_section("Method", "The method section details the approach used to solve the problem. It should include enough information for others to replicate the work.")
-        
-        paper.add_section("Experiments", "This section describes the experimental setup and evaluation methodology. It should clearly state the research questions and how the experiments answer them.")
-        
-        paper.add_section("Results", "The results section presents the findings of the experiments. It should include tables and figures to illustrate the results.")
-        
-        paper.add_section("Discussion", "This section interprets the results and discusses their implications. It should address any limitations of the current approach and suggest future directions.")
-        
-        paper.add_section("Conclusion", "The conclusion summarizes the main findings and contributions of the paper. It should restate the importance of the work and its impact on the field.")
+        paper.created_at = data.get('created_at', time.time())
+        paper.updated_at = data.get('updated_at', time.time())
         
         return paper
+
+
+class ResearchTopic:
+    """
+    Represents a research topic in the system.
+    """
+    
+    def __init__(self, topic_id: str, name: str, description: str,
+               parent_topic: Optional[str] = None,
+               related_topics: Optional[List[str]] = None,
+               papers: Optional[List[str]] = None,
+               metadata: Optional[Dict[str, Any]] = None):
+        """
+        Initialize a research topic.
+        
+        Args:
+            topic_id: Unique identifier for the topic
+            name: Topic name
+            description: Topic description
+            parent_topic: Optional ID of the parent topic
+            related_topics: Optional list of related topic IDs
+            papers: Optional list of paper IDs
+            metadata: Optional topic metadata
+        """
+        self.id = topic_id
+        self.name = name
+        self.description = description
+        self.parent_topic = parent_topic
+        self.related_topics = related_topics or []
+        self.papers = papers or []
+        self.metadata = metadata or {}
+        self.created_at = time.time()
+        self.updated_at = self.created_at
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert topic to a dictionary."""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'parent_topic': self.parent_topic,
+            'related_topics': self.related_topics,
+            'papers': self.papers,
+            'metadata': self.metadata,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ResearchTopic':
+        """
+        Create a topic from a dictionary.
+        
+        Args:
+            data: Topic data dictionary
+        
+        Returns:
+            ResearchTopic instance
+        """
+        topic = cls(
+            topic_id=data['id'],
+            name=data['name'],
+            description=data['description'],
+            parent_topic=data.get('parent_topic'),
+            related_topics=data.get('related_topics', []),
+            papers=data.get('papers', []),
+            metadata=data.get('metadata', {})
+        )
+        
+        topic.created_at = data.get('created_at', time.time())
+        topic.updated_at = data.get('updated_at', time.time())
+        
+        return topic
+
+
+class CitationFormat(Enum):
+    """Citation formats supported by the system."""
+    APA = "apa"
+    MLA = "mla"
+    CHICAGO = "chicago"
+    IEEE = "ieee"
+    HARVARD = "harvard"
+    BIBTEX = "bibtex"
 
 
 class AcademicFramework:
     """
-    Academic Research Framework for the Code Deep Dive Analyzer.
+    Academic framework for research paper integration.
     
     This class provides:
-    - Benchmark dataset management
-    - Experiment tracking
-    - Research paper generation
-    - Statistical analysis tools
+    - Paper management and search
+    - Citation tracking and generation
+    - Research topic organization
+    - Integration with external academic APIs
     """
     
-    def __init__(self, storage_dir: Optional[str] = None):
+    def __init__(self, storage_dir: Optional[str] = None, api_key: Optional[str] = None):
         """
         Initialize the academic framework.
         
         Args:
-            storage_dir: Optional directory for storage
+            storage_dir: Optional directory for persistent storage
+            api_key: Optional API key for external academic services
         """
         # Set up storage directory
         if storage_dir is None:
@@ -1578,511 +241,1444 @@ class AcademicFramework:
         self.storage_dir = storage_dir
         os.makedirs(storage_dir, exist_ok=True)
         
-        # Initialize directories
-        self.benchmark_dir = os.path.join(storage_dir, 'benchmarks')
-        self.experiment_dir = os.path.join(storage_dir, 'experiments')
-        self.paper_dir = os.path.join(storage_dir, 'papers')
+        # Set up papers directory
+        self.papers_dir = os.path.join(storage_dir, 'papers')
+        os.makedirs(self.papers_dir, exist_ok=True)
         
-        os.makedirs(self.benchmark_dir, exist_ok=True)
-        os.makedirs(self.experiment_dir, exist_ok=True)
-        os.makedirs(self.paper_dir, exist_ok=True)
+        # Set up topics directory
+        self.topics_dir = os.path.join(storage_dir, 'topics')
+        os.makedirs(self.topics_dir, exist_ok=True)
         
         # Initialize logger
         self.logger = logging.getLogger('academic_framework')
         
-        # Initialize collections
-        self.benchmarks = {}  # name -> BenchmarkDataset
-        self.experiments = {}  # name -> Experiment
-        self.papers = {}  # title -> ResearchPaper
+        # Initialize API key
+        self.api_key = api_key
+        
+        # Initialize papers and topics
+        self.papers = {}  # paper_id -> Paper
+        self.topics = {}  # topic_id -> ResearchTopic
+        
+        # Initialize indices
+        self.keyword_index = {}  # keyword -> Set[paper_id]
+        self.author_index = {}  # author -> Set[paper_id]
+        self.year_index = {}  # year -> Set[paper_id]
+        self.topic_paper_index = {}  # topic_id -> Set[paper_id]
+        self.paper_topic_index = {}  # paper_id -> Set[topic_id]
         
         # Load existing data
         self._load_data()
     
     def _load_data(self) -> None:
         """Load existing data from storage."""
-        # Load benchmarks
-        for benchmark_name in os.listdir(self.benchmark_dir):
-            try:
-                benchmark = BenchmarkDataset.load(benchmark_name, self.benchmark_dir)
-                self.benchmarks[benchmark_name] = benchmark
-                self.logger.info(f"Loaded benchmark: {benchmark_name}")
-            except Exception as e:
-                self.logger.error(f"Error loading benchmark {benchmark_name}: {str(e)}")
-        
-        # Load experiments
-        for experiment_name in os.listdir(self.experiment_dir):
-            try:
-                experiment = Experiment.load(experiment_name, self.experiment_dir)
-                self.experiments[experiment_name] = experiment
-                self.logger.info(f"Loaded experiment: {experiment_name}")
-            except Exception as e:
-                self.logger.error(f"Error loading experiment {experiment_name}: {str(e)}")
-        
         # Load papers
-        for paper_title in os.listdir(self.paper_dir):
-            try:
-                paper = ResearchPaper.load(paper_title, self.paper_dir)
-                self.papers[paper.title] = paper
-                self.logger.info(f"Loaded paper: {paper.title}")
-            except Exception as e:
-                self.logger.error(f"Error loading paper {paper_title}: {str(e)}")
+        if os.path.exists(self.papers_dir):
+            for filename in os.listdir(self.papers_dir):
+                if filename.endswith('.json'):
+                    paper_id = filename[:-5]  # Remove '.json'
+                    paper_path = os.path.join(self.papers_dir, filename)
+                    
+                    try:
+                        with open(paper_path, 'r') as f:
+                            paper_data = json.load(f)
+                        
+                        paper = Paper.from_dict(paper_data)
+                        self.papers[paper_id] = paper
+                        
+                        # Update indices
+                        # Update keyword index
+                        for keyword in paper.keywords:
+                            if keyword not in self.keyword_index:
+                                self.keyword_index[keyword] = set()
+                            
+                            self.keyword_index[keyword].add(paper_id)
+                        
+                        # Update author index
+                        for author in paper.authors:
+                            if author not in self.author_index:
+                                self.author_index[author] = set()
+                            
+                            self.author_index[author].add(paper_id)
+                        
+                        # Update year index
+                        try:
+                            year = int(paper.publication_date.split('-')[0])
+                            if year not in self.year_index:
+                                self.year_index[year] = set()
+                            
+                            self.year_index[year].add(paper_id)
+                        
+                        except (ValueError, IndexError):
+                            # Skip if publication date is not in the expected format
+                            pass
+                        
+                        # Initialize paper-topic index
+                        self.paper_topic_index[paper_id] = set()
+                        
+                        self.logger.info(f"Loaded paper: {paper.title} (ID: {paper_id})")
+                    
+                    except Exception as e:
+                        self.logger.error(f"Error loading paper from {paper_path}: {e}")
+        
+        # Load topics
+        if os.path.exists(self.topics_dir):
+            for filename in os.listdir(self.topics_dir):
+                if filename.endswith('.json'):
+                    topic_id = filename[:-5]  # Remove '.json'
+                    topic_path = os.path.join(self.topics_dir, filename)
+                    
+                    try:
+                        with open(topic_path, 'r') as f:
+                            topic_data = json.load(f)
+                        
+                        topic = ResearchTopic.from_dict(topic_data)
+                        self.topics[topic_id] = topic
+                        
+                        # Update topic-paper index
+                        self.topic_paper_index[topic_id] = set(topic.papers)
+                        
+                        # Update paper-topic index
+                        for paper_id in topic.papers:
+                            if paper_id in self.paper_topic_index:
+                                self.paper_topic_index[paper_id].add(topic_id)
+                        
+                        self.logger.info(f"Loaded topic: {topic.name} (ID: {topic_id})")
+                    
+                    except Exception as e:
+                        self.logger.error(f"Error loading topic from {topic_path}: {e}")
     
-    def create_benchmark(self, name: str, benchmark_type: Union[str, BenchmarkType],
-                      description: str, version: str = "1.0.0") -> BenchmarkDataset:
+    def _save_paper(self, paper: Paper) -> None:
         """
-        Create a new benchmark dataset.
+        Save a paper to storage.
         
         Args:
-            name: Name of the benchmark
-            benchmark_type: Type of benchmark
-            description: Description of the benchmark
-            version: Version of the benchmark
-            
-        Returns:
-            Created benchmark dataset
+            paper: Paper to save
         """
-        benchmark = BenchmarkDataset(
-            name=name,
-            benchmark_type=benchmark_type,
-            description=description,
-            version=version,
-            storage_dir=self.benchmark_dir
-        )
+        paper_path = os.path.join(self.papers_dir, f"{paper.id}.json")
         
-        self.benchmarks[name] = benchmark
-        self.logger.info(f"Created benchmark: {name}")
-        return benchmark
+        with open(paper_path, 'w') as f:
+            json.dump(paper.to_dict(), f, indent=2)
     
-    def get_benchmark(self, name: str) -> Optional[BenchmarkDataset]:
+    def _save_topic(self, topic: ResearchTopic) -> None:
         """
-        Get a benchmark dataset by name.
+        Save a topic to storage.
         
         Args:
-            name: Name of the benchmark
-            
-        Returns:
-            Benchmark dataset or None if not found
+            topic: Topic to save
         """
-        return self.benchmarks.get(name)
+        topic_path = os.path.join(self.topics_dir, f"{topic.id}.json")
+        
+        with open(topic_path, 'w') as f:
+            json.dump(topic.to_dict(), f, indent=2)
     
-    def delete_benchmark(self, name: str) -> bool:
+    def add_paper(self, title: str, authors: List[str], abstract: str,
+                publication_date: str, paper_type: Union[str, PaperType] = PaperType.RESEARCH,
+                venue: Optional[str] = None, doi: Optional[str] = None,
+                url: Optional[str] = None, pdf_url: Optional[str] = None,
+                keywords: Optional[List[str]] = None, references: Optional[List[str]] = None,
+                metadata: Optional[Dict[str, Any]] = None) -> str:
         """
-        Delete a benchmark dataset.
-        
-        Args:
-            name: Name of the benchmark
-            
-        Returns:
-            Deletion success
-        """
-        if name not in self.benchmarks:
-            return False
-        
-        # Remove from memory
-        del self.benchmarks[name]
-        
-        # Remove from storage
-        benchmark_path = os.path.join(self.benchmark_dir, name)
-        if os.path.exists(benchmark_path):
-            shutil.rmtree(benchmark_path)
-        
-        self.logger.info(f"Deleted benchmark: {name}")
-        return True
-    
-    def create_experiment(self, name: str, experiment_type: Union[str, ExperimentType],
-                       description: str, version: str = "1.0.0") -> Experiment:
-        """
-        Create a new experiment.
-        
-        Args:
-            name: Name of the experiment
-            experiment_type: Type of experiment
-            description: Description of the experiment
-            version: Version of the experiment
-            
-        Returns:
-            Created experiment
-        """
-        experiment = Experiment(
-            name=name,
-            experiment_type=experiment_type,
-            description=description,
-            version=version,
-            storage_dir=self.experiment_dir
-        )
-        
-        self.experiments[name] = experiment
-        self.logger.info(f"Created experiment: {name}")
-        return experiment
-    
-    def get_experiment(self, name: str) -> Optional[Experiment]:
-        """
-        Get an experiment by name.
-        
-        Args:
-            name: Name of the experiment
-            
-        Returns:
-            Experiment or None if not found
-        """
-        return self.experiments.get(name)
-    
-    def delete_experiment(self, name: str) -> bool:
-        """
-        Delete an experiment.
-        
-        Args:
-            name: Name of the experiment
-            
-        Returns:
-            Deletion success
-        """
-        if name not in self.experiments:
-            return False
-        
-        # Remove from memory
-        del self.experiments[name]
-        
-        # Remove from storage
-        experiment_path = os.path.join(self.experiment_dir, name)
-        if os.path.exists(experiment_path):
-            shutil.rmtree(experiment_path)
-        
-        self.logger.info(f"Deleted experiment: {name}")
-        return True
-    
-    def create_paper(self, title: str, authors: List[str],
-                  abstract: str) -> ResearchPaper:
-        """
-        Create a new research paper.
+        Add a paper to the framework.
         
         Args:
             title: Paper title
-            authors: List of authors
+            authors: List of author names
             abstract: Paper abstract
+            publication_date: Publication date (ISO format: YYYY-MM-DD)
+            paper_type: Type of paper
+            venue: Optional publication venue
+            doi: Optional DOI (Digital Object Identifier)
+            url: Optional URL to the paper
+            pdf_url: Optional URL to the PDF
+            keywords: Optional list of keywords
+            references: Optional list of papers referenced by this paper
+            metadata: Optional paper metadata
             
         Returns:
-            Created paper
+            Paper ID
         """
-        paper = ResearchPaper(
+        # Convert paper_type from string if needed
+        if isinstance(paper_type, str):
+            paper_type = PaperType(paper_type)
+        
+        # Generate paper ID
+        paper_id = str(uuid.uuid4())
+        
+        # Create paper
+        paper = Paper(
+            paper_id=paper_id,
             title=title,
             authors=authors,
             abstract=abstract,
-            storage_dir=self.paper_dir
+            publication_date=publication_date,
+            paper_type=paper_type,
+            venue=venue,
+            doi=doi,
+            url=url,
+            pdf_url=pdf_url,
+            keywords=keywords,
+            references=references,
+            metadata=metadata
         )
         
-        self.papers[title] = paper
-        self.logger.info(f"Created paper: {title}")
-        return paper
+        # Add to framework
+        self.papers[paper_id] = paper
+        
+        # Update indices
+        # Update keyword index
+        for keyword in paper.keywords:
+            if keyword not in self.keyword_index:
+                self.keyword_index[keyword] = set()
+            
+            self.keyword_index[keyword].add(paper_id)
+        
+        # Update author index
+        for author in paper.authors:
+            if author not in self.author_index:
+                self.author_index[author] = set()
+            
+            self.author_index[author].add(paper_id)
+        
+        # Update year index
+        try:
+            year = int(publication_date.split('-')[0])
+            if year not in self.year_index:
+                self.year_index[year] = set()
+            
+            self.year_index[year].add(paper_id)
+        
+        except (ValueError, IndexError):
+            # Skip if publication date is not in the expected format
+            pass
+        
+        # Initialize paper-topic index
+        self.paper_topic_index[paper_id] = set()
+        
+        # Update reference papers' citations
+        if references:
+            for ref_id in references:
+                if ref_id in self.papers:
+                    if paper_id not in self.papers[ref_id].citations:
+                        self.papers[ref_id].citations.append(paper_id)
+                        self.papers[ref_id].updated_at = time.time()
+                        self._save_paper(self.papers[ref_id])
+        
+        # Save to storage
+        self._save_paper(paper)
+        
+        self.logger.info(f"Added paper: {title} (ID: {paper_id})")
+        return paper_id
     
-    def get_paper(self, title: str) -> Optional[ResearchPaper]:
+    def update_paper(self, paper_id: str, title: Optional[str] = None,
+                  authors: Optional[List[str]] = None, abstract: Optional[str] = None,
+                  publication_date: Optional[str] = None,
+                  paper_type: Optional[Union[str, PaperType]] = None,
+                  venue: Optional[str] = None, doi: Optional[str] = None,
+                  url: Optional[str] = None, pdf_url: Optional[str] = None,
+                  keywords: Optional[List[str]] = None, references: Optional[List[str]] = None,
+                  metadata: Optional[Dict[str, Any]] = None) -> bool:
         """
-        Get a paper by title.
+        Update a paper in the framework.
         
         Args:
-            title: Paper title
+            paper_id: ID of the paper to update
+            title: Optional new title
+            authors: Optional new list of author names
+            abstract: Optional new abstract
+            publication_date: Optional new publication date
+            paper_type: Optional new type of paper
+            venue: Optional new publication venue
+            doi: Optional new DOI
+            url: Optional new URL
+            pdf_url: Optional new PDF URL
+            keywords: Optional new list of keywords
+            references: Optional new list of references
+            metadata: Optional new metadata (will be merged)
             
         Returns:
-            Paper or None if not found
+            Update success
         """
-        return self.papers.get(title)
-    
-    def delete_paper(self, title: str) -> bool:
-        """
-        Delete a paper.
-        
-        Args:
-            title: Paper title
-            
-        Returns:
-            Deletion success
-        """
-        if title not in self.papers:
+        if paper_id not in self.papers:
             return False
         
-        # Remove from memory
-        paper = self.papers[title]
-        del self.papers[title]
+        paper = self.papers[paper_id]
+        old_keywords = paper.keywords.copy()
+        old_authors = paper.authors.copy()
+        old_references = paper.references.copy()
+        old_year = None
         
-        # Remove from storage
-        paper_path = os.path.join(self.paper_dir, paper._get_filename())
-        if os.path.exists(paper_path):
-            shutil.rmtree(paper_path)
+        try:
+            old_year = int(paper.publication_date.split('-')[0])
+        except (ValueError, IndexError):
+            pass
         
-        self.logger.info(f"Deleted paper: {title}")
+        # Update fields
+        if title is not None:
+            paper.title = title
+        
+        if authors is not None:
+            paper.authors = authors
+        
+        if abstract is not None:
+            paper.abstract = abstract
+        
+        if publication_date is not None:
+            paper.publication_date = publication_date
+        
+        if paper_type is not None:
+            # Convert from string if needed
+            if isinstance(paper_type, str):
+                paper_type = PaperType(paper_type)
+            
+            paper.paper_type = paper_type
+        
+        if venue is not None:
+            paper.venue = venue
+        
+        if doi is not None:
+            paper.doi = doi
+        
+        if url is not None:
+            paper.url = url
+        
+        if pdf_url is not None:
+            paper.pdf_url = pdf_url
+        
+        if keywords is not None:
+            paper.keywords = keywords
+        
+        if references is not None:
+            paper.references = references
+        
+        if metadata is not None:
+            paper.metadata.update(metadata)
+        
+        # Update timestamp
+        paper.updated_at = time.time()
+        
+        # Update indices if necessary
+        # Update keyword index
+        if keywords is not None:
+            # Remove old keywords from index
+            for keyword in old_keywords:
+                if keyword in self.keyword_index:
+                    self.keyword_index[keyword].discard(paper_id)
+            
+            # Add new keywords to index
+            for keyword in paper.keywords:
+                if keyword not in self.keyword_index:
+                    self.keyword_index[keyword] = set()
+                
+                self.keyword_index[keyword].add(paper_id)
+        
+        # Update author index
+        if authors is not None:
+            # Remove old authors from index
+            for author in old_authors:
+                if author in self.author_index:
+                    self.author_index[author].discard(paper_id)
+            
+            # Add new authors to index
+            for author in paper.authors:
+                if author not in self.author_index:
+                    self.author_index[author] = set()
+                
+                self.author_index[author].add(paper_id)
+        
+        # Update year index
+        if publication_date is not None:
+            # Remove from old year index
+            if old_year is not None and old_year in self.year_index:
+                self.year_index[old_year].discard(paper_id)
+            
+            # Add to new year index
+            try:
+                new_year = int(publication_date.split('-')[0])
+                if new_year not in self.year_index:
+                    self.year_index[new_year] = set()
+                
+                self.year_index[new_year].add(paper_id)
+            
+            except (ValueError, IndexError):
+                # Skip if publication date is not in the expected format
+                pass
+        
+        # Update reference papers' citations
+        if references is not None:
+            # Remove from old reference papers' citations
+            for ref_id in old_references:
+                if ref_id in self.papers and paper_id in self.papers[ref_id].citations:
+                    self.papers[ref_id].citations.remove(paper_id)
+                    self.papers[ref_id].updated_at = time.time()
+                    self._save_paper(self.papers[ref_id])
+            
+            # Add to new reference papers' citations
+            for ref_id in paper.references:
+                if ref_id in self.papers and paper_id not in self.papers[ref_id].citations:
+                    self.papers[ref_id].citations.append(paper_id)
+                    self.papers[ref_id].updated_at = time.time()
+                    self._save_paper(self.papers[ref_id])
+        
+        # Save to storage
+        self._save_paper(paper)
+        
+        self.logger.info(f"Updated paper: {paper.title} (ID: {paper_id})")
         return True
     
-    def create_paper_from_experiment(self, experiment_name: str, title: str,
-                                authors: List[str]) -> Optional[ResearchPaper]:
+    def remove_paper(self, paper_id: str) -> bool:
         """
-        Create a research paper from an experiment.
+        Remove a paper from the framework.
         
         Args:
-            experiment_name: Name of the experiment
-            title: Paper title
-            authors: List of authors
+            paper_id: ID of the paper to remove
             
         Returns:
-            Created paper or None if experiment not found
+            Removal success
         """
-        experiment = self.get_experiment(experiment_name)
-        if not experiment:
-            return None
+        if paper_id not in self.papers:
+            return False
         
-        # Create abstract from experiment description
-        abstract = f"This paper presents the results of the {experiment.name} experiment. {experiment.description}"
+        paper = self.papers[paper_id]
         
-        # Create paper
-        paper = self.create_paper(title, authors, abstract)
+        # Update indices
+        # Update keyword index
+        for keyword in paper.keywords:
+            if keyword in self.keyword_index:
+                self.keyword_index[keyword].discard(paper_id)
         
-        # Add sections
-        paper.add_section("Introduction", f"This paper presents the {experiment.name} experiment, which aims to investigate {experiment.description}.")
+        # Update author index
+        for author in paper.authors:
+            if author in self.author_index:
+                self.author_index[author].discard(paper_id)
         
-        paper.add_section("Method", f"We designed an experiment of type {experiment.experiment_type.value} to evaluate the performance of our system. The experiment parameters were as follows:\n\n" + 
-                        "\n".join([f"- {key}: {value}" for key, value in experiment.parameters.items()]))
+        # Update year index
+        try:
+            year = int(paper.publication_date.split('-')[0])
+            if year in self.year_index:
+                self.year_index[year].discard(paper_id)
         
-        # Add results section
-        results_section = "We conducted the experiment with the following parameters:\n\n"
+        except (ValueError, IndexError):
+            pass
         
-        # Add a table of experiment parameters
-        if experiment.parameters:
-            table_data = [["Parameter", "Value"]]
-            for key, value in experiment.parameters.items():
-                table_data.append([key, str(value)])
+        # Update reference papers' citations
+        for ref_id in paper.references:
+            if ref_id in self.papers and paper_id in self.papers[ref_id].citations:
+                self.papers[ref_id].citations.remove(paper_id)
+                self.papers[ref_id].updated_at = time.time()
+                self._save_paper(self.papers[ref_id])
+        
+        # Update citation papers' references
+        for citing_id in paper.citations:
+            if citing_id in self.papers and paper_id in self.papers[citing_id].references:
+                self.papers[citing_id].references.remove(paper_id)
+                self.papers[citing_id].updated_at = time.time()
+                self._save_paper(self.papers[citing_id])
+        
+        # Update paper-topic index
+        if paper_id in self.paper_topic_index:
+            # Get topics for this paper
+            topics = self.paper_topic_index[paper_id].copy()
             
-            paper.add_table("experiment_parameters", "Experiment Parameters", table_data)
+            # Remove paper from topics
+            for topic_id in topics:
+                if topic_id in self.topics:
+                    if paper_id in self.topics[topic_id].papers:
+                        self.topics[topic_id].papers.remove(paper_id)
+                        self.topics[topic_id].updated_at = time.time()
+                        self._save_topic(self.topics[topic_id])
+                    
+                    if topic_id in self.topic_paper_index:
+                        self.topic_paper_index[topic_id].discard(paper_id)
             
-            results_section += "See Table \\ref{tab:experiment_parameters} for the experiment parameters.\n\n"
+            # Remove from paper-topic index
+            del self.paper_topic_index[paper_id]
         
-        # Add results from runs
-        if experiment.runs:
-            results_section += "The experiment was run with various parameter configurations. The results are summarized below:\n\n"
+        # Remove from papers
+        del self.papers[paper_id]
+        
+        # Remove from storage
+        paper_path = os.path.join(self.papers_dir, f"{paper_id}.json")
+        if os.path.exists(paper_path):
+            os.remove(paper_path)
+        
+        self.logger.info(f"Removed paper: {paper.title} (ID: {paper_id})")
+        return True
+    
+    def add_topic(self, name: str, description: str,
+                parent_topic: Optional[str] = None,
+                related_topics: Optional[List[str]] = None,
+                papers: Optional[List[str]] = None,
+                metadata: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Add a research topic to the framework.
+        
+        Args:
+            name: Topic name
+            description: Topic description
+            parent_topic: Optional ID of the parent topic
+            related_topics: Optional list of related topic IDs
+            papers: Optional list of paper IDs
+            metadata: Optional topic metadata
             
-            # Create a table of run results
-            metrics_set = set()
-            for run in experiment.runs:
-                metrics_set.update(run['metrics'].keys())
+        Returns:
+            Topic ID
+        """
+        # Validate parent topic
+        if parent_topic is not None and parent_topic not in self.topics:
+            parent_topic = None
+        
+        # Validate related topics
+        if related_topics is not None:
+            related_topics = [topic_id for topic_id in related_topics if topic_id in self.topics]
+        
+        # Validate papers
+        if papers is not None:
+            papers = [paper_id for paper_id in papers if paper_id in self.papers]
+        else:
+            papers = []
+        
+        # Generate topic ID
+        topic_id = str(uuid.uuid4())
+        
+        # Create topic
+        topic = ResearchTopic(
+            topic_id=topic_id,
+            name=name,
+            description=description,
+            parent_topic=parent_topic,
+            related_topics=related_topics,
+            papers=papers,
+            metadata=metadata
+        )
+        
+        # Add to framework
+        self.topics[topic_id] = topic
+        
+        # Update topic-paper index
+        self.topic_paper_index[topic_id] = set(papers)
+        
+        # Update paper-topic index
+        for paper_id in papers:
+            if paper_id not in self.paper_topic_index:
+                self.paper_topic_index[paper_id] = set()
             
-            metrics_list = sorted(list(metrics_set))
+            self.paper_topic_index[paper_id].add(topic_id)
+        
+        # Save to storage
+        self._save_topic(topic)
+        
+        self.logger.info(f"Added topic: {name} (ID: {topic_id})")
+        return topic_id
+    
+    def update_topic(self, topic_id: str, name: Optional[str] = None,
+                  description: Optional[str] = None,
+                  parent_topic: Optional[str] = None,
+                  related_topics: Optional[List[str]] = None,
+                  papers: Optional[List[str]] = None,
+                  metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Update a research topic in the framework.
+        
+        Args:
+            topic_id: ID of the topic to update
+            name: Optional new name
+            description: Optional new description
+            parent_topic: Optional new parent topic ID
+            related_topics: Optional new list of related topic IDs
+            papers: Optional new list of paper IDs
+            metadata: Optional new metadata (will be merged)
             
-            table_data = [["Run ID"] + metrics_list]
-            for run in experiment.runs:
-                row = [run['id']]
-                for metric in metrics_list:
-                    row.append(str(round(run['metrics'].get(metric, 0), 4)))
+        Returns:
+            Update success
+        """
+        if topic_id not in self.topics:
+            return False
+        
+        topic = self.topics[topic_id]
+        old_papers = topic.papers.copy()
+        
+        # Update fields
+        if name is not None:
+            topic.name = name
+        
+        if description is not None:
+            topic.description = description
+        
+        if parent_topic is not None:
+            # Validate parent topic
+            if parent_topic not in self.topics or parent_topic == topic_id:
+                parent_topic = None
+            
+            topic.parent_topic = parent_topic
+        
+        if related_topics is not None:
+            # Validate related topics
+            validated_topics = []
+            for related_id in related_topics:
+                if related_id in self.topics and related_id != topic_id:
+                    validated_topics.append(related_id)
+            
+            topic.related_topics = validated_topics
+        
+        if papers is not None:
+            # Validate papers
+            validated_papers = [paper_id for paper_id in papers if paper_id in self.papers]
+            topic.papers = validated_papers
+        
+        if metadata is not None:
+            topic.metadata.update(metadata)
+        
+        # Update timestamp
+        topic.updated_at = time.time()
+        
+        # Update topic-paper index if papers changed
+        if papers is not None:
+            # Update topic-paper index
+            self.topic_paper_index[topic_id] = set(topic.papers)
+            
+            # Update paper-topic index
+            # Remove topic from old papers
+            for paper_id in old_papers:
+                if paper_id in self.paper_topic_index:
+                    self.paper_topic_index[paper_id].discard(topic_id)
+            
+            # Add topic to new papers
+            for paper_id in topic.papers:
+                if paper_id not in self.paper_topic_index:
+                    self.paper_topic_index[paper_id] = set()
                 
-                table_data.append(row)
-            
-            paper.add_table("experiment_results", "Experiment Results", table_data)
-            
-            results_section += "See Table \\ref{tab:experiment_results} for the detailed results."
+                self.paper_topic_index[paper_id].add(topic_id)
         
-        paper.add_section("Results", results_section)
+        # Save to storage
+        self._save_topic(topic)
         
-        # Add conclusion
-        paper.add_section("Conclusion", "In this paper, we presented the results of our experiment. The findings have important implications for our understanding of the problem domain.")
-        
-        return paper
+        self.logger.info(f"Updated topic: {topic.name} (ID: {topic_id})")
+        return True
     
-    def generate_comparison_experiment(self, name: str, systems: List[str],
-                                   benchmark_name: str,
-                                   description: Optional[str] = None) -> Optional[Experiment]:
+    def remove_topic(self, topic_id: str) -> bool:
         """
-        Generate a comparison experiment between systems on a benchmark.
+        Remove a research topic from the framework.
         
         Args:
-            name: Name for the experiment
-            systems: List of system names to compare
-            benchmark_name: Name of the benchmark to use
-            description: Optional description for the experiment
+            topic_id: ID of the topic to remove
             
         Returns:
-            Created experiment or None if benchmark not found
+            Removal success
         """
-        benchmark = self.get_benchmark(benchmark_name)
-        if not benchmark:
-            return None
+        if topic_id not in self.topics:
+            return False
         
-        if not description:
-            description = f"Comparison of {', '.join(systems)} on the {benchmark_name} benchmark"
+        topic = self.topics[topic_id]
         
-        # Create experiment
-        experiment = self.create_experiment(
-            name=name,
-            experiment_type=ExperimentType.COMPARATIVE,
-            description=description
-        )
+        # Update related topics
+        for related_id in topic.related_topics:
+            if related_id in self.topics:
+                if topic_id in self.topics[related_id].related_topics:
+                    self.topics[related_id].related_topics.remove(topic_id)
+                    self.topics[related_id].updated_at = time.time()
+                    self._save_topic(self.topics[related_id])
         
-        # Set parameters
-        experiment.set_parameters({
-            'systems': systems,
-            'benchmark': benchmark_name,
-            'metrics': ['accuracy', 'precision', 'recall', 'f1_score']
-        })
+        # Update parent-child relationships
+        for other_id, other_topic in self.topics.items():
+            if other_topic.parent_topic == topic_id:
+                other_topic.parent_topic = topic.parent_topic  # Move children up to parent
+                other_topic.updated_at = time.time()
+                self._save_topic(other_topic)
         
-        return experiment
+        # Update paper-topic index
+        for paper_id in topic.papers:
+            if paper_id in self.paper_topic_index:
+                self.paper_topic_index[paper_id].discard(topic_id)
+        
+        # Update topic-paper index
+        if topic_id in self.topic_paper_index:
+            del self.topic_paper_index[topic_id]
+        
+        # Remove from topics
+        del self.topics[topic_id]
+        
+        # Remove from storage
+        topic_path = os.path.join(self.topics_dir, f"{topic_id}.json")
+        if os.path.exists(topic_path):
+            os.remove(topic_path)
+        
+        self.logger.info(f"Removed topic: {topic.name} (ID: {topic_id})")
+        return True
     
-    def generate_ablation_experiment(self, name: str, base_system: str,
-                                components: List[str],
-                                benchmark_name: str,
-                                description: Optional[str] = None) -> Optional[Experiment]:
+    def get_paper(self, paper_id: str) -> Optional[Dict[str, Any]]:
         """
-        Generate an ablation experiment to test component importance.
+        Get a paper by ID.
         
         Args:
-            name: Name for the experiment
-            base_system: Name of the base system
-            components: List of component names to ablate
-            benchmark_name: Name of the benchmark to use
-            description: Optional description for the experiment
+            paper_id: ID of the paper
             
         Returns:
-            Created experiment or None if benchmark not found
+            Paper data dictionary or None if not found
         """
-        benchmark = self.get_benchmark(benchmark_name)
-        if not benchmark:
+        if paper_id not in self.papers:
             return None
         
-        if not description:
-            description = f"Ablation study of {base_system} components ({', '.join(components)}) on the {benchmark_name} benchmark"
+        paper = self.papers[paper_id]
         
-        # Create experiment
-        experiment = self.create_experiment(
-            name=name,
-            experiment_type=ExperimentType.ABLATION,
-            description=description
-        )
+        # Get paper data
+        paper_data = paper.to_dict()
         
-        # Set parameters
-        experiment.set_parameters({
-            'base_system': base_system,
-            'components': components,
-            'benchmark': benchmark_name,
-            'metrics': ['accuracy', 'precision', 'recall', 'f1_score']
-        })
+        # Add topics
+        if paper_id in self.paper_topic_index:
+            topic_ids = list(self.paper_topic_index[paper_id])
+            topics = []
+            
+            for topic_id in topic_ids:
+                if topic_id in self.topics:
+                    topics.append({
+                        'id': topic_id,
+                        'name': self.topics[topic_id].name
+                    })
+            
+            paper_data['topics'] = topics
+        else:
+            paper_data['topics'] = []
         
-        return experiment
+        return paper_data
     
-    def generate_baseline_benchmarks(self) -> List[str]:
+    def get_topic(self, topic_id: str) -> Optional[Dict[str, Any]]:
         """
-        Generate a set of baseline benchmarks for code analysis.
+        Get a topic by ID.
+        
+        Args:
+            topic_id: ID of the topic
+            
+        Returns:
+            Topic data dictionary or None if not found
+        """
+        if topic_id not in self.topics:
+            return None
+        
+        topic = self.topics[topic_id]
+        
+        # Get topic data
+        topic_data = topic.to_dict()
+        
+        # Add paper details
+        paper_details = []
+        for paper_id in topic.papers:
+            if paper_id in self.papers:
+                paper = self.papers[paper_id]
+                paper_details.append({
+                    'id': paper_id,
+                    'title': paper.title,
+                    'authors': paper.authors,
+                    'publication_date': paper.publication_date
+                })
+        
+        topic_data['paper_details'] = paper_details
+        
+        # Add parent topic details
+        if topic.parent_topic and topic.parent_topic in self.topics:
+            parent = self.topics[topic.parent_topic]
+            topic_data['parent_topic_details'] = {
+                'id': parent.id,
+                'name': parent.name
+            }
+        else:
+            topic_data['parent_topic_details'] = None
+        
+        # Add related topic details
+        related_topic_details = []
+        for related_id in topic.related_topics:
+            if related_id in self.topics:
+                related = self.topics[related_id]
+                related_topic_details.append({
+                    'id': related.id,
+                    'name': related.name
+                })
+        
+        topic_data['related_topic_details'] = related_topic_details
+        
+        return topic_data
+    
+    def search_papers(self, query: str, keywords: Optional[List[str]] = None,
+                   authors: Optional[List[str]] = None,
+                   year_range: Optional[Tuple[int, int]] = None,
+                   paper_type: Optional[Union[str, PaperType]] = None,
+                   topic_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Search for papers based on various criteria.
+        
+        Args:
+            query: Search query (matches title and abstract)
+            keywords: Optional list of keywords to filter by
+            authors: Optional list of authors to filter by
+            year_range: Optional (start_year, end_year) tuple
+            paper_type: Optional paper type to filter by
+            topic_id: Optional topic ID to filter by
+            
+        Returns:
+            List of matching paper data dictionaries
+        """
+        # Convert paper_type from string if needed
+        if isinstance(paper_type, str):
+            paper_type = PaperType(paper_type)
+        
+        # Initialize result set
+        result_ids = set(self.papers.keys())
+        
+        # Filter by query
+        if query:
+            query = query.lower()
+            query_matches = set()
+            
+            for paper_id, paper in self.papers.items():
+                if (query in paper.title.lower() or
+                    query in paper.abstract.lower() or
+                    any(query in keyword.lower() for keyword in paper.keywords)):
+                    query_matches.add(paper_id)
+            
+            result_ids &= query_matches
+        
+        # Filter by keywords
+        if keywords:
+            keyword_matches = set()
+            
+            for keyword in keywords:
+                if keyword in self.keyword_index:
+                    keyword_matches.update(self.keyword_index[keyword])
+            
+            result_ids &= keyword_matches
+        
+        # Filter by authors
+        if authors:
+            author_matches = set()
+            
+            for author in authors:
+                if author in self.author_index:
+                    author_matches.update(self.author_index[author])
+            
+            result_ids &= author_matches
+        
+        # Filter by year range
+        if year_range:
+            start_year, end_year = year_range
+            year_matches = set()
+            
+            for year in range(start_year, end_year + 1):
+                if year in self.year_index:
+                    year_matches.update(self.year_index[year])
+            
+            result_ids &= year_matches
+        
+        # Filter by paper type
+        if paper_type:
+            type_matches = set()
+            
+            for paper_id, paper in self.papers.items():
+                if paper.paper_type == paper_type:
+                    type_matches.add(paper_id)
+            
+            result_ids &= type_matches
+        
+        # Filter by topic
+        if topic_id and topic_id in self.topic_paper_index:
+            result_ids &= self.topic_paper_index[topic_id]
+        
+        # Convert to list of dictionaries
+        results = []
+        
+        for paper_id in result_ids:
+            paper = self.papers[paper_id]
+            
+            # Get paper data
+            paper_data = paper.to_dict()
+            
+            # Add topics
+            if paper_id in self.paper_topic_index:
+                topic_ids = list(self.paper_topic_index[paper_id])
+                topics = []
+                
+                for topic_id in topic_ids:
+                    if topic_id in self.topics:
+                        topics.append({
+                            'id': topic_id,
+                            'name': self.topics[topic_id].name
+                        })
+                
+                paper_data['topics'] = topics
+            else:
+                paper_data['topics'] = []
+            
+            results.append(paper_data)
+        
+        # Sort by publication date (newest first)
+        results.sort(key=lambda x: x['publication_date'], reverse=True)
+        
+        return results
+    
+    def search_topics(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Search for topics based on a query.
+        
+        Args:
+            query: Search query
+            
+        Returns:
+            List of matching topic data dictionaries
+        """
+        query = query.lower()
+        results = []
+        
+        for topic_id, topic in self.topics.items():
+            if query in topic.name.lower() or query in topic.description.lower():
+                # Get topic data
+                topic_data = topic.to_dict()
+                
+                # Add paper count
+                topic_data['paper_count'] = len(topic.papers)
+                
+                # Add parent topic details
+                if topic.parent_topic and topic.parent_topic in self.topics:
+                    parent = self.topics[topic.parent_topic]
+                    topic_data['parent_topic_details'] = {
+                        'id': parent.id,
+                        'name': parent.name
+                    }
+                else:
+                    topic_data['parent_topic_details'] = None
+                
+                results.append(topic_data)
+        
+        return results
+    
+    def get_topic_hierarchy(self) -> Dict[str, Any]:
+        """
+        Get the complete topic hierarchy.
         
         Returns:
-            List of created benchmark names
+            Dictionary representing the topic hierarchy
         """
-        created_benchmarks = []
+        # Find all root topics (topics without a parent)
+        root_topics = []
         
-        # Code Quality Benchmark
-        code_quality = self.create_benchmark(
-            name="code_quality_baseline",
-            benchmark_type=BenchmarkType.CODE_QUALITY,
-            description="Baseline benchmark for evaluating code quality analysis"
-        )
+        for topic_id, topic in self.topics.items():
+            if not topic.parent_topic:
+                root_topics.append(topic_id)
         
-        created_benchmarks.append(code_quality.name)
+        # Build hierarchy recursively
+        def build_tree(topic_id: str) -> Dict[str, Any]:
+            topic = self.topics[topic_id]
+            
+            return {
+                'id': topic_id,
+                'name': topic.name,
+                'paper_count': len(topic.papers),
+                'children': [
+                    build_tree(child_id)
+                    for child_id, child in self.topics.items()
+                    if child.parent_topic == topic_id
+                ]
+            }
         
-        # Pattern Recognition Benchmark
-        pattern_recognition = self.create_benchmark(
-            name="pattern_recognition_baseline",
-            benchmark_type=BenchmarkType.PATTERN_RECOGNITION,
-            description="Baseline benchmark for evaluating design pattern recognition"
-        )
+        # Build trees for all root topics
+        forest = [build_tree(root_id) for root_id in root_topics]
         
-        created_benchmarks.append(pattern_recognition.name)
-        
-        # Complexity Benchmark
-        complexity = self.create_benchmark(
-            name="complexity_baseline",
-            benchmark_type=BenchmarkType.COMPLEXITY,
-            description="Baseline benchmark for evaluating code complexity analysis"
-        )
-        
-        created_benchmarks.append(complexity.name)
-        
-        # Maintainability Benchmark
-        maintainability = self.create_benchmark(
-            name="maintainability_baseline",
-            benchmark_type=BenchmarkType.MAINTAINABILITY,
-            description="Baseline benchmark for evaluating code maintainability analysis"
-        )
-        
-        created_benchmarks.append(maintainability.name)
-        
-        # Security Benchmark
-        security = self.create_benchmark(
-            name="security_baseline",
-            benchmark_type=BenchmarkType.SECURITY,
-            description="Baseline benchmark for evaluating security vulnerability detection"
-        )
-        
-        created_benchmarks.append(security.name)
-        
-        return created_benchmarks
+        return {
+            'topics': forest,
+            'total_topics': len(self.topics)
+        }
     
-    def save_all(self) -> None:
-        """Save all benchmarks, experiments, and papers."""
-        for benchmark in self.benchmarks.values():
-            benchmark.save()
+    def get_paper_citations(self, paper_id: str) -> Dict[str, Any]:
+        """
+        Get citations for a paper.
         
-        for experiment in self.experiments.values():
-            experiment.save()
+        Args:
+            paper_id: ID of the paper
+            
+        Returns:
+            Dictionary with citation information
+        """
+        if paper_id not in self.papers:
+            return {'error': 'Paper not found'}
+        
+        paper = self.papers[paper_id]
+        
+        # Get citation papers
+        citing_papers = []
+        
+        for citing_id in paper.citations:
+            if citing_id in self.papers:
+                citing = self.papers[citing_id]
+                citing_papers.append({
+                    'id': citing_id,
+                    'title': citing.title,
+                    'authors': citing.authors,
+                    'publication_date': citing.publication_date,
+                    'venue': citing.venue
+                })
+        
+        # Get reference papers
+        reference_papers = []
+        
+        for ref_id in paper.references:
+            if ref_id in self.papers:
+                ref = self.papers[ref_id]
+                reference_papers.append({
+                    'id': ref_id,
+                    'title': ref.title,
+                    'authors': ref.authors,
+                    'publication_date': ref.publication_date,
+                    'venue': ref.venue
+                })
+        
+        return {
+            'paper_id': paper_id,
+            'title': paper.title,
+            'citation_count': len(paper.citations),
+            'reference_count': len(paper.references),
+            'citing_papers': citing_papers,
+            'reference_papers': reference_papers
+        }
+    
+    def generate_citation(self, paper_id: str, format: Union[str, CitationFormat] = CitationFormat.APA) -> Optional[str]:
+        """
+        Generate a citation for a paper in the specified format.
+        
+        Args:
+            paper_id: ID of the paper
+            format: Citation format
+            
+        Returns:
+            Citation string or None if paper not found
+        """
+        if paper_id not in self.papers:
+            return None
+        
+        # Convert format from string if needed
+        if isinstance(format, str):
+            format = CitationFormat(format)
+        
+        paper = self.papers[paper_id]
+        
+        if format == CitationFormat.APA:
+            # APA format: Author, A. A., & Author, B. B. (Year). Title of the paper. Journal Name, Volume(Issue), Pages. DOI
+            authors_str = ""
+            if paper.authors:
+                if len(paper.authors) == 1:
+                    authors_str = self._format_author_apa(paper.authors[0])
+                elif len(paper.authors) == 2:
+                    authors_str = f"{self._format_author_apa(paper.authors[0])} & {self._format_author_apa(paper.authors[1])}"
+                else:
+                    authors_list = [self._format_author_apa(author) for author in paper.authors[:-1]]
+                    authors_str = f"{', '.join(authors_list)}, & {self._format_author_apa(paper.authors[-1])}"
+            
+            year = paper.publication_date.split('-')[0] if '-' in paper.publication_date else paper.publication_date
+            
+            citation = f"{authors_str} ({year}). {paper.title}."
+            
+            if paper.venue:
+                citation += f" {paper.venue}."
+            
+            if paper.doi:
+                citation += f" https://doi.org/{paper.doi}"
+            
+            return citation
+        
+        elif format == CitationFormat.MLA:
+            # MLA format: Author, First Name. "Title of the Paper." Journal Name, Volume, Issue, Year, Pages. DOI
+            authors_str = ""
+            if paper.authors:
+                if len(paper.authors) == 1:
+                    authors_str = self._format_author_mla(paper.authors[0])
+                elif len(paper.authors) == 2:
+                    authors_str = f"{self._format_author_mla(paper.authors[0])} and {self._format_author_mla(paper.authors[1])}"
+                else:
+                    authors_str = f"{self._format_author_mla(paper.authors[0])} et al."
+            
+            year = paper.publication_date.split('-')[0] if '-' in paper.publication_date else paper.publication_date
+            
+            citation = f"{authors_str}. \"{paper.title}\"."
+            
+            if paper.venue:
+                citation += f" {paper.venue}, {year}."
+            else:
+                citation += f" {year}."
+            
+            if paper.doi:
+                citation += f" https://doi.org/{paper.doi}"
+            
+            return citation
+        
+        elif format == CitationFormat.CHICAGO:
+            # Chicago format: Author, First Name. "Title of the Paper." Journal Name Volume, no. Issue (Year): Pages. DOI
+            authors_str = ""
+            if paper.authors:
+                if len(paper.authors) == 1:
+                    authors_str = self._format_author_chicago(paper.authors[0])
+                elif len(paper.authors) > 1:
+                    authors_list = [self._format_author_chicago(author) for author in paper.authors]
+                    authors_str = ", ".join(authors_list)
+            
+            year = paper.publication_date.split('-')[0] if '-' in paper.publication_date else paper.publication_date
+            
+            citation = f"{authors_str}. \"{paper.title}\"."
+            
+            if paper.venue:
+                citation += f" {paper.venue} ({year})."
+            else:
+                citation += f" {year}."
+            
+            if paper.doi:
+                citation += f" https://doi.org/{paper.doi}"
+            
+            return citation
+        
+        elif format == CitationFormat.IEEE:
+            # IEEE format: [1] A. A. Author and B. B. Author, "Title of the paper," Journal Name, vol. Volume, no. Issue, pp. Pages, Year. DOI
+            authors_str = ""
+            if paper.authors:
+                authors_list = [self._format_author_ieee(author) for author in paper.authors]
+                authors_str = ", ".join(authors_list)
+            
+            year = paper.publication_date.split('-')[0] if '-' in paper.publication_date else paper.publication_date
+            
+            citation = f"{authors_str}, \"{paper.title}\","
+            
+            if paper.venue:
+                citation += f" {paper.venue}, {year}."
+            else:
+                citation += f" {year}."
+            
+            if paper.doi:
+                citation += f" https://doi.org/{paper.doi}"
+            
+            return citation
+        
+        elif format == CitationFormat.HARVARD:
+            # Harvard format: Author, A. and Author, B. (Year) 'Title of the paper', Journal Name, Volume(Issue), pp. Pages. DOI
+            authors_str = ""
+            if paper.authors:
+                if len(paper.authors) == 1:
+                    authors_str = self._format_author_harvard(paper.authors[0])
+                elif len(paper.authors) == 2:
+                    authors_str = f"{self._format_author_harvard(paper.authors[0])} and {self._format_author_harvard(paper.authors[1])}"
+                else:
+                    authors_list = [self._format_author_harvard(author) for author in paper.authors[:-1]]
+                    authors_str = f"{', '.join(authors_list)} and {self._format_author_harvard(paper.authors[-1])}"
+            
+            year = paper.publication_date.split('-')[0] if '-' in paper.publication_date else paper.publication_date
+            
+            citation = f"{authors_str} ({year}) '{paper.title}'."
+            
+            if paper.venue:
+                citation += f" {paper.venue}."
+            
+            if paper.doi:
+                citation += f" https://doi.org/{paper.doi}"
+            
+            return citation
+        
+        elif format == CitationFormat.BIBTEX:
+            # BibTeX format
+            year = paper.publication_date.split('-')[0] if '-' in paper.publication_date else paper.publication_date
+            
+            # Generate a key based on first author's last name and year
+            key = "paper"
+            if paper.authors:
+                key = f"{paper.authors[0].split()[-1].lower()}{year}"
+            
+            bibtex = f"@article{{{key},\n"
+            bibtex += f"  title = {{{paper.title}}},\n"
+            
+            if paper.authors:
+                authors_str = " and ".join(paper.authors)
+                bibtex += f"  author = {{{authors_str}}},\n"
+            
+            bibtex += f"  year = {{{year}}},\n"
+            
+            if paper.venue:
+                bibtex += f"  journal = {{{paper.venue}}},\n"
+            
+            if paper.doi:
+                bibtex += f"  doi = {{{paper.doi}}},\n"
+            
+            if paper.url:
+                bibtex += f"  url = {{{paper.url}}},\n"
+            
+            bibtex += "}"
+            
+            return bibtex
+        
+        return None
+    
+    def _format_author_apa(self, author: str) -> str:
+        """Format an author name for APA citation."""
+        parts = author.split()
+        if len(parts) == 1:
+            return author
+        
+        last_name = parts[-1]
+        initials = "".join(f"{p[0]}." for p in parts[:-1])
+        
+        return f"{last_name}, {initials}"
+    
+    def _format_author_mla(self, author: str) -> str:
+        """Format an author name for MLA citation."""
+        parts = author.split()
+        if len(parts) == 1:
+            return author
+        
+        last_name = parts[-1]
+        first_name = " ".join(parts[:-1])
+        
+        return f"{last_name}, {first_name}"
+    
+    def _format_author_chicago(self, author: str) -> str:
+        """Format an author name for Chicago citation."""
+        parts = author.split()
+        if len(parts) == 1:
+            return author
+        
+        last_name = parts[-1]
+        first_name = " ".join(parts[:-1])
+        
+        return f"{last_name}, {first_name}"
+    
+    def _format_author_ieee(self, author: str) -> str:
+        """Format an author name for IEEE citation."""
+        parts = author.split()
+        if len(parts) == 1:
+            return author
+        
+        last_name = parts[-1]
+        initials = "".join(f"{p[0]}." for p in parts[:-1])
+        
+        return f"{initials} {last_name}"
+    
+    def _format_author_harvard(self, author: str) -> str:
+        """Format an author name for Harvard citation."""
+        parts = author.split()
+        if len(parts) == 1:
+            return author
+        
+        last_name = parts[-1]
+        initials = "".join(f"{p[0]}." for p in parts[:-1])
+        
+        return f"{last_name}, {initials}"
+    
+    def fetch_paper_by_doi(self, doi: str) -> Optional[str]:
+        """
+        Fetch a paper from external sources by DOI.
+        
+        Args:
+            doi: DOI of the paper
+            
+        Returns:
+            Paper ID if found and added, None otherwise
+        """
+        if not self.api_key:
+            self.logger.warning("No API key provided for external academic services")
+            return None
+        
+        try:
+            # Check if paper already exists
+            for paper_id, paper in self.papers.items():
+                if paper.doi == doi:
+                    return paper_id
+            
+            # Fetch paper data from external API
+            # This is a placeholder for actual API calls to services like Semantic Scholar, CrossRef, or DOI.org
+            
+            # Simulate a paper fetch
+            paper_data = self._fetch_paper_data_from_doi(doi)
+            
+            if not paper_data:
+                return None
+            
+            # Add paper to framework
+            paper_id = self.add_paper(
+                title=paper_data['title'],
+                authors=paper_data['authors'],
+                abstract=paper_data['abstract'],
+                publication_date=paper_data['publication_date'],
+                paper_type=PaperType.RESEARCH,
+                venue=paper_data.get('venue'),
+                doi=doi,
+                url=paper_data.get('url'),
+                pdf_url=paper_data.get('pdf_url'),
+                keywords=paper_data.get('keywords'),
+                references=paper_data.get('references'),
+                metadata=paper_data.get('metadata')
+            )
+            
+            return paper_id
+        
+        except Exception as e:
+            self.logger.error(f"Error fetching paper with DOI {doi}: {e}")
+            return None
+    
+    def _fetch_paper_data_from_doi(self, doi: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetch paper data from a DOI using external APIs.
+        
+        Args:
+            doi: DOI to fetch
+            
+        Returns:
+            Paper data dictionary or None if not found
+        """
+        # This is a placeholder for actual API integration
+        # In a real implementation, you would call APIs like:
+        # - Semantic Scholar API
+        # - CrossRef API
+        # - DOI.org API
+        
+        try:
+            # Example using CrossRef API
+            headers = {
+                'User-Agent': 'CodeDeepDiveAnalyzer/1.0 (https://example.com; mailto:example@example.com)'
+            }
+            
+            response = requests.get(f"https://api.crossref.org/works/{doi}", headers=headers)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if 'message' in data:
+                    message = data['message']
+                    
+                    # Extract data
+                    title = message.get('title', ['Unknown Title'])[0]
+                    
+                    authors = []
+                    for author in message.get('author', []):
+                        if 'given' in author and 'family' in author:
+                            authors.append(f"{author['given']} {author['family']}")
+                        elif 'family' in author:
+                            authors.append(author['family'])
+                    
+                    abstract = message.get('abstract', 'No abstract available')
+                    
+                    publication_date = 'Unknown'
+                    if 'published-print' in message and 'date-parts' in message['published-print']:
+                        date_parts = message['published-print']['date-parts'][0]
+                        if len(date_parts) >= 3:
+                            publication_date = f"{date_parts[0]}-{date_parts[1]:02d}-{date_parts[2]:02d}"
+                        elif len(date_parts) >= 1:
+                            publication_date = f"{date_parts[0]}"
+                    
+                    venue = None
+                    if 'container-title' in message and message['container-title']:
+                        venue = message['container-title'][0]
+                    
+                    url = message.get('URL')
+                    
+                    return {
+                        'title': title,
+                        'authors': authors,
+                        'abstract': abstract,
+                        'publication_date': publication_date,
+                        'venue': venue,
+                        'url': url,
+                        'pdf_url': None,
+                        'keywords': [],
+                        'references': [],
+                        'metadata': {
+                            'crossref': message
+                        }
+                    }
+            
+            return None
+        
+        except Exception as e:
+            self.logger.error(f"Error in _fetch_paper_data_from_doi: {e}")
+            return None
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """
+        Get statistics about the academic framework.
+        
+        Returns:
+            Dictionary of statistics
+        """
+        # Count papers by type
+        paper_type_counts = {}
+        for paper in self.papers.values():
+            paper_type = paper.paper_type.value
+            paper_type_counts[paper_type] = paper_type_counts.get(paper_type, 0) + 1
+        
+        # Count papers by year
+        paper_year_counts = {}
+        for paper in self.papers.values():
+            try:
+                year = int(paper.publication_date.split('-')[0])
+                paper_year_counts[year] = paper_year_counts.get(year, 0) + 1
+            except (ValueError, IndexError):
+                pass
+        
+        # Get top authors
+        author_paper_counts = {}
+        for author, paper_ids in self.author_index.items():
+            author_paper_counts[author] = len(paper_ids)
+        
+        top_authors = sorted(
+            author_paper_counts.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:10]
+        
+        # Get top keywords
+        keyword_paper_counts = {}
+        for keyword, paper_ids in self.keyword_index.items():
+            keyword_paper_counts[keyword] = len(paper_ids)
+        
+        top_keywords = sorted(
+            keyword_paper_counts.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:20]
+        
+        # Get citation statistics
+        citation_counts = []
+        reference_counts = []
         
         for paper in self.papers.values():
-            paper.save()
+            citation_counts.append(len(paper.citations))
+            reference_counts.append(len(paper.references))
         
-        self.logger.info(f"Saved {len(self.benchmarks)} benchmarks, {len(self.experiments)} experiments, and {len(self.papers)} papers")
-    
-    def list_benchmarks(self) -> List[Dict[str, Any]]:
-        """
-        List all benchmarks.
+        avg_citations = sum(citation_counts) / len(citation_counts) if citation_counts else 0
+        avg_references = sum(reference_counts) / len(reference_counts) if reference_counts else 0
         
-        Returns:
-            List of benchmark info dictionaries
-        """
-        return [
-            {
-                'name': benchmark.name,
-                'type': benchmark.benchmark_type.value,
-                'description': benchmark.description,
-                'version': benchmark.version,
-                'sample_count': len(benchmark.samples)
-            }
-            for benchmark in self.benchmarks.values()
-        ]
-    
-    def list_experiments(self) -> List[Dict[str, Any]]:
-        """
-        List all experiments.
+        max_citations = max(citation_counts) if citation_counts else 0
+        max_references = max(reference_counts) if reference_counts else 0
         
-        Returns:
-            List of experiment info dictionaries
-        """
-        return [
-            {
-                'name': experiment.name,
-                'type': experiment.experiment_type.value,
-                'description': experiment.description,
-                'version': experiment.version,
-                'run_count': len(experiment.runs)
-            }
-            for experiment in self.experiments.values()
-        ]
-    
-    def list_papers(self) -> List[Dict[str, Any]]:
-        """
-        List all papers.
+        # Get most cited papers
+        most_cited_papers = []
         
-        Returns:
-            List of paper info dictionaries
-        """
-        return [
-            {
+        for paper_id, paper in self.papers.items():
+            most_cited_papers.append((paper_id, paper, len(paper.citations)))
+        
+        most_cited_papers.sort(key=lambda x: x[2], reverse=True)
+        
+        most_cited_paper_details = []
+        for paper_id, paper, citation_count in most_cited_papers[:10]:
+            most_cited_paper_details.append({
+                'id': paper_id,
                 'title': paper.title,
                 'authors': paper.authors,
-                'sections': list(paper.sections.keys()),
-                'figures': len(paper.figures),
-                'tables': len(paper.tables),
-                'references': len(paper.bibliography)
-            }
-            for paper in self.papers.values()
-        ]
+                'publication_date': paper.publication_date,
+                'citation_count': citation_count
+            })
+        
+        return {
+            'paper_count': len(self.papers),
+            'topic_count': len(self.topics),
+            'paper_type_counts': paper_type_counts,
+            'paper_year_counts': paper_year_counts,
+            'top_authors': [{'name': author, 'paper_count': count} for author, count in top_authors],
+            'top_keywords': [{'keyword': keyword, 'paper_count': count} for keyword, count in top_keywords],
+            'citation_statistics': {
+                'average_citations': avg_citations,
+                'average_references': avg_references,
+                'max_citations': max_citations,
+                'max_references': max_references
+            },
+            'most_cited_papers': most_cited_paper_details
+        }

@@ -1,60 +1,227 @@
 """
 Knowledge Graph
 
-This module implements a knowledge graph connecting concepts across repositories,
-enabling multi-repository knowledge transfer and pattern discovery.
+This module implements a knowledge graph for code repositories, enabling cross-repository
+learning, pattern detection, and knowledge transfer.
 """
 import os
 import json
 import logging
 import time
 import uuid
-import networkx as nx
-import numpy as np
-from typing import Dict, List, Any, Optional, Union, Tuple, Set
+import re
 from enum import Enum
+from typing import Dict, List, Any, Optional, Union, Tuple, Set
 
 class NodeType(Enum):
     """Types of nodes in the knowledge graph."""
-    CONCEPT = "concept"
-    CODE_ENTITY = "code_entity"
-    PATTERN = "pattern"
     REPOSITORY = "repository"
     FILE = "file"
-    FUNCTION = "function"
     CLASS = "class"
-    MODULE = "module"
-    AUTHOR = "author"
-    COMMIT = "commit"
-    ISSUE = "issue"
-    DEPENDENCY = "dependency"
+    FUNCTION = "function"
+    METHOD = "method"
+    VARIABLE = "variable"
+    PATTERN = "pattern"
+    DATABASE_MODEL = "database_model"
+    DATABASE_TABLE = "database_table"
+    DATABASE_COLUMN = "database_column"
+    API_ENDPOINT = "api_endpoint"
+    WORKFLOW = "workflow"
+    CONCEPT = "concept"
+    DOCUMENTATION = "documentation"
 
 
 class EdgeType(Enum):
     """Types of edges in the knowledge graph."""
-    IS_A = "is_a"
-    PART_OF = "part_of"
+    CONTAINS = "contains"
+    IMPORTS = "imports"
+    CALLS = "calls"
+    INHERITS = "inherits"
     IMPLEMENTS = "implements"
     DEPENDS_ON = "depends_on"
-    CALLS = "calls"
-    EXTENDS = "extends"
-    AUTHORED_BY = "authored_by"
-    CONTAINS = "contains"
-    RELATED_TO = "related_to"
+    RELATES_TO = "relates_to"
+    DEFINES = "defines"
+    USES = "uses"
     SIMILAR_TO = "similar_to"
-    EVOLVED_FROM = "evolved_from"
-    DOCUMENTED_BY = "documented_by"
+    REFERENCED_BY = "referenced_by"
+    EQUIVALENT_TO = "equivalent_to"
+    EVOLVES_TO = "evolves_to"
+
+
+class GraphNode:
+    """
+    Represents a node in the knowledge graph.
+    """
+    
+    def __init__(self, node_id: str, node_type: NodeType, name: str,
+               repository_id: Optional[str] = None,
+               properties: Optional[Dict[str, Any]] = None,
+               metadata: Optional[Dict[str, Any]] = None):
+        """
+        Initialize a graph node.
+        
+        Args:
+            node_id: Unique identifier for the node
+            node_type: Type of node
+            name: Name of the node
+            repository_id: Optional ID of the containing repository
+            properties: Optional node properties
+            metadata: Optional node metadata
+        """
+        self.id = node_id
+        self.node_type = node_type
+        self.name = name
+        self.repository_id = repository_id
+        self.properties = properties or {}
+        self.metadata = metadata or {}
+        self.created_at = time.time()
+        self.updated_at = self.created_at
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert node to a dictionary."""
+        return {
+            'id': self.id,
+            'node_type': self.node_type.value,
+            'name': self.name,
+            'repository_id': self.repository_id,
+            'properties': self.properties,
+            'metadata': self.metadata,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'GraphNode':
+        """
+        Create a node from a dictionary.
+        
+        Args:
+            data: Node data dictionary
+        
+        Returns:
+            GraphNode instance
+        """
+        node = cls(
+            node_id=data['id'],
+            node_type=NodeType(data['node_type']),
+            name=data['name'],
+            repository_id=data.get('repository_id'),
+            properties=data.get('properties', {}),
+            metadata=data.get('metadata', {})
+        )
+        
+        node.created_at = data.get('created_at', time.time())
+        node.updated_at = data.get('updated_at', time.time())
+        
+        return node
+
+
+class GraphEdge:
+    """
+    Represents an edge in the knowledge graph.
+    """
+    
+    def __init__(self, edge_id: str, edge_type: EdgeType,
+               source_id: str, target_id: str,
+               properties: Optional[Dict[str, Any]] = None,
+               weight: float = 1.0,
+               metadata: Optional[Dict[str, Any]] = None):
+        """
+        Initialize a graph edge.
+        
+        Args:
+            edge_id: Unique identifier for the edge
+            edge_type: Type of edge
+            source_id: ID of the source node
+            target_id: ID of the target node
+            properties: Optional edge properties
+            weight: Edge weight
+            metadata: Optional edge metadata
+        """
+        self.id = edge_id
+        self.edge_type = edge_type
+        self.source_id = source_id
+        self.target_id = target_id
+        self.properties = properties or {}
+        self.weight = weight
+        self.metadata = metadata or {}
+        self.created_at = time.time()
+        self.updated_at = self.created_at
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert edge to a dictionary."""
+        return {
+            'id': self.id,
+            'edge_type': self.edge_type.value,
+            'source_id': self.source_id,
+            'target_id': self.target_id,
+            'properties': self.properties,
+            'weight': self.weight,
+            'metadata': self.metadata,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'GraphEdge':
+        """
+        Create an edge from a dictionary.
+        
+        Args:
+            data: Edge data dictionary
+        
+        Returns:
+            GraphEdge instance
+        """
+        edge = cls(
+            edge_id=data['id'],
+            edge_type=EdgeType(data['edge_type']),
+            source_id=data['source_id'],
+            target_id=data['target_id'],
+            properties=data.get('properties', {}),
+            weight=data.get('weight', 1.0),
+            metadata=data.get('metadata', {})
+        )
+        
+        edge.created_at = data.get('created_at', time.time())
+        edge.updated_at = data.get('updated_at', time.time())
+        
+        return edge
+
+
+class QueryResult:
+    """
+    Result of a knowledge graph query.
+    """
+    
+    def __init__(self, nodes: List[GraphNode], edges: List[GraphEdge]):
+        """
+        Initialize a query result.
+        
+        Args:
+            nodes: List of nodes
+            edges: List of edges
+        """
+        self.nodes = nodes
+        self.edges = edges
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert query result to a dictionary."""
+        return {
+            'nodes': [node.to_dict() for node in self.nodes],
+            'edges': [edge.to_dict() for edge in self.edges]
+        }
 
 
 class KnowledgeGraph:
     """
-    Knowledge Graph connecting concepts across repositories.
+    Knowledge graph for code repositories.
     
-    This graph enables:
-    - Cross-repository concept mapping
-    - Pattern discovery
+    This class provides:
+    - Graph construction and management
+    - Cross-repository pattern detection
     - Knowledge transfer
-    - Semantic search
+    - Graph querying and traversal
     """
     
     def __init__(self, storage_dir: Optional[str] = None):
@@ -71,220 +238,421 @@ class KnowledgeGraph:
         self.storage_dir = storage_dir
         os.makedirs(storage_dir, exist_ok=True)
         
-        # Initialize graph
-        self.graph = nx.MultiDiGraph()
+        # Set up nodes directory
+        self.nodes_dir = os.path.join(storage_dir, 'nodes')
+        os.makedirs(self.nodes_dir, exist_ok=True)
         
-        # Initialize node and edge metadata
-        self.node_metadata = {}  # node_id -> metadata
-        self.edge_metadata = {}  # (source_id, target_id, edge_key) -> metadata
-        
-        # Initialize embeddings
-        self.node_embeddings = {}  # node_id -> embedding vector
+        # Set up edges directory
+        self.edges_dir = os.path.join(storage_dir, 'edges')
+        os.makedirs(self.edges_dir, exist_ok=True)
         
         # Initialize logger
         self.logger = logging.getLogger('knowledge_graph')
         
+        # Initialize nodes and edges
+        self.nodes = {}  # node_id -> GraphNode
+        self.edges = {}  # edge_id -> GraphEdge
+        
+        # Initialize indices
+        self.node_type_index = {}  # node_type -> Set[node_id]
+        self.repository_index = {}  # repository_id -> Set[node_id]
+        self.edge_type_index = {}  # edge_type -> Set[edge_id]
+        self.node_connections = {}  # node_id -> {'in': Set[edge_id], 'out': Set[edge_id]}
+        
         # Load existing data
-        self._load_graph()
+        self._load_data()
     
-    def _load_graph(self) -> None:
-        """Load the graph from storage."""
-        graph_path = os.path.join(self.storage_dir, 'graph.json')
-        metadata_path = os.path.join(self.storage_dir, 'metadata.json')
-        embeddings_path = os.path.join(self.storage_dir, 'embeddings.npz')
+    def _load_data(self) -> None:
+        """Load existing data from storage."""
+        # Load nodes
+        if os.path.exists(self.nodes_dir):
+            for filename in os.listdir(self.nodes_dir):
+                if filename.endswith('.json'):
+                    node_id = filename[:-5]  # Remove '.json'
+                    node_path = os.path.join(self.nodes_dir, filename)
+                    
+                    try:
+                        with open(node_path, 'r') as f:
+                            node_data = json.load(f)
+                        
+                        node = GraphNode.from_dict(node_data)
+                        self.nodes[node_id] = node
+                        
+                        # Update indices
+                        node_type = node.node_type
+                        if node_type not in self.node_type_index:
+                            self.node_type_index[node_type] = set()
+                        
+                        self.node_type_index[node_type].add(node_id)
+                        
+                        if node.repository_id:
+                            if node.repository_id not in self.repository_index:
+                                self.repository_index[node.repository_id] = set()
+                            
+                            self.repository_index[node.repository_id].add(node_id)
+                        
+                        # Initialize node connections
+                        self.node_connections[node_id] = {'in': set(), 'out': set()}
+                        
+                        self.logger.info(f"Loaded node: {node.name} (ID: {node_id})")
+                    
+                    except Exception as e:
+                        self.logger.error(f"Error loading node from {node_path}: {e}")
         
-        # Load graph
-        if os.path.exists(graph_path):
-            try:
-                with open(graph_path, 'r') as f:
-                    graph_data = json.load(f)
-                
-                # Create nodes
-                for node_id, node_attrs in graph_data['nodes'].items():
-                    self.graph.add_node(node_id, **node_attrs)
-                
-                # Create edges
-                for edge in graph_data['edges']:
-                    source, target, key = edge['source'], edge['target'], edge.get('key', 0)
-                    self.graph.add_edge(source, target, key=key, **edge['attrs'])
-                
-                self.logger.info(f"Loaded graph with {self.graph.number_of_nodes()} nodes and {self.graph.number_of_edges()} edges")
-            except Exception as e:
-                self.logger.error(f"Error loading graph: {str(e)}")
-                # Initialize new graph
-                self.graph = nx.MultiDiGraph()
-        
-        # Load metadata
-        if os.path.exists(metadata_path):
-            try:
-                with open(metadata_path, 'r') as f:
-                    metadata = json.load(f)
-                
-                self.node_metadata = metadata['nodes']
-                self.edge_metadata = metadata['edges']
-                
-                self.logger.info(f"Loaded metadata for {len(self.node_metadata)} nodes and {len(self.edge_metadata)} edges")
-            except Exception as e:
-                self.logger.error(f"Error loading metadata: {str(e)}")
-                # Initialize new metadata
-                self.node_metadata = {}
-                self.edge_metadata = {}
-        
-        # Load embeddings
-        if os.path.exists(embeddings_path):
-            try:
-                embeddings = np.load(embeddings_path, allow_pickle=True)
-                self.node_embeddings = embeddings['embeddings'].item()
-                
-                self.logger.info(f"Loaded embeddings for {len(self.node_embeddings)} nodes")
-            except Exception as e:
-                self.logger.error(f"Error loading embeddings: {str(e)}")
-                # Initialize new embeddings
-                self.node_embeddings = {}
+        # Load edges
+        if os.path.exists(self.edges_dir):
+            for filename in os.listdir(self.edges_dir):
+                if filename.endswith('.json'):
+                    edge_id = filename[:-5]  # Remove '.json'
+                    edge_path = os.path.join(self.edges_dir, filename)
+                    
+                    try:
+                        with open(edge_path, 'r') as f:
+                            edge_data = json.load(f)
+                        
+                        edge = GraphEdge.from_dict(edge_data)
+                        self.edges[edge_id] = edge
+                        
+                        # Update indices
+                        edge_type = edge.edge_type
+                        if edge_type not in self.edge_type_index:
+                            self.edge_type_index[edge_type] = set()
+                        
+                        self.edge_type_index[edge_type].add(edge_id)
+                        
+                        # Update node connections
+                        source_id = edge.source_id
+                        target_id = edge.target_id
+                        
+                        if source_id in self.node_connections:
+                            self.node_connections[source_id]['out'].add(edge_id)
+                        else:
+                            self.node_connections[source_id] = {'in': set(), 'out': {edge_id}}
+                        
+                        if target_id in self.node_connections:
+                            self.node_connections[target_id]['in'].add(edge_id)
+                        else:
+                            self.node_connections[target_id] = {'in': {edge_id}, 'out': set()}
+                        
+                        self.logger.info(f"Loaded edge: {edge.edge_type.value} (ID: {edge_id})")
+                    
+                    except Exception as e:
+                        self.logger.error(f"Error loading edge from {edge_path}: {e}")
     
-    def save(self) -> None:
-        """Save the graph to storage."""
-        graph_path = os.path.join(self.storage_dir, 'graph.json')
-        metadata_path = os.path.join(self.storage_dir, 'metadata.json')
-        embeddings_path = os.path.join(self.storage_dir, 'embeddings.npz')
+    def _save_node(self, node: GraphNode) -> None:
+        """
+        Save a node to storage.
         
-        # Save graph
-        try:
-            # Convert graph to serializable format
-            nodes_data = {n: dict(self.graph.nodes[n]) for n in self.graph.nodes}
-            edges_data = []
-            
-            for u, v, k in self.graph.edges(keys=True):
-                edges_data.append({
-                    'source': u,
-                    'target': v,
-                    'key': k,
-                    'attrs': dict(self.graph.edges[u, v, k])
-                })
-            
-            graph_data = {
-                'nodes': nodes_data,
-                'edges': edges_data
-            }
-            
-            with open(graph_path, 'w') as f:
-                json.dump(graph_data, f, indent=2)
-            
-            self.logger.info(f"Saved graph with {self.graph.number_of_nodes()} nodes and {self.graph.number_of_edges()} edges")
-        except Exception as e:
-            self.logger.error(f"Error saving graph: {str(e)}")
+        Args:
+            node: Node to save
+        """
+        node_path = os.path.join(self.nodes_dir, f"{node.id}.json")
         
-        # Save metadata
-        try:
-            # Convert edge keys to strings for JSON serialization
-            edge_metadata = {}
-            for (u, v, k), metadata in self.edge_metadata.items():
-                edge_metadata[f"{u}|{v}|{k}"] = metadata
-            
-            metadata = {
-                'nodes': self.node_metadata,
-                'edges': edge_metadata
-            }
-            
-            with open(metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
-            
-            self.logger.info(f"Saved metadata for {len(self.node_metadata)} nodes and {len(self.edge_metadata)} edges")
-        except Exception as e:
-            self.logger.error(f"Error saving metadata: {str(e)}")
-        
-        # Save embeddings
-        try:
-            np.savez_compressed(embeddings_path, embeddings=self.node_embeddings)
-            
-            self.logger.info(f"Saved embeddings for {len(self.node_embeddings)} nodes")
-        except Exception as e:
-            self.logger.error(f"Error saving embeddings: {str(e)}")
+        with open(node_path, 'w') as f:
+            json.dump(node.to_dict(), f, indent=2)
     
-    def add_node(self, node_type: Union[str, NodeType], name: str, 
-                properties: Optional[Dict[str, Any]] = None,
-                metadata: Optional[Dict[str, Any]] = None) -> str:
+    def _save_edge(self, edge: GraphEdge) -> None:
+        """
+        Save an edge to storage.
+        
+        Args:
+            edge: Edge to save
+        """
+        edge_path = os.path.join(self.edges_dir, f"{edge.id}.json")
+        
+        with open(edge_path, 'w') as f:
+            json.dump(edge.to_dict(), f, indent=2)
+    
+    def add_node(self, node_type: Union[str, NodeType], name: str,
+               repository_id: Optional[str] = None,
+               properties: Optional[Dict[str, Any]] = None,
+               metadata: Optional[Dict[str, Any]] = None) -> str:
         """
         Add a node to the graph.
         
         Args:
             node_type: Type of node
             name: Name of the node
+            repository_id: Optional ID of the containing repository
             properties: Optional node properties
             metadata: Optional node metadata
             
         Returns:
             Node ID
         """
+        # Convert node_type from string if needed
+        if isinstance(node_type, str):
+            node_type = NodeType(node_type)
+        
         # Generate node ID
         node_id = str(uuid.uuid4())
         
-        # Convert node_type to string if enum
-        if isinstance(node_type, NodeType):
-            node_type = node_type.value
+        # Create node
+        node = GraphNode(
+            node_id=node_id,
+            node_type=node_type,
+            name=name,
+            repository_id=repository_id,
+            properties=properties,
+            metadata=metadata
+        )
         
-        # Create node attributes
-        node_attrs = {
-            'type': node_type,
-            'name': name,
-            'properties': properties or {}
-        }
+        # Add to graph
+        self.nodes[node_id] = node
         
-        # Add node to graph
-        self.graph.add_node(node_id, **node_attrs)
+        # Update indices
+        if node_type not in self.node_type_index:
+            self.node_type_index[node_type] = set()
         
-        # Store metadata
-        if metadata:
-            self.node_metadata[node_id] = metadata
+        self.node_type_index[node_type].add(node_id)
         
-        self.logger.info(f"Added node: {name} (ID: {node_id}, Type: {node_type})")
+        if repository_id:
+            if repository_id not in self.repository_index:
+                self.repository_index[repository_id] = set()
+            
+            self.repository_index[repository_id].add(node_id)
+        
+        # Initialize node connections
+        self.node_connections[node_id] = {'in': set(), 'out': set()}
+        
+        # Save to storage
+        self._save_node(node)
+        
+        self.logger.info(f"Added node: {name} (ID: {node_id})")
         return node_id
     
-    def add_edge(self, source_id: str, target_id: str, edge_type: Union[str, EdgeType],
+    def update_node(self, node_id: str, name: Optional[str] = None,
+                  properties: Optional[Dict[str, Any]] = None,
+                  metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Update a node in the graph.
+        
+        Args:
+            node_id: ID of the node to update
+            name: Optional new name
+            properties: Optional new properties (will be merged)
+            metadata: Optional new metadata (will be merged)
+            
+        Returns:
+            Update success
+        """
+        if node_id not in self.nodes:
+            return False
+        
+        node = self.nodes[node_id]
+        
+        # Update fields
+        if name is not None:
+            node.name = name
+        
+        if properties is not None:
+            node.properties.update(properties)
+        
+        if metadata is not None:
+            node.metadata.update(metadata)
+        
+        # Update timestamp
+        node.updated_at = time.time()
+        
+        # Save to storage
+        self._save_node(node)
+        
+        self.logger.info(f"Updated node: {node.name} (ID: {node_id})")
+        return True
+    
+    def remove_node(self, node_id: str, remove_edges: bool = True) -> bool:
+        """
+        Remove a node from the graph.
+        
+        Args:
+            node_id: ID of the node to remove
+            remove_edges: Whether to remove connected edges
+            
+        Returns:
+            Removal success
+        """
+        if node_id not in self.nodes:
+            return False
+        
+        node = self.nodes[node_id]
+        
+        # Remove connected edges if requested
+        if remove_edges:
+            # Get connected edges
+            connected_edges = set()
+            
+            if node_id in self.node_connections:
+                connected_edges.update(self.node_connections[node_id]['in'])
+                connected_edges.update(self.node_connections[node_id]['out'])
+            
+            # Remove edges
+            for edge_id in list(connected_edges):
+                self.remove_edge(edge_id)
+        
+        # Update indices
+        node_type = node.node_type
+        if node_type in self.node_type_index:
+            self.node_type_index[node_type].discard(node_id)
+        
+        repository_id = node.repository_id
+        if repository_id and repository_id in self.repository_index:
+            self.repository_index[repository_id].discard(node_id)
+        
+        # Remove node connections
+        if node_id in self.node_connections:
+            del self.node_connections[node_id]
+        
+        # Remove from graph
+        del self.nodes[node_id]
+        
+        # Remove from storage
+        node_path = os.path.join(self.nodes_dir, f"{node_id}.json")
+        if os.path.exists(node_path):
+            os.remove(node_path)
+        
+        self.logger.info(f"Removed node: {node.name} (ID: {node_id})")
+        return True
+    
+    def add_edge(self, edge_type: Union[str, EdgeType],
+               source_id: str, target_id: str,
                properties: Optional[Dict[str, Any]] = None,
-               metadata: Optional[Dict[str, Any]] = None,
-               weight: float = 1.0) -> Tuple[str, str, int]:
+               weight: float = 1.0,
+               metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
         """
         Add an edge to the graph.
         
         Args:
+            edge_type: Type of edge
             source_id: ID of the source node
             target_id: ID of the target node
-            edge_type: Type of edge
             properties: Optional edge properties
-            metadata: Optional edge metadata
             weight: Edge weight
+            metadata: Optional edge metadata
             
         Returns:
-            Tuple of (source_id, target_id, edge_key)
+            Edge ID or None if nodes not found
         """
-        # Verify nodes exist
-        if source_id not in self.graph:
-            raise ValueError(f"Source node {source_id} not found")
+        # Check if nodes exist
+        if source_id not in self.nodes or target_id not in self.nodes:
+            return None
         
-        if target_id not in self.graph:
-            raise ValueError(f"Target node {target_id} not found")
+        # Convert edge_type from string if needed
+        if isinstance(edge_type, str):
+            edge_type = EdgeType(edge_type)
         
-        # Convert edge_type to string if enum
-        if isinstance(edge_type, EdgeType):
-            edge_type = edge_type.value
+        # Generate edge ID
+        edge_id = str(uuid.uuid4())
         
-        # Create edge attributes
-        edge_attrs = {
-            'type': edge_type,
-            'weight': weight,
-            'properties': properties or {}
-        }
+        # Create edge
+        edge = GraphEdge(
+            edge_id=edge_id,
+            edge_type=edge_type,
+            source_id=source_id,
+            target_id=target_id,
+            properties=properties,
+            weight=weight,
+            metadata=metadata
+        )
         
-        # Add edge to graph
-        edge_key = self.graph.add_edge(source_id, target_id, **edge_attrs)
+        # Add to graph
+        self.edges[edge_id] = edge
         
-        # Store metadata
-        if metadata:
-            self.edge_metadata[(source_id, target_id, edge_key)] = metadata
+        # Update indices
+        if edge_type not in self.edge_type_index:
+            self.edge_type_index[edge_type] = set()
         
-        self.logger.info(f"Added edge: {edge_type} from {source_id} to {target_id} (Key: {edge_key})")
-        return (source_id, target_id, edge_key)
+        self.edge_type_index[edge_type].add(edge_id)
+        
+        # Update node connections
+        self.node_connections[source_id]['out'].add(edge_id)
+        self.node_connections[target_id]['in'].add(edge_id)
+        
+        # Save to storage
+        self._save_edge(edge)
+        
+        self.logger.info(f"Added edge: {edge_type.value} from {source_id} to {target_id} (ID: {edge_id})")
+        return edge_id
+    
+    def update_edge(self, edge_id: str,
+                  properties: Optional[Dict[str, Any]] = None,
+                  weight: Optional[float] = None,
+                  metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Update an edge in the graph.
+        
+        Args:
+            edge_id: ID of the edge to update
+            properties: Optional new properties (will be merged)
+            weight: Optional new weight
+            metadata: Optional new metadata (will be merged)
+            
+        Returns:
+            Update success
+        """
+        if edge_id not in self.edges:
+            return False
+        
+        edge = self.edges[edge_id]
+        
+        # Update fields
+        if properties is not None:
+            edge.properties.update(properties)
+        
+        if weight is not None:
+            edge.weight = weight
+        
+        if metadata is not None:
+            edge.metadata.update(metadata)
+        
+        # Update timestamp
+        edge.updated_at = time.time()
+        
+        # Save to storage
+        self._save_edge(edge)
+        
+        self.logger.info(f"Updated edge: {edge.edge_type.value} (ID: {edge_id})")
+        return True
+    
+    def remove_edge(self, edge_id: str) -> bool:
+        """
+        Remove an edge from the graph.
+        
+        Args:
+            edge_id: ID of the edge to remove
+            
+        Returns:
+            Removal success
+        """
+        if edge_id not in self.edges:
+            return False
+        
+        edge = self.edges[edge_id]
+        
+        # Update indices
+        edge_type = edge.edge_type
+        if edge_type in self.edge_type_index:
+            self.edge_type_index[edge_type].discard(edge_id)
+        
+        # Update node connections
+        source_id = edge.source_id
+        target_id = edge.target_id
+        
+        if source_id in self.node_connections:
+            self.node_connections[source_id]['out'].discard(edge_id)
+        
+        if target_id in self.node_connections:
+            self.node_connections[target_id]['in'].discard(edge_id)
+        
+        # Remove from graph
+        del self.edges[edge_id]
+        
+        # Remove from storage
+        edge_path = os.path.join(self.edges_dir, f"{edge_id}.json")
+        if os.path.exists(edge_path):
+            os.remove(edge_path)
+        
+        self.logger.info(f"Removed edge: {edge.edge_type.value} (ID: {edge_id})")
+        return True
     
     def get_node(self, node_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -294,1664 +662,968 @@ class KnowledgeGraph:
             node_id: ID of the node
             
         Returns:
-            Node data or None if not found
+            Node data dictionary or None if not found
         """
-        if node_id not in self.graph:
+        if node_id not in self.nodes:
             return None
         
-        # Get node attributes
-        node_attrs = dict(self.graph.nodes[node_id])
-        
-        # Add metadata if exists
-        if node_id in self.node_metadata:
-            node_attrs['metadata'] = self.node_metadata[node_id]
-        
-        # Add ID
-        node_attrs['id'] = node_id
-        
-        return node_attrs
+        return self.nodes[node_id].to_dict()
     
-    def get_edge(self, source_id: str, target_id: str, 
-               edge_key: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    def get_edge(self, edge_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get an edge by source, target, and key.
+        Get an edge by ID.
         
         Args:
-            source_id: ID of the source node
-            target_id: ID of the target node
-            edge_key: Optional edge key
+            edge_id: ID of the edge
             
         Returns:
-            Edge data or None if not found
+            Edge data dictionary or None if not found
         """
-        if not self.graph.has_edge(source_id, target_id):
+        if edge_id not in self.edges:
             return None
         
-        if edge_key is None:
-            # Get the first edge
-            edge_key = 0
-        
-        if not self.graph.has_edge(source_id, target_id, edge_key):
-            return None
-        
-        # Get edge attributes
-        edge_attrs = dict(self.graph.edges[source_id, target_id, edge_key])
-        
-        # Add metadata if exists
-        if (source_id, target_id, edge_key) in self.edge_metadata:
-            edge_attrs['metadata'] = self.edge_metadata[(source_id, target_id, edge_key)]
-        
-        # Add IDs and key
-        edge_attrs['source'] = source_id
-        edge_attrs['target'] = target_id
-        edge_attrs['key'] = edge_key
-        
-        return edge_attrs
+        return self.edges[edge_id].to_dict()
     
-    def update_node(self, node_id: str, 
-                  properties: Optional[Dict[str, Any]] = None,
-                  metadata: Optional[Dict[str, Any]] = None) -> bool:
+    def get_nodes_by_type(self, node_type: Union[str, NodeType]) -> List[Dict[str, Any]]:
         """
-        Update a node's properties and metadata.
+        Get nodes by type.
         
         Args:
-            node_id: ID of the node to update
-            properties: Optional node properties to update
-            metadata: Optional node metadata to update
+            node_type: Type of nodes to get
             
         Returns:
-            Update success
+            List of node data dictionaries
         """
-        if node_id not in self.graph:
-            return False
+        # Convert node_type from string if needed
+        if isinstance(node_type, str):
+            node_type = NodeType(node_type)
         
-        # Update properties
-        if properties:
-            curr_props = self.graph.nodes[node_id].get('properties', {})
-            curr_props.update(properties)
-            self.graph.nodes[node_id]['properties'] = curr_props
+        # Get nodes
+        result = []
         
-        # Update metadata
-        if metadata:
-            if node_id not in self.node_metadata:
-                self.node_metadata[node_id] = {}
-            
-            self.node_metadata[node_id].update(metadata)
+        if node_type in self.node_type_index:
+            for node_id in self.node_type_index[node_type]:
+                if node_id in self.nodes:
+                    result.append(self.nodes[node_id].to_dict())
         
-        self.logger.info(f"Updated node: {node_id}")
-        return True
+        return result
     
-    def update_edge(self, source_id: str, target_id: str, edge_key: int,
-                  properties: Optional[Dict[str, Any]] = None,
-                  metadata: Optional[Dict[str, Any]] = None,
-                  weight: Optional[float] = None) -> bool:
+    def get_nodes_by_repository(self, repository_id: str) -> List[Dict[str, Any]]:
         """
-        Update an edge's properties, metadata, and weight.
+        Get nodes by repository.
         
         Args:
-            source_id: ID of the source node
-            target_id: ID of the target node
-            edge_key: Edge key
-            properties: Optional edge properties to update
-            metadata: Optional edge metadata to update
-            weight: Optional edge weight to update
+            repository_id: ID of the repository
             
         Returns:
-            Update success
+            List of node data dictionaries
         """
-        if not self.graph.has_edge(source_id, target_id, edge_key):
-            return False
+        # Get nodes
+        result = []
         
-        # Update properties
-        if properties:
-            curr_props = self.graph.edges[source_id, target_id, edge_key].get('properties', {})
-            curr_props.update(properties)
-            self.graph.edges[source_id, target_id, edge_key]['properties'] = curr_props
+        if repository_id in self.repository_index:
+            for node_id in self.repository_index[repository_id]:
+                if node_id in self.nodes:
+                    result.append(self.nodes[node_id].to_dict())
         
-        # Update weight
-        if weight is not None:
-            self.graph.edges[source_id, target_id, edge_key]['weight'] = weight
-        
-        # Update metadata
-        if metadata:
-            edge_meta_key = (source_id, target_id, edge_key)
-            if edge_meta_key not in self.edge_metadata:
-                self.edge_metadata[edge_meta_key] = {}
-            
-            self.edge_metadata[edge_meta_key].update(metadata)
-        
-        self.logger.info(f"Updated edge: {source_id} to {target_id} (Key: {edge_key})")
-        return True
+        return result
     
-    def delete_node(self, node_id: str) -> bool:
+    def get_edges_by_type(self, edge_type: Union[str, EdgeType]) -> List[Dict[str, Any]]:
         """
-        Delete a node from the graph.
+        Get edges by type.
         
         Args:
-            node_id: ID of the node to delete
+            edge_type: Type of edges to get
             
         Returns:
-            Deletion success
+            List of edge data dictionaries
         """
-        if node_id not in self.graph:
-            return False
+        # Convert edge_type from string if needed
+        if isinstance(edge_type, str):
+            edge_type = EdgeType(edge_type)
         
-        # Remove from graph
-        self.graph.remove_node(node_id)
+        # Get edges
+        result = []
         
-        # Remove metadata
-        if node_id in self.node_metadata:
-            del self.node_metadata[node_id]
+        if edge_type in self.edge_type_index:
+            for edge_id in self.edge_type_index[edge_type]:
+                if edge_id in self.edges:
+                    result.append(self.edges[edge_id].to_dict())
         
-        # Remove embedding
-        if node_id in self.node_embeddings:
-            del self.node_embeddings[node_id]
-        
-        # Remove edge metadata for edges connected to this node
-        for key in list(self.edge_metadata.keys()):
-            source, target, edge_key = key
-            if source == node_id or target == node_id:
-                del self.edge_metadata[key]
-        
-        self.logger.info(f"Deleted node: {node_id}")
-        return True
+        return result
     
-    def delete_edge(self, source_id: str, target_id: str, 
-                  edge_key: Optional[int] = None) -> bool:
+    def get_connected_nodes(self, node_id: str, direction: str = 'both',
+                         edge_types: Optional[List[Union[str, EdgeType]]] = None) -> List[Dict[str, Any]]:
         """
-        Delete an edge from the graph.
-        
-        Args:
-            source_id: ID of the source node
-            target_id: ID of the target node
-            edge_key: Optional edge key
-            
-        Returns:
-            Deletion success
-        """
-        if not self.graph.has_edge(source_id, target_id):
-            return False
-        
-        if edge_key is None:
-            # Delete all edges between source and target
-            self.graph.remove_edges_from([(source_id, target_id, k) for k in self.graph[source_id][target_id]])
-            
-            # Remove metadata
-            for key in list(self.edge_metadata.keys()):
-                s, t, ek = key
-                if s == source_id and t == target_id:
-                    del self.edge_metadata[key]
-        else:
-            # Delete specific edge
-            if not self.graph.has_edge(source_id, target_id, edge_key):
-                return False
-            
-            self.graph.remove_edge(source_id, target_id, edge_key)
-            
-            # Remove metadata
-            edge_meta_key = (source_id, target_id, edge_key)
-            if edge_meta_key in self.edge_metadata:
-                del self.edge_metadata[edge_meta_key]
-        
-        self.logger.info(f"Deleted edge: {source_id} to {target_id}" + (f" (Key: {edge_key})" if edge_key is not None else ""))
-        return True
-    
-    def find_nodes(self, node_type: Optional[Union[str, NodeType]] = None,
-                 name_pattern: Optional[str] = None,
-                 properties: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """
-        Find nodes matching criteria.
-        
-        Args:
-            node_type: Optional node type to filter by
-            name_pattern: Optional regex pattern to match node names
-            properties: Optional properties to filter by
-            
-        Returns:
-            List of matching nodes
-        """
-        import re
-        
-        # Convert node_type to string if enum
-        if isinstance(node_type, NodeType):
-            node_type = node_type.value
-        
-        # Compile regex if provided
-        name_regex = None
-        if name_pattern:
-            try:
-                name_regex = re.compile(name_pattern)
-            except Exception as e:
-                self.logger.error(f"Invalid regex pattern: {name_pattern}")
-                name_regex = None
-        
-        # Find matching nodes
-        results = []
-        
-        for node_id in self.graph.nodes:
-            node_data = self.get_node(node_id)
-            
-            # Apply node type filter
-            if node_type and node_data['type'] != node_type:
-                continue
-            
-            # Apply name pattern filter
-            if name_regex and not name_regex.search(node_data['name']):
-                continue
-            
-            # Apply properties filter
-            if properties:
-                match = True
-                node_props = node_data.get('properties', {})
-                
-                for key, value in properties.items():
-                    if key not in node_props or node_props[key] != value:
-                        match = False
-                        break
-                
-                if not match:
-                    continue
-            
-            results.append(node_data)
-        
-        return results
-    
-    def find_edges(self, edge_type: Optional[Union[str, EdgeType]] = None,
-                 source_id: Optional[str] = None,
-                 target_id: Optional[str] = None,
-                 min_weight: Optional[float] = None,
-                 max_weight: Optional[float] = None,
-                 properties: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """
-        Find edges matching criteria.
-        
-        Args:
-            edge_type: Optional edge type to filter by
-            source_id: Optional source node ID
-            target_id: Optional target node ID
-            min_weight: Optional minimum weight
-            max_weight: Optional maximum weight
-            properties: Optional properties to filter by
-            
-        Returns:
-            List of matching edges
-        """
-        # Convert edge_type to string if enum
-        if isinstance(edge_type, EdgeType):
-            edge_type = edge_type.value
-        
-        # Find matching edges
-        results = []
-        
-        for u, v, k in self.graph.edges(keys=True):
-            # Apply source filter
-            if source_id and u != source_id:
-                continue
-            
-            # Apply target filter
-            if target_id and v != target_id:
-                continue
-            
-            edge_data = self.get_edge(u, v, k)
-            
-            # Apply edge type filter
-            if edge_type and edge_data['type'] != edge_type:
-                continue
-            
-            # Apply weight filters
-            if min_weight is not None and edge_data.get('weight', 1.0) < min_weight:
-                continue
-            
-            if max_weight is not None and edge_data.get('weight', 1.0) > max_weight:
-                continue
-            
-            # Apply properties filter
-            if properties:
-                match = True
-                edge_props = edge_data.get('properties', {})
-                
-                for key, value in properties.items():
-                    if key not in edge_props or edge_props[key] != value:
-                        match = False
-                        break
-                
-                if not match:
-                    continue
-            
-            results.append(edge_data)
-        
-        return results
-    
-    def get_neighbors(self, node_id: str, 
-                    direction: str = 'both',
-                    edge_type: Optional[Union[str, EdgeType]] = None,
-                    neighbor_type: Optional[Union[str, NodeType]] = None) -> List[Dict[str, Any]]:
-        """
-        Get neighbors of a node.
+        Get nodes connected to a node.
         
         Args:
             node_id: ID of the node
-            direction: Direction ('in', 'out', or 'both')
-            edge_type: Optional filter by edge type
-            neighbor_type: Optional filter by neighbor node type
+            direction: Direction of connections ('in', 'out', or 'both')
+            edge_types: Optional list of edge types to filter by
             
         Returns:
-            List of neighbor nodes
+            List of connected node data dictionaries
         """
-        if node_id not in self.graph:
+        if node_id not in self.nodes or node_id not in self.node_connections:
             return []
         
-        # Convert types to strings if enums
-        if isinstance(edge_type, EdgeType):
-            edge_type = edge_type.value
+        # Convert edge_types from strings if needed
+        if edge_types is not None:
+            edge_types = [
+                EdgeType(et) if isinstance(et, str) else et
+                for et in edge_types
+            ]
         
-        if isinstance(neighbor_type, NodeType):
-            neighbor_type = neighbor_type.value
+        # Get connected nodes
+        connected_nodes = set()
         
-        neighbors = []
-        
-        # Get outgoing neighbors
-        if direction in ['out', 'both']:
-            for target in self.graph.successors(node_id):
-                for k in self.graph[node_id][target]:
-                    edge_data = self.get_edge(node_id, target, k)
-                    
-                    # Apply edge type filter
-                    if edge_type and edge_data['type'] != edge_type:
-                        continue
-                    
-                    neighbor_data = self.get_node(target)
-                    
-                    # Apply neighbor type filter
-                    if neighbor_type and neighbor_data['type'] != neighbor_type:
-                        continue
-                    
-                    # Add edge data to neighbor data
-                    neighbor_with_edge = neighbor_data.copy()
-                    neighbor_with_edge['edge'] = edge_data
-                    neighbor_with_edge['direction'] = 'out'
-                    
-                    neighbors.append(neighbor_with_edge)
-        
-        # Get incoming neighbors
+        # Process incoming edges
         if direction in ['in', 'both']:
-            for source in self.graph.predecessors(node_id):
-                for k in self.graph[source][node_id]:
-                    edge_data = self.get_edge(source, node_id, k)
+            for edge_id in self.node_connections[node_id]['in']:
+                if edge_id in self.edges:
+                    edge = self.edges[edge_id]
                     
                     # Apply edge type filter
-                    if edge_type and edge_data['type'] != edge_type:
+                    if edge_types is not None and edge.edge_type not in edge_types:
                         continue
                     
-                    neighbor_data = self.get_node(source)
-                    
-                    # Apply neighbor type filter
-                    if neighbor_type and neighbor_data['type'] != neighbor_type:
-                        continue
-                    
-                    # Add edge data to neighbor data
-                    neighbor_with_edge = neighbor_data.copy()
-                    neighbor_with_edge['edge'] = edge_data
-                    neighbor_with_edge['direction'] = 'in'
-                    
-                    neighbors.append(neighbor_with_edge)
+                    # Add source node
+                    source_id = edge.source_id
+                    if source_id in self.nodes:
+                        connected_nodes.add(source_id)
         
-        return neighbors
+        # Process outgoing edges
+        if direction in ['out', 'both']:
+            for edge_id in self.node_connections[node_id]['out']:
+                if edge_id in self.edges:
+                    edge = self.edges[edge_id]
+                    
+                    # Apply edge type filter
+                    if edge_types is not None and edge.edge_type not in edge_types:
+                        continue
+                    
+                    # Add target node
+                    target_id = edge.target_id
+                    if target_id in self.nodes:
+                        connected_nodes.add(target_id)
+        
+        # Convert nodes to dictionaries
+        result = []
+        
+        for connected_id in connected_nodes:
+            result.append(self.nodes[connected_id].to_dict())
+        
+        return result
     
-    def set_node_embedding(self, node_id: str, embedding: np.ndarray) -> bool:
+    def get_connected_edges(self, node_id: str, direction: str = 'both',
+                         edge_types: Optional[List[Union[str, EdgeType]]] = None) -> List[Dict[str, Any]]:
         """
-        Set the embedding vector for a node.
+        Get edges connected to a node.
         
         Args:
             node_id: ID of the node
-            embedding: Embedding vector
+            direction: Direction of connections ('in', 'out', or 'both')
+            edge_types: Optional list of edge types to filter by
             
         Returns:
-            Success flag
+            List of connected edge data dictionaries
         """
-        if node_id not in self.graph:
-            return False
-        
-        self.node_embeddings[node_id] = embedding
-        return True
-    
-    def get_node_embedding(self, node_id: str) -> Optional[np.ndarray]:
-        """
-        Get the embedding vector for a node.
-        
-        Args:
-            node_id: ID of the node
-            
-        Returns:
-            Embedding vector or None if not found
-        """
-        return self.node_embeddings.get(node_id)
-    
-    def find_similar_nodes(self, query_embedding: np.ndarray,
-                         node_type: Optional[Union[str, NodeType]] = None,
-                         top_k: int = 10) -> List[Tuple[str, float]]:
-        """
-        Find nodes with similar embeddings.
-        
-        Args:
-            query_embedding: Query embedding vector
-            node_type: Optional filter by node type
-            top_k: Maximum number of results
-            
-        Returns:
-            List of (node_id, similarity) tuples
-        """
-        if not self.node_embeddings:
+        if node_id not in self.nodes or node_id not in self.node_connections:
             return []
         
-        # Convert node_type to string if enum
-        if isinstance(node_type, NodeType):
-            node_type = node_type.value
+        # Convert edge_types from strings if needed
+        if edge_types is not None:
+            edge_types = [
+                EdgeType(et) if isinstance(et, str) else et
+                for et in edge_types
+            ]
         
-        # Compute similarities
-        similarities = []
+        # Get connected edges
+        connected_edges = set()
         
-        for node_id, embedding in self.node_embeddings.items():
-            # Apply node type filter
-            if node_type:
-                node_data = self.get_node(node_id)
-                if node_data['type'] != node_type:
-                    continue
-            
-            # Compute cosine similarity
-            similarity = self._cosine_similarity(query_embedding, embedding)
-            similarities.append((node_id, similarity))
+        # Process incoming edges
+        if direction in ['in', 'both']:
+            for edge_id in self.node_connections[node_id]['in']:
+                if edge_id in self.edges:
+                    edge = self.edges[edge_id]
+                    
+                    # Apply edge type filter
+                    if edge_types is not None and edge.edge_type not in edge_types:
+                        continue
+                    
+                    # Add edge
+                    connected_edges.add(edge_id)
         
-        # Sort by similarity (descending)
-        similarities.sort(key=lambda x: x[1], reverse=True)
+        # Process outgoing edges
+        if direction in ['out', 'both']:
+            for edge_id in self.node_connections[node_id]['out']:
+                if edge_id in self.edges:
+                    edge = self.edges[edge_id]
+                    
+                    # Apply edge type filter
+                    if edge_types is not None and edge.edge_type not in edge_types:
+                        continue
+                    
+                    # Add edge
+                    connected_edges.add(edge_id)
         
-        # Return top k
-        return similarities[:top_k]
+        # Convert edges to dictionaries
+        result = []
+        
+        for edge_id in connected_edges:
+            result.append(self.edges[edge_id].to_dict())
+        
+        return result
     
-    def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
+    def find_nodes(self, query: str, node_types: Optional[List[Union[str, NodeType]]] = None,
+                repository_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        Compute cosine similarity between two vectors.
+        Find nodes by name or properties.
         
         Args:
-            a: First vector
-            b: Second vector
+            query: Search query
+            node_types: Optional list of node types to filter by
+            repository_id: Optional repository ID to filter by
             
         Returns:
-            Cosine similarity
+            List of matching node data dictionaries
         """
-        norm_a = np.linalg.norm(a)
-        norm_b = np.linalg.norm(b)
+        # Convert node_types from strings if needed
+        if node_types is not None:
+            node_types = [
+                NodeType(nt) if isinstance(nt, str) else nt
+                for nt in node_types
+            ]
         
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
+        # Filter nodes
+        query = query.lower()
+        matches = []
         
-        return float(np.dot(a, b) / (norm_a * norm_b))
+        for node_id, node in self.nodes.items():
+            # Apply repository filter
+            if repository_id is not None and node.repository_id != repository_id:
+                continue
+            
+            # Apply node type filter
+            if node_types is not None and node.node_type not in node_types:
+                continue
+            
+            # Check name
+            if query in node.name.lower():
+                matches.append(node.to_dict())
+                continue
+            
+            # Check properties
+            for key, value in node.properties.items():
+                if isinstance(value, str) and query in value.lower():
+                    matches.append(node.to_dict())
+                    break
+        
+        return matches
     
-    def find_path(self, source_id: str, target_id: str, 
-                max_length: int = 5) -> Optional[List[Dict[str, Any]]]:
+    def query_subgraph(self, node_ids: List[str], 
+                     include_connected: bool = False,
+                     edge_types: Optional[List[Union[str, EdgeType]]] = None) -> QueryResult:
         """
-        Find a path between two nodes.
+        Query a subgraph containing specific nodes.
+        
+        Args:
+            node_ids: IDs of nodes to include
+            include_connected: Whether to include connected nodes
+            edge_types: Optional list of edge types to filter by when including connected nodes
+            
+        Returns:
+            Query result with nodes and edges
+        """
+        # Convert edge_types from strings if needed
+        if edge_types is not None:
+            edge_types = [
+                EdgeType(et) if isinstance(et, str) else et
+                for et in edge_types
+            ]
+        
+        # Get nodes
+        result_nodes = []
+        result_node_ids = set()
+        
+        # Add specified nodes
+        for node_id in node_ids:
+            if node_id in self.nodes:
+                result_nodes.append(self.nodes[node_id])
+                result_node_ids.add(node_id)
+        
+        # Add connected nodes if requested
+        if include_connected:
+            for node_id in list(result_node_ids):
+                connected_node_dicts = self.get_connected_nodes(
+                    node_id=node_id,
+                    direction='both',
+                    edge_types=edge_types
+                )
+                
+                for connected_node_dict in connected_node_dicts:
+                    connected_id = connected_node_dict['id']
+                    
+                    if connected_id not in result_node_ids and connected_id in self.nodes:
+                        result_nodes.append(self.nodes[connected_id])
+                        result_node_ids.add(connected_id)
+        
+        # Get edges between result nodes
+        result_edges = []
+        
+        for node_id in result_node_ids:
+            for edge_id in self.node_connections[node_id]['out']:
+                if edge_id in self.edges:
+                    edge = self.edges[edge_id]
+                    
+                    # Apply edge type filter
+                    if edge_types is not None and edge.edge_type not in edge_types:
+                        continue
+                    
+                    # Check if edge connects nodes in result
+                    if edge.target_id in result_node_ids:
+                        result_edges.append(edge)
+        
+        return QueryResult(nodes=result_nodes, edges=result_edges)
+    
+    def get_shortest_path(self, source_id: str, target_id: str,
+                       edge_types: Optional[List[Union[str, EdgeType]]] = None) -> Optional[QueryResult]:
+        """
+        Find the shortest path between two nodes.
         
         Args:
             source_id: ID of the source node
             target_id: ID of the target node
-            max_length: Maximum path length
+            edge_types: Optional list of edge types to consider
             
         Returns:
-            List of alternating nodes and edges, or None if no path
+            Query result with path nodes and edges, or None if no path exists
         """
-        if source_id not in self.graph or target_id not in self.graph:
+        if source_id not in self.nodes or target_id not in self.nodes:
             return None
         
-        try:
-            # Find shortest path
-            path = nx.shortest_path(self.graph, source_id, target_id, weight='weight', method='dijkstra')
+        # Convert edge_types from strings if needed
+        if edge_types is not None:
+            edge_types = [
+                EdgeType(et) if isinstance(et, str) else et
+                for et in edge_types
+            ]
+        
+        # Use breadth-first search to find shortest path
+        visited = {source_id}
+        queue = [(source_id, [])]  # (node_id, path_edges)
+        
+        while queue:
+            current_id, path_edges = queue.pop(0)
             
-            if len(path) > max_length + 1:
-                return None
-            
-            # Convert to alternating nodes and edges
-            result = []
-            
-            for i in range(len(path)):
-                # Add node
-                node_id = path[i]
-                result.append(self.get_node(node_id))
-                
-                # Add edge if not the last node
-                if i < len(path) - 1:
-                    next_node_id = path[i + 1]
-                    # Get first edge
-                    edge_key = min(self.graph[node_id][next_node_id].keys())
-                    result.append(self.get_edge(node_id, next_node_id, edge_key))
-            
-            return result
-        
-        except nx.NetworkXNoPath:
-            return None
-    
-    def compute_centrality(self, node_type: Optional[Union[str, NodeType]] = None,
-                         weight: str = 'weight') -> Dict[str, float]:
-        """
-        Compute node centrality.
-        
-        Args:
-            node_type: Optional filter by node type
-            weight: Edge attribute to use as weight
-            
-        Returns:
-            Dictionary mapping node IDs to centrality values
-        """
-        # Convert node_type to string if enum
-        if isinstance(node_type, NodeType):
-            node_type = node_type.value
-        
-        # Create a subgraph if node type is specified
-        if node_type:
-            node_ids = [n for n in self.graph.nodes if self.graph.nodes[n]['type'] == node_type]
-            subgraph = self.graph.subgraph(node_ids)
-        else:
-            subgraph = self.graph
-        
-        # Compute betweenness centrality
-        try:
-            centrality = nx.betweenness_centrality(subgraph, weight=weight)
-            return centrality
-        except Exception as e:
-            self.logger.error(f"Error computing centrality: {str(e)}")
-            return {}
-    
-    def find_communities(self, node_type: Optional[Union[str, NodeType]] = None,
-                       min_community_size: int = 3) -> List[List[str]]:
-        """
-        Find communities in the graph.
-        
-        Args:
-            node_type: Optional filter by node type
-            min_community_size: Minimum community size
-            
-        Returns:
-            List of communities (each a list of node IDs)
-        """
-        # Convert node_type to string if enum
-        if isinstance(node_type, NodeType):
-            node_type = node_type.value
-        
-        # Create a subgraph if node type is specified
-        if node_type:
-            node_ids = [n for n in self.graph.nodes if self.graph.nodes[n]['type'] == node_type]
-            subgraph = self.graph.subgraph(node_ids)
-        else:
-            subgraph = self.graph
-        
-        # Convert to undirected graph for community detection
-        undirected = subgraph.to_undirected()
-        
-        # Find communities
-        try:
-            import community as community_louvain
-            
-            # Compute communities using Louvain method
-            partition = community_louvain.best_partition(undirected)
-            
-            # Group nodes by community
-            communities = {}
-            for node_id, community_id in partition.items():
-                if community_id not in communities:
-                    communities[community_id] = []
-                
-                communities[community_id].append(node_id)
-            
-            # Filter by minimum size
-            result = [nodes for nodes in communities.values() if len(nodes) >= min_community_size]
-            
-            return result
-        
-        except Exception as e:
-            self.logger.error(f"Error finding communities: {str(e)}")
-            return []
-    
-    def extract_subgraph(self, node_ids: List[str], include_neighbors: bool = False,
-                       neighbor_types: Optional[List[Union[str, NodeType]]] = None) -> 'KnowledgeGraph':
-        """
-        Extract a subgraph containing specified nodes.
-        
-        Args:
-            node_ids: List of node IDs to include
-            include_neighbors: Whether to include neighbors
-            neighbor_types: Optional filter for neighbor types
-            
-        Returns:
-            Extracted subgraph as a new KnowledgeGraph
-        """
-        # Convert neighbor types to strings if enums
-        if neighbor_types:
-            neighbor_types = [t.value if isinstance(t, NodeType) else t for t in neighbor_types]
-        
-        # Find all nodes to include
-        all_nodes = set(node_ids)
-        
-        if include_neighbors:
-            for node_id in node_ids:
-                neighbors = self.get_neighbors(node_id)
-                
-                for neighbor in neighbors:
-                    # Apply neighbor type filter
-                    if neighbor_types and neighbor['type'] not in neighbor_types:
+            # Check outgoing edges
+            for edge_id in self.node_connections[current_id]['out']:
+                if edge_id in self.edges:
+                    edge = self.edges[edge_id]
+                    
+                    # Apply edge type filter
+                    if edge_types is not None and edge.edge_type not in edge_types:
                         continue
                     
-                    all_nodes.add(neighbor['id'])
+                    next_id = edge.target_id
+                    
+                    # Check if target reached
+                    if next_id == target_id:
+                        # Build result
+                        path_edges.append(edge_id)
+                        return self._build_path_result(source_id, target_id, path_edges)
+                    
+                    # Continue search if node not visited
+                    if next_id not in visited:
+                        visited.add(next_id)
+                        queue.append((next_id, path_edges + [edge_id]))
         
-        # Create a new knowledge graph
-        subgraph = KnowledgeGraph()
-        
-        # Copy nodes and edges
-        for node_id in all_nodes:
-            node_data = self.get_node(node_id)
-            
-            # Create node in subgraph
-            subgraph.graph.add_node(node_id, **{k: v for k, v in node_data.items() if k != 'id' and k != 'metadata'})
-            
-            # Copy metadata
-            if 'metadata' in node_data:
-                subgraph.node_metadata[node_id] = node_data['metadata']
-            
-            # Copy embedding
-            if node_id in self.node_embeddings:
-                subgraph.node_embeddings[node_id] = self.node_embeddings[node_id]
-        
-        # Copy edges between included nodes
-        for node_id in all_nodes:
-            for neighbor_id in all_nodes:
-                if self.graph.has_edge(node_id, neighbor_id):
-                    for k in self.graph[node_id][neighbor_id]:
-                        edge_data = self.get_edge(node_id, neighbor_id, k)
-                        
-                        # Create edge in subgraph
-                        edge_attrs = {key: value for key, value in edge_data.items() 
-                                   if key not in ['source', 'target', 'key', 'metadata']}
-                        
-                        subgraph.graph.add_edge(node_id, neighbor_id, key=k, **edge_attrs)
-                        
-                        # Copy metadata
-                        if 'metadata' in edge_data:
-                            subgraph.edge_metadata[(node_id, neighbor_id, k)] = edge_data['metadata']
-        
-        return subgraph
+        # No path found
+        return None
     
-    def merge(self, other: 'KnowledgeGraph', node_map: Optional[Dict[str, str]] = None) -> None:
+    def _build_path_result(self, source_id: str, target_id: str, edge_ids: List[str]) -> QueryResult:
         """
-        Merge another knowledge graph into this one.
+        Build a query result for a path.
         
         Args:
-            other: Knowledge graph to merge
-            node_map: Optional mapping from other's node IDs to this graph's node IDs
-        """
-        # Use identity mapping if not provided
-        if node_map is None:
-            node_map = {node_id: node_id for node_id in other.graph.nodes}
-        
-        # Copy nodes
-        for node_id in other.graph.nodes:
-            if node_id in node_map:
-                mapped_id = node_map[node_id]
-                
-                # Skip if node already exists
-                if mapped_id in self.graph:
-                    # Merge properties
-                    node_data = other.get_node(node_id)
-                    self.update_node(mapped_id, properties=node_data.get('properties'))
-                    
-                    # Merge metadata
-                    if 'metadata' in node_data:
-                        self.update_node(mapped_id, metadata=node_data['metadata'])
-                else:
-                    # Copy node
-                    node_data = other.get_node(node_id)
-                    
-                    # Create node in this graph
-                    self.graph.add_node(mapped_id, **{k: v for k, v in node_data.items() 
-                                                   if k != 'id' and k != 'metadata'})
-                    
-                    # Copy metadata
-                    if 'metadata' in node_data:
-                        self.node_metadata[mapped_id] = node_data['metadata']
-                    
-                    # Copy embedding
-                    if node_id in other.node_embeddings:
-                        self.node_embeddings[mapped_id] = other.node_embeddings[node_id]
-        
-        # Copy edges
-        for source_id, target_id, k in other.graph.edges(keys=True):
-            if source_id in node_map and target_id in node_map:
-                mapped_source = node_map[source_id]
-                mapped_target = node_map[target_id]
-                
-                # Skip if edge already exists
-                if self.graph.has_edge(mapped_source, mapped_target, k):
-                    # Merge properties
-                    edge_data = other.get_edge(source_id, target_id, k)
-                    self.update_edge(mapped_source, mapped_target, k, 
-                                  properties=edge_data.get('properties'),
-                                  weight=edge_data.get('weight'))
-                    
-                    # Merge metadata
-                    if 'metadata' in edge_data:
-                        self.update_edge(mapped_source, mapped_target, k, 
-                                      metadata=edge_data['metadata'])
-                else:
-                    # Copy edge
-                    edge_data = other.get_edge(source_id, target_id, k)
-                    
-                    # Create edge in this graph
-                    edge_attrs = {key: value for key, value in edge_data.items() 
-                               if key not in ['source', 'target', 'key', 'metadata']}
-                    
-                    self.graph.add_edge(mapped_source, mapped_target, key=k, **edge_attrs)
-                    
-                    # Copy metadata
-                    if 'metadata' in edge_data:
-                        self.edge_metadata[(mapped_source, mapped_target, k)] = edge_data['metadata']
-        
-        self.logger.info(f"Merged knowledge graph with {other.graph.number_of_nodes()} nodes and {other.graph.number_of_edges()} edges")
-    
-    def visualize(self, node_ids: Optional[List[str]] = None, 
-                max_nodes: int = 100, 
-                output_file: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Generate a visualization of the graph.
-        
-        Args:
-            node_ids: Optional list of node IDs to include
-            max_nodes: Maximum number of nodes to include
-            output_file: Optional file to save the visualization to
+            source_id: ID of the source node
+            target_id: ID of the target node
+            edge_ids: IDs of edges in the path
             
         Returns:
-            Visualization data
+            Query result with path nodes and edges
         """
-        try:
-            import matplotlib.pyplot as plt
-            
-            # Create a subgraph if node IDs are specified
-            if node_ids:
-                subgraph = self.extract_subgraph(node_ids)
-                graph = subgraph.graph
-            else:
-                graph = self.graph
-            
-            # Limit to max_nodes
-            if graph.number_of_nodes() > max_nodes:
-                # Take most central nodes
-                centrality = nx.betweenness_centrality(graph)
-                top_nodes = sorted(centrality.items(), key=lambda x: x[1], reverse=True)[:max_nodes]
-                top_node_ids = [node_id for node_id, _ in top_nodes]
-                
-                graph = graph.subgraph(top_node_ids)
-            
-            # Set up colors and sizes based on node types
-            colors = []
-            sizes = []
-            labels = {}
-            
-            for node_id in graph.nodes:
-                node_type = graph.nodes[node_id]['type']
-                node_name = graph.nodes[node_id]['name']
-                
-                # Assign color based on node type
-                type_colors = {
-                    'concept': 'blue',
-                    'code_entity': 'green',
-                    'pattern': 'purple',
-                    'repository': 'red',
-                    'file': 'orange',
-                    'function': 'cyan',
-                    'class': 'magenta',
-                    'module': 'yellow',
-                    'author': 'brown',
-                    'commit': 'gray',
-                    'issue': 'pink',
-                    'dependency': 'olive'
-                }
-                
-                colors.append(type_colors.get(node_type, 'black'))
-                
-                # Set size based on connections
-                size = 100 + 10 * (graph.in_degree(node_id) + graph.out_degree(node_id))
-                sizes.append(min(size, 500))  # Cap size
-                
-                # Set label
-                labels[node_id] = node_name
-            
-            # Set up edge colors based on edge types
-            edge_colors = []
-            
-            for source, target, key in graph.edges(keys=True):
-                edge_type = graph.edges[source, target, key]['type']
-                
-                # Assign color based on edge type
-                type_colors = {
-                    'is_a': 'blue',
-                    'part_of': 'green',
-                    'implements': 'purple',
-                    'depends_on': 'red',
-                    'calls': 'orange',
-                    'extends': 'cyan',
-                    'authored_by': 'magenta',
-                    'contains': 'yellow',
-                    'related_to': 'gray',
-                    'similar_to': 'pink',
-                    'evolved_from': 'brown',
-                    'documented_by': 'olive'
-                }
-                
-                edge_colors.append(type_colors.get(edge_type, 'black'))
-            
-            # Create the plot
-            plt.figure(figsize=(12, 12))
-            
-            # Use spring layout for positioning
-            pos = nx.spring_layout(graph)
-            
-            # Draw nodes
-            nx.draw_networkx_nodes(graph, pos, node_color=colors, node_size=sizes, alpha=0.8)
-            
-            # Draw edges
-            nx.draw_networkx_edges(graph, pos, edge_color=edge_colors, width=1, alpha=0.5, arrows=True)
-            
-            # Draw labels
-            nx.draw_networkx_labels(graph, pos, labels=labels, font_size=8)
-            
-            # Configure plot
-            plt.axis('off')
-            plt.title(f"Knowledge Graph Visualization ({graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges)")
-            
-            # Save to file if specified
-            if output_file:
-                plt.savefig(output_file, dpi=300, bbox_inches='tight')
-                plt.close()
-            
-            # Return visualization data
-            return {
-                'node_count': graph.number_of_nodes(),
-                'edge_count': graph.number_of_edges(),
-                'node_types': {node_id: graph.nodes[node_id]['type'] for node_id in graph.nodes},
-                'edge_types': {(s, t, k): graph.edges[s, t, k]['type'] for s, t, k in graph.edges(keys=True)},
-                'output_file': output_file
-            }
+        # Initialize with source and target nodes
+        result_nodes = []
+        result_node_ids = set()
         
-        except Exception as e:
-            self.logger.error(f"Error generating visualization: {str(e)}")
-            return {'error': str(e)}
-
-
-class MultiRepositoryKnowledgeGraph:
-    """
-    Knowledge graph for connecting concepts across multiple repositories.
+        if source_id in self.nodes:
+            result_nodes.append(self.nodes[source_id])
+            result_node_ids.add(source_id)
+        
+        if target_id in self.nodes and target_id != source_id:
+            result_nodes.append(self.nodes[target_id])
+            result_node_ids.add(target_id)
+        
+        # Add intermediate nodes and edges
+        result_edges = []
+        
+        for edge_id in edge_ids:
+            if edge_id in self.edges:
+                edge = self.edges[edge_id]
+                result_edges.append(edge)
+                
+                # Add nodes
+                if edge.source_id not in result_node_ids and edge.source_id in self.nodes:
+                    result_nodes.append(self.nodes[edge.source_id])
+                    result_node_ids.add(edge.source_id)
+                
+                if edge.target_id not in result_node_ids and edge.target_id in self.nodes:
+                    result_nodes.append(self.nodes[edge.target_id])
+                    result_node_ids.add(edge.target_id)
+        
+        return QueryResult(nodes=result_nodes, edges=result_edges)
     
-    This class provides:
-    - Building knowledge graphs from repositories
-    - Finding patterns across repositories
-    - Knowledge transfer between repositories
-    """
-    
-    def __init__(self, knowledge_graph: Optional[KnowledgeGraph] = None,
-               storage_dir: Optional[str] = None):
+    def get_graph_statistics(self) -> Dict[str, Any]:
         """
-        Initialize the multi-repository knowledge graph.
+        Get statistics about the knowledge graph.
         
-        Args:
-            knowledge_graph: Optional existing knowledge graph
-            storage_dir: Optional directory for persistent storage
-        """
-        # Initialize knowledge graph
-        self.kg = knowledge_graph or KnowledgeGraph(storage_dir)
-        
-        # Initialize logger
-        self.logger = logging.getLogger('multi_repo_kg')
-        
-        # Map of repository IDs to node IDs
-        self.repo_nodes = {}  # repo_id -> node_id
-    
-    def add_repository(self, repo_id: str, name: str, 
-                     url: str, metadata: Optional[Dict[str, Any]] = None) -> str:
-        """
-        Add a repository to the knowledge graph.
-        
-        Args:
-            repo_id: Repository ID
-            name: Repository name
-            url: Repository URL
-            metadata: Optional repository metadata
-            
         Returns:
-            Node ID
+            Dictionary of graph statistics
         """
-        # Create a node for the repository
-        node_id = self.kg.add_node(
-            node_type=NodeType.REPOSITORY,
-            name=name,
-            properties={
-                'url': url,
-                'repo_id': repo_id
-            },
-            metadata=metadata
-        )
+        # Count nodes by type
+        node_type_counts = {}
+        for node_type, node_ids in self.node_type_index.items():
+            node_type_counts[node_type.value] = len(node_ids)
         
-        # Store the mapping
-        self.repo_nodes[repo_id] = node_id
+        # Count edges by type
+        edge_type_counts = {}
+        for edge_type, edge_ids in self.edge_type_index.items():
+            edge_type_counts[edge_type.value] = len(edge_ids)
         
-        self.logger.info(f"Added repository {name} (ID: {repo_id}) to knowledge graph")
-        return node_id
-    
-    def import_code_files(self, repo_id: str, files: List[Dict[str, Any]]) -> List[str]:
-        """
-        Import code files from a repository into the knowledge graph.
+        # Count repositories
+        repository_count = len(self.repository_index)
         
-        Args:
-            repo_id: Repository ID
-            files: List of code files
-            
-        Returns:
-            List of file node IDs
-        """
-        if repo_id not in self.repo_nodes:
-            raise ValueError(f"Repository {repo_id} not found in knowledge graph")
+        # Identify most connected nodes
+        node_connection_counts = {}
+        for node_id, connections in self.node_connections.items():
+            connection_count = len(connections['in']) + len(connections['out'])
+            node_connection_counts[node_id] = connection_count
         
-        repo_node_id = self.repo_nodes[repo_id]
-        file_node_ids = []
+        most_connected = sorted(
+            node_connection_counts.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:10]
         
-        for file in files:
-            # Create a node for the file
-            file_node_id = self.kg.add_node(
-                node_type=NodeType.FILE,
-                name=file['path'],
-                properties={
-                    'path': file['path'],
-                    'language': file['language'],
-                    'size': file.get('size', 0),
-                    'last_modified': file.get('last_modified', time.time()),
-                    'file_id': file.get('id')
-                },
-                metadata=file.get('metadata')
-            )
-            
-            # Create an edge from the repository to the file
-            self.kg.add_edge(
-                source_id=repo_node_id,
-                target_id=file_node_id,
-                edge_type=EdgeType.CONTAINS,
-                properties={
-                    'relationship': 'repository_contains_file'
-                }
-            )
-            
-            file_node_ids.append(file_node_id)
-        
-        self.logger.info(f"Imported {len(files)} files from repository {repo_id} into knowledge graph")
-        return file_node_ids
-    
-    def import_code_entities(self, repo_id: str, file_node_id: str, 
-                           entities: List[Dict[str, Any]]) -> List[str]:
-        """
-        Import code entities from a file into the knowledge graph.
-        
-        Args:
-            repo_id: Repository ID
-            file_node_id: File node ID
-            entities: List of code entities
-            
-        Returns:
-            List of entity node IDs
-        """
-        if repo_id not in self.repo_nodes:
-            raise ValueError(f"Repository {repo_id} not found in knowledge graph")
-        
-        entity_node_ids = []
-        
-        for entity in entities:
-            entity_type = entity['type']
-            
-            # Map entity type to node type
-            if entity_type == 'function':
-                node_type = NodeType.FUNCTION
-            elif entity_type == 'class':
-                node_type = NodeType.CLASS
-            elif entity_type == 'module':
-                node_type = NodeType.MODULE
-            else:
-                node_type = NodeType.CODE_ENTITY
-            
-            # Create a node for the entity
-            entity_node_id = self.kg.add_node(
-                node_type=node_type,
-                name=entity['name'],
-                properties={
-                    'name': entity['name'],
-                    'type': entity_type,
-                    'start_line': entity.get('start_line'),
-                    'end_line': entity.get('end_line'),
-                    'entity_id': entity.get('id')
-                },
-                metadata=entity.get('metadata')
-            )
-            
-            # Create an edge from the file to the entity
-            self.kg.add_edge(
-                source_id=file_node_id,
-                target_id=entity_node_id,
-                edge_type=EdgeType.CONTAINS,
-                properties={
-                    'relationship': 'file_contains_entity'
-                }
-            )
-            
-            entity_node_ids.append(entity_node_id)
-        
-        self.logger.info(f"Imported {len(entities)} code entities into knowledge graph")
-        return entity_node_ids
-    
-    def import_dependencies(self, source_entity_id: str, 
-                          target_entities: List[Dict[str, Any]]) -> List[str]:
-        """
-        Import dependencies between code entities into the knowledge graph.
-        
-        Args:
-            source_entity_id: Source entity node ID
-            target_entities: List of target entities with dependency type
-            
-        Returns:
-            List of edge keys
-        """
-        edge_keys = []
-        
-        for target in target_entities:
-            target_id = target['entity_id']
-            dependency_type = target['dependency_type']
-            
-            # Map dependency type to edge type
-            if dependency_type == 'calls':
-                edge_type = EdgeType.CALLS
-            elif dependency_type == 'extends':
-                edge_type = EdgeType.EXTENDS
-            elif dependency_type == 'implements':
-                edge_type = EdgeType.IMPLEMENTS
-            else:
-                edge_type = EdgeType.DEPENDS_ON
-            
-            # Create an edge for the dependency
-            source_id, target_id, edge_key = self.kg.add_edge(
-                source_id=source_entity_id,
-                target_id=target_id,
-                edge_type=edge_type,
-                properties={
-                    'dependency_type': dependency_type,
-                    'weight': target.get('weight', 1.0)
-                },
-                weight=target.get('weight', 1.0)
-            )
-            
-            edge_keys.append(edge_key)
-        
-        self.logger.info(f"Imported {len(target_entities)} dependencies into knowledge graph")
-        return edge_keys
-    
-    def import_patterns(self, repo_id: str, patterns: List[Dict[str, Any]]) -> List[str]:
-        """
-        Import design patterns into the knowledge graph.
-        
-        Args:
-            repo_id: Repository ID
-            patterns: List of design patterns
-            
-        Returns:
-            List of pattern node IDs
-        """
-        if repo_id not in self.repo_nodes:
-            raise ValueError(f"Repository {repo_id} not found in knowledge graph")
-        
-        repo_node_id = self.repo_nodes[repo_id]
-        pattern_node_ids = []
-        
-        for pattern in patterns:
-            # Create a node for the pattern
-            pattern_node_id = self.kg.add_node(
-                node_type=NodeType.PATTERN,
-                name=pattern['name'],
-                properties={
-                    'name': pattern['name'],
-                    'type': pattern['type'],
-                    'confidence': pattern.get('confidence', 1.0),
-                    'pattern_id': pattern.get('id')
-                },
-                metadata=pattern.get('metadata')
-            )
-            
-            # Create an edge from the repository to the pattern
-            self.kg.add_edge(
-                source_id=repo_node_id,
-                target_id=pattern_node_id,
-                edge_type=EdgeType.CONTAINS,
-                properties={
-                    'relationship': 'repository_contains_pattern'
-                }
-            )
-            
-            # Connect pattern to involved entities
-            for entity_id in pattern.get('entities', []):
-                self.kg.add_edge(
-                    source_id=pattern_node_id,
-                    target_id=entity_id,
-                    edge_type=EdgeType.CONTAINS,
-                    properties={
-                        'relationship': 'pattern_contains_entity'
-                    }
-                )
-            
-            pattern_node_ids.append(pattern_node_id)
-        
-        self.logger.info(f"Imported {len(patterns)} patterns from repository {repo_id} into knowledge graph")
-        return pattern_node_ids
-    
-    def import_concepts(self, concepts: List[Dict[str, Any]]) -> List[str]:
-        """
-        Import concepts into the knowledge graph.
-        
-        Args:
-            concepts: List of concepts
-            
-        Returns:
-            List of concept node IDs
-        """
-        concept_node_ids = []
-        
-        for concept in concepts:
-            # Create a node for the concept
-            concept_node_id = self.kg.add_node(
-                node_type=NodeType.CONCEPT,
-                name=concept['name'],
-                properties={
-                    'name': concept['name'],
-                    'description': concept.get('description', ''),
-                    'domain': concept.get('domain', ''),
-                    'concept_id': concept.get('id')
-                },
-                metadata=concept.get('metadata')
-            )
-            
-            # Set embedding if provided
-            if 'embedding' in concept:
-                embedding = np.array(concept['embedding'])
-                self.kg.set_node_embedding(concept_node_id, embedding)
-            
-            # Connect concept to related entities
-            for entity in concept.get('related_entities', []):
-                entity_id = entity['entity_id']
-                relationship = entity.get('relationship', 'related_to')
-                
-                # Map relationship to edge type
-                if relationship == 'is_a':
-                    edge_type = EdgeType.IS_A
-                elif relationship == 'part_of':
-                    edge_type = EdgeType.PART_OF
-                elif relationship == 'implements':
-                    edge_type = EdgeType.IMPLEMENTS
-                else:
-                    edge_type = EdgeType.RELATED_TO
-                
-                self.kg.add_edge(
-                    source_id=entity_id,
-                    target_id=concept_node_id,
-                    edge_type=edge_type,
-                    properties={
-                        'relationship': relationship,
-                        'weight': entity.get('weight', 1.0)
-                    },
-                    weight=entity.get('weight', 1.0)
-                )
-            
-            concept_node_ids.append(concept_node_id)
-        
-        self.logger.info(f"Imported {len(concepts)} concepts into knowledge graph")
-        return concept_node_ids
-    
-    def find_similar_patterns(self, pattern_id: str, 
-                            min_similarity: float = 0.7,
-                            across_repos: bool = True) -> List[Dict[str, Any]]:
-        """
-        Find patterns similar to a given pattern.
-        
-        Args:
-            pattern_id: ID of the pattern node
-            min_similarity: Minimum similarity threshold
-            across_repos: Whether to look across all repositories
-            
-        Returns:
-            List of similar patterns with similarity scores
-        """
-        pattern_node = self.kg.get_node(pattern_id)
-        if not pattern_node or pattern_node['type'] != NodeType.PATTERN.value:
-            raise ValueError(f"Node {pattern_id} is not a pattern")
-        
-        # Get the pattern's repository
-        pattern_repo = None
-        for neighbor in self.kg.get_neighbors(pattern_id, direction='in', edge_type=EdgeType.CONTAINS):
-            if neighbor['type'] == NodeType.REPOSITORY.value:
-                pattern_repo = neighbor['id']
-                break
-        
-        # Get all pattern nodes
-        patterns = self.kg.find_nodes(node_type=NodeType.PATTERN)
-        
-        # Compute similarities
-        similar_patterns = []
-        
-        for other_pattern in patterns:
-            other_id = other_pattern['id']
-            
-            # Skip self
-            if other_id == pattern_id:
-                continue
-            
-            # Check if from different repositories if required
-            if not across_repos and pattern_repo:
-                other_repo = None
-                for neighbor in self.kg.get_neighbors(other_id, direction='in', edge_type=EdgeType.CONTAINS):
-                    if neighbor['type'] == NodeType.REPOSITORY.value:
-                        other_repo = neighbor['id']
-                        break
-                
-                if other_repo == pattern_repo:
-                    continue
-            
-            # Compute similarity based on shared entities
-            pattern_entities = set()
-            for neighbor in self.kg.get_neighbors(pattern_id, direction='out', edge_type=EdgeType.CONTAINS):
-                if neighbor['type'] in [NodeType.FUNCTION.value, NodeType.CLASS.value, NodeType.MODULE.value]:
-                    pattern_entities.add(neighbor['id'])
-            
-            other_entities = set()
-            for neighbor in self.kg.get_neighbors(other_id, direction='out', edge_type=EdgeType.CONTAINS):
-                if neighbor['type'] in [NodeType.FUNCTION.value, NodeType.CLASS.value, NodeType.MODULE.value]:
-                    other_entities.add(neighbor['id'])
-            
-            # Jaccard similarity
-            if not pattern_entities or not other_entities:
-                similarity = 0.0
-            else:
-                intersection = len(pattern_entities.intersection(other_entities))
-                union = len(pattern_entities.union(other_entities))
-                similarity = intersection / union
-            
-            if similarity >= min_similarity:
-                result = {
-                    'pattern': other_pattern,
-                    'similarity': similarity
-                }
-                
-                # Add repository information
-                for neighbor in self.kg.get_neighbors(other_id, direction='in', edge_type=EdgeType.CONTAINS):
-                    if neighbor['type'] == NodeType.REPOSITORY.value:
-                        result['repository'] = neighbor
-                        break
-                
-                similar_patterns.append(result)
-        
-        # Sort by similarity (descending)
-        similar_patterns.sort(key=lambda x: x['similarity'], reverse=True)
-        
-        return similar_patterns
-    
-    def find_knowledge_transfer_opportunities(self, source_repo_id: str, 
-                                           target_repo_id: str,
-                                           min_similarity: float = 0.7) -> List[Dict[str, Any]]:
-        """
-        Find opportunities for knowledge transfer between repositories.
-        
-        Args:
-            source_repo_id: Source repository ID
-            target_repo_id: Target repository ID
-            min_similarity: Minimum similarity threshold
-            
-        Returns:
-            List of knowledge transfer opportunities
-        """
-        if source_repo_id not in self.repo_nodes:
-            raise ValueError(f"Source repository {source_repo_id} not found in knowledge graph")
-        
-        if target_repo_id not in self.repo_nodes:
-            raise ValueError(f"Target repository {target_repo_id} not found in knowledge graph")
-        
-        source_node_id = self.repo_nodes[source_repo_id]
-        target_node_id = self.repo_nodes[target_repo_id]
-        
-        # Get patterns in source repository
-        source_patterns = []
-        for neighbor in self.kg.get_neighbors(source_node_id, direction='out', edge_type=EdgeType.CONTAINS):
-            if neighbor['type'] == NodeType.PATTERN.value:
-                source_patterns.append(neighbor)
-        
-        # Get entities in target repository
-        target_entities = {}  # entity_id -> entity
-        target_files = []
-        
-        for neighbor in self.kg.get_neighbors(target_node_id, direction='out', edge_type=EdgeType.CONTAINS):
-            if neighbor['type'] == NodeType.FILE.value:
-                target_files.append(neighbor)
-                
-                # Get entities in the file
-                for entity_neighbor in self.kg.get_neighbors(neighbor['id'], direction='out', edge_type=EdgeType.CONTAINS):
-                    if entity_neighbor['type'] in [NodeType.FUNCTION.value, NodeType.CLASS.value, NodeType.MODULE.value]:
-                        target_entities[entity_neighbor['id']] = entity_neighbor
-        
-        # Find opportunities
-        opportunities = []
-        
-        for pattern in source_patterns:
-            # Get entities in the pattern
-            pattern_entities = []
-            for neighbor in self.kg.get_neighbors(pattern['id'], direction='out', edge_type=EdgeType.CONTAINS):
-                if neighbor['type'] in [NodeType.FUNCTION.value, NodeType.CLASS.value, NodeType.MODULE.value]:
-                    pattern_entities.append(neighbor)
-            
-            # Check if pattern could be applied to target
-            # This is a simplified approach - in a real system, this would use
-            # more sophisticated matching algorithms
-            
-            # For each target entity, compute similarity to pattern entities
-            entity_similarities = {}
-            
-            for target_id, target_entity in target_entities.items():
-                best_similarity = 0.0
-                best_match = None
-                
-                for pattern_entity in pattern_entities:
-                    # Compute similarity based on name and function signatures
-                    name_similarity = self._name_similarity(
-                        pattern_entity['properties'].get('name', ''),
-                        target_entity['properties'].get('name', '')
-                    )
-                    
-                    if name_similarity > best_similarity:
-                        best_similarity = name_similarity
-                        best_match = pattern_entity
-                
-                if best_similarity >= min_similarity:
-                    entity_similarities[target_id] = {
-                        'target_entity': target_entity,
-                        'pattern_entity': best_match,
-                        'similarity': best_similarity
-                    }
-            
-            # Check if enough entities match
-            if len(entity_similarities) >= 2:  # Require at least 2 matching entities
-                opportunities.append({
-                    'pattern': pattern,
-                    'matching_entities': entity_similarities,
-                    'overall_similarity': sum(m['similarity'] for m in entity_similarities.values()) / len(entity_similarities)
+        most_connected_nodes = []
+        for node_id, count in most_connected:
+            if node_id in self.nodes:
+                most_connected_nodes.append({
+                    'id': node_id,
+                    'name': self.nodes[node_id].name,
+                    'type': self.nodes[node_id].node_type.value,
+                    'connection_count': count
                 })
         
-        # Sort by overall similarity (descending)
-        opportunities.sort(key=lambda x: x['overall_similarity'], reverse=True)
+        return {
+            'node_count': len(self.nodes),
+            'edge_count': len(self.edges),
+            'repository_count': repository_count,
+            'node_type_counts': node_type_counts,
+            'edge_type_counts': edge_type_counts,
+            'most_connected_nodes': most_connected_nodes
+        }
+    
+    def clear_repository(self, repository_id: str) -> int:
+        """
+        Clear all nodes and edges for a repository.
         
-        return opportunities
+        Args:
+            repository_id: ID of the repository to clear
+            
+        Returns:
+            Number of nodes removed
+        """
+        if repository_id not in self.repository_index:
+            return 0
+        
+        # Get nodes to remove
+        nodes_to_remove = list(self.repository_index[repository_id])
+        count = len(nodes_to_remove)
+        
+        # Remove nodes (and connected edges)
+        for node_id in nodes_to_remove:
+            self.remove_node(node_id, remove_edges=True)
+        
+        # Clear repository index
+        del self.repository_index[repository_id]
+        
+        self.logger.info(f"Cleared repository: {repository_id} ({count} nodes)")
+        return count
+    
+    def analyze_repository_patterns(self, repository_id: str) -> Dict[str, Any]:
+        """
+        Analyze patterns in a repository.
+        
+        Args:
+            repository_id: ID of the repository to analyze
+            
+        Returns:
+            Dictionary of analysis results
+        """
+        if repository_id not in self.repository_index:
+            return {'error': 'Repository not found'}
+        
+        # Get repository nodes
+        repository_nodes = self.get_nodes_by_repository(repository_id)
+        
+        # Count nodes by type
+        node_type_counts = {}
+        for node in repository_nodes:
+            node_type = node['node_type']
+            node_type_counts[node_type] = node_type_counts.get(node_type, 0) + 1
+        
+        # Analyze class inheritance
+        class_nodes = [
+            node for node in repository_nodes
+            if node['node_type'] == NodeType.CLASS.value
+        ]
+        
+        inheritance_patterns = []
+        
+        for class_node in class_nodes:
+            class_id = class_node['id']
+            
+            # Get incoming "inherits" edges
+            inherit_edges = self.get_connected_edges(
+                node_id=class_id,
+                direction='in',
+                edge_types=[EdgeType.INHERITS]
+            )
+            
+            if inherit_edges:
+                for edge in inherit_edges:
+                    source_id = edge['source_id']
+                    
+                    if source_id in self.nodes:
+                        source_node = self.nodes[source_id]
+                        
+                        inheritance_patterns.append({
+                            'subclass': source_node.name,
+                            'subclass_id': source_id,
+                            'superclass': class_node['name'],
+                            'superclass_id': class_id
+                        })
+        
+        # Analyze function calls
+        function_nodes = [
+            node for node in repository_nodes
+            if node['node_type'] in [NodeType.FUNCTION.value, NodeType.METHOD.value]
+        ]
+        
+        call_patterns = []
+        
+        for function_node in function_nodes:
+            function_id = function_node['id']
+            
+            # Get outgoing "calls" edges
+            call_edges = self.get_connected_edges(
+                node_id=function_id,
+                direction='out',
+                edge_types=[EdgeType.CALLS]
+            )
+            
+            if call_edges:
+                for edge in call_edges:
+                    target_id = edge['target_id']
+                    
+                    if target_id in self.nodes:
+                        target_node = self.nodes[target_id]
+                        
+                        call_patterns.append({
+                            'caller': function_node['name'],
+                            'caller_id': function_id,
+                            'callee': target_node.name,
+                            'callee_id': target_id,
+                            'weight': edge['weight']
+                        })
+        
+        # Analyze dependencies
+        dependency_patterns = []
+        
+        for node in repository_nodes:
+            if node['node_type'] in [NodeType.FILE.value, NodeType.CLASS.value]:
+                node_id = node['id']
+                
+                # Get outgoing "depends_on" edges
+                dependency_edges = self.get_connected_edges(
+                    node_id=node_id,
+                    direction='out',
+                    edge_types=[EdgeType.DEPENDS_ON]
+                )
+                
+                if dependency_edges:
+                    for edge in dependency_edges:
+                        target_id = edge['target_id']
+                        
+                        if target_id in self.nodes:
+                            target_node = self.nodes[target_id]
+                            
+                            dependency_patterns.append({
+                                'source': node['name'],
+                                'source_id': node_id,
+                                'source_type': node['node_type'],
+                                'target': target_node.name,
+                                'target_id': target_id,
+                                'target_type': target_node.node_type.value,
+                                'weight': edge['weight']
+                            })
+        
+        return {
+            'repository_id': repository_id,
+            'node_count': len(repository_nodes),
+            'node_type_counts': node_type_counts,
+            'inheritance_patterns': inheritance_patterns,
+            'call_patterns': call_patterns,
+            'dependency_patterns': dependency_patterns
+        }
+    
+    def find_similar_patterns_cross_repository(self, repository_id: str) -> Dict[str, Any]:
+        """
+        Find patterns in a repository that are similar to patterns in other repositories.
+        
+        Args:
+            repository_id: ID of the repository to analyze
+            
+        Returns:
+            Dictionary of similar patterns
+        """
+        if repository_id not in self.repository_index:
+            return {'error': 'Repository not found'}
+        
+        # Get all repositories
+        repositories = set(self.repository_index.keys())
+        
+        # Remove current repository
+        other_repositories = repositories - {repository_id}
+        
+        if not other_repositories:
+            return {'error': 'No other repositories for comparison'}
+        
+        # Get current repository nodes
+        repository_nodes = self.get_nodes_by_repository(repository_id)
+        
+        # Analyze class inheritance patterns
+        similar_inheritance_patterns = []
+        
+        class_nodes = [
+            node for node in repository_nodes
+            if node['node_type'] == NodeType.CLASS.value
+        ]
+        
+        for class_node in class_nodes:
+            class_id = class_node['id']
+            
+            # Get incoming "inherits" edges
+            inherit_edges = self.get_connected_edges(
+                node_id=class_id,
+                direction='in',
+                edge_types=[EdgeType.INHERITS]
+            )
+            
+            if inherit_edges:
+                # Build pattern signature
+                class_name = class_node['name']
+                
+                for edge in inherit_edges:
+                    source_id = edge['source_id']
+                    
+                    if source_id in self.nodes:
+                        source_node = self.nodes[source_id]
+                        subclass_name = source_node.name
+                        
+                        # Search for similar pattern in other repositories
+                        for other_repo_id in other_repositories:
+                            other_repo_nodes = self.get_nodes_by_repository(other_repo_id)
+                            
+                            other_class_nodes = [
+                                node for node in other_repo_nodes
+                                if node['node_type'] == NodeType.CLASS.value
+                            ]
+                            
+                            for other_class_node in other_class_nodes:
+                                # Check name similarity
+                                if self._name_similarity(class_name, other_class_node['name']) >= 0.7:
+                                    other_class_id = other_class_node['id']
+                                    
+                                    # Get incoming "inherits" edges
+                                    other_inherit_edges = self.get_connected_edges(
+                                        node_id=other_class_id,
+                                        direction='in',
+                                        edge_types=[EdgeType.INHERITS]
+                                    )
+                                    
+                                    for other_edge in other_inherit_edges:
+                                        other_source_id = other_edge['source_id']
+                                        
+                                        if other_source_id in self.nodes:
+                                            other_source_node = self.nodes[other_source_id]
+                                            other_subclass_name = other_source_node.name
+                                            
+                                            # Check subclass name similarity
+                                            if self._name_similarity(subclass_name, other_subclass_name) >= 0.7:
+                                                similar_inheritance_patterns.append({
+                                                    'repository_id': repository_id,
+                                                    'class': class_name,
+                                                    'class_id': class_id,
+                                                    'subclass': subclass_name,
+                                                    'subclass_id': source_id,
+                                                    'other_repository_id': other_repo_id,
+                                                    'other_class': other_class_node['name'],
+                                                    'other_class_id': other_class_id,
+                                                    'other_subclass': other_subclass_name,
+                                                    'other_subclass_id': other_source_id,
+                                                    'similarity': 0.7  # Placeholder, should be calculated
+                                                })
+        
+        # Analyze function call patterns
+        similar_call_patterns = []
+        
+        function_nodes = [
+            node for node in repository_nodes
+            if node['node_type'] in [NodeType.FUNCTION.value, NodeType.METHOD.value]
+        ]
+        
+        for function_node in function_nodes:
+            function_id = function_node['id']
+            
+            # Get outgoing "calls" edges
+            call_edges = self.get_connected_edges(
+                node_id=function_id,
+                direction='out',
+                edge_types=[EdgeType.CALLS]
+            )
+            
+            if len(call_edges) >= 3:  # Only analyze functions with multiple calls
+                # Build call signature
+                function_name = function_node['name']
+                callees = []
+                
+                for edge in call_edges:
+                    target_id = edge['target_id']
+                    
+                    if target_id in self.nodes:
+                        callees.append(self.nodes[target_id].name)
+                
+                # Search for similar pattern in other repositories
+                for other_repo_id in other_repositories:
+                    other_repo_nodes = self.get_nodes_by_repository(other_repo_id)
+                    
+                    other_function_nodes = [
+                        node for node in other_repo_nodes
+                        if node['node_type'] in [NodeType.FUNCTION.value, NodeType.METHOD.value]
+                    ]
+                    
+                    for other_function_node in other_function_nodes:
+                        # Check name similarity
+                        if self._name_similarity(function_name, other_function_node['name']) >= 0.7:
+                            other_function_id = other_function_node['id']
+                            
+                            # Get outgoing "calls" edges
+                            other_call_edges = self.get_connected_edges(
+                                node_id=other_function_id,
+                                direction='out',
+                                edge_types=[EdgeType.CALLS]
+                            )
+                            
+                            if len(other_call_edges) >= 3:
+                                # Build other call signature
+                                other_callees = []
+                                
+                                for other_edge in other_call_edges:
+                                    other_target_id = other_edge['target_id']
+                                    
+                                    if other_target_id in self.nodes:
+                                        other_callees.append(self.nodes[other_target_id].name)
+                                
+                                # Calculate signature similarity
+                                signature_similarity = self._signature_similarity(callees, other_callees)
+                                
+                                if signature_similarity >= 0.6:
+                                    similar_call_patterns.append({
+                                        'repository_id': repository_id,
+                                        'function': function_name,
+                                        'function_id': function_id,
+                                        'callees': callees,
+                                        'other_repository_id': other_repo_id,
+                                        'other_function': other_function_node['name'],
+                                        'other_function_id': other_function_id,
+                                        'other_callees': other_callees,
+                                        'similarity': signature_similarity
+                                    })
+        
+        return {
+            'repository_id': repository_id,
+            'similar_inheritance_patterns': similar_inheritance_patterns,
+            'similar_call_patterns': similar_call_patterns
+        }
     
     def _name_similarity(self, name1: str, name2: str) -> float:
         """
-        Compute similarity between two names.
+        Calculate similarity between two names.
         
         Args:
             name1: First name
             name2: Second name
             
         Returns:
-            Similarity score
+            Similarity score (0.0 to 1.0)
         """
-        # Convert to lowercase
-        name1 = name1.lower()
-        name2 = name2.lower()
+        # Simple Jaccard similarity for now
+        # A more sophisticated approach would use edit distance, n-grams, or embeddings
         
-        # Exact match
-        if name1 == name2:
-            return 1.0
+        # Tokenize names
+        tokens1 = set(re.findall(r'[A-Za-z0-9]+', name1.lower()))
+        tokens2 = set(re.findall(r'[A-Za-z0-9]+', name2.lower()))
         
-        # Split into parts (camelCase, snake_case, etc.)
-        import re
+        # Calculate Jaccard similarity
+        intersection = tokens1.intersection(tokens2)
+        union = tokens1.union(tokens2)
         
-        def split_name(name):
-            # Split by camelCase
-            parts = re.findall(r'[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)', name)
-            if len(parts) <= 1:
-                # Split by snake_case or kebab-case
-                parts = re.split(r'[_\-]', name)
-            return [p.lower() for p in parts if p]
-        
-        parts1 = split_name(name1)
-        parts2 = split_name(name2)
-        
-        if not parts1 or not parts2:
+        if not union:
             return 0.0
         
-        # Compute Jaccard similarity of parts
-        intersection = len(set(parts1).intersection(set(parts2)))
-        union = len(set(parts1).union(set(parts2)))
-        
-        return intersection / union
+        return len(intersection) / len(union)
     
-    def compute_repository_similarity(self, repo_id1: str, repo_id2: str) -> Dict[str, Any]:
+    def _signature_similarity(self, items1: List[str], items2: List[str]) -> float:
         """
-        Compute similarity between two repositories.
+        Calculate similarity between two signatures (lists of items).
         
         Args:
-            repo_id1: First repository ID
-            repo_id2: Second repository ID
+            items1: First list of items
+            items2: Second list of items
             
         Returns:
-            Similarity metrics
+            Similarity score (0.0 to 1.0)
         """
-        if repo_id1 not in self.repo_nodes:
-            raise ValueError(f"Repository {repo_id1} not found in knowledge graph")
+        # Convert to sets
+        set1 = set(items1)
+        set2 = set(items2)
         
-        if repo_id2 not in self.repo_nodes:
-            raise ValueError(f"Repository {repo_id2} not found in knowledge graph")
+        # Calculate Jaccard similarity
+        intersection = set1.intersection(set2)
+        union = set1.union(set2)
         
-        node_id1 = self.repo_nodes[repo_id1]
-        node_id2 = self.repo_nodes[repo_id2]
+        if not union:
+            return 0.0
         
-        # Get files in each repository
-        files1 = {}  # file_id -> file
-        files2 = {}  # file_id -> file
+        return len(intersection) / len(union)
+    
+    def export_graph(self, format: str = 'json') -> Dict[str, Any]:
+        """
+        Export the knowledge graph.
         
-        for neighbor in self.kg.get_neighbors(node_id1, direction='out', edge_type=EdgeType.CONTAINS):
-            if neighbor['type'] == NodeType.FILE.value:
-                files1[neighbor['id']] = neighbor
-        
-        for neighbor in self.kg.get_neighbors(node_id2, direction='out', edge_type=EdgeType.CONTAINS):
-            if neighbor['type'] == NodeType.FILE.value:
-                files2[neighbor['id']] = neighbor
-        
-        # Compute language distribution similarity
-        languages1 = {}
-        languages2 = {}
-        
-        for file in files1.values():
-            lang = file['properties'].get('language', 'unknown')
-            languages1[lang] = languages1.get(lang, 0) + 1
-        
-        for file in files2.values():
-            lang = file['properties'].get('language', 'unknown')
-            languages2[lang] = languages2.get(lang, 0) + 1
-        
-        # Convert to distributions
-        sum1 = sum(languages1.values())
-        sum2 = sum(languages2.values())
-        
-        lang_dist1 = {lang: count / sum1 for lang, count in languages1.items()}
-        lang_dist2 = {lang: count / sum2 for lang, count in languages2.items()}
-        
-        # Compute Jensen-Shannon divergence
-        all_langs = set(lang_dist1.keys()).union(set(lang_dist2.keys()))
-        
-        kl_div1 = 0.0
-        kl_div2 = 0.0
-        
-        m_dist = {}
-        for lang in all_langs:
-            p = lang_dist1.get(lang, 0.0)
-            q = lang_dist2.get(lang, 0.0)
-            m = (p + q) / 2
-            m_dist[lang] = m
+        Args:
+            format: Export format ('json' only for now)
             
-            if p > 0:
-                kl_div1 += p * np.log2(p / m) if m > 0 else 0.0
-            
-            if q > 0:
-                kl_div2 += q * np.log2(q / m) if m > 0 else 0.0
+        Returns:
+            Dictionary with exported graph data
+        """
+        if format != 'json':
+            raise ValueError(f"Unsupported export format: {format}")
         
-        js_div = (kl_div1 + kl_div2) / 2
-        lang_similarity = 1.0 - min(js_div, 1.0)  # Convert to similarity
+        # Convert nodes to dictionaries
+        nodes_data = [node.to_dict() for node in self.nodes.values()]
         
-        # Get patterns in each repository
-        patterns1 = []
-        patterns2 = []
-        
-        for neighbor in self.kg.get_neighbors(node_id1, direction='out', edge_type=EdgeType.CONTAINS):
-            if neighbor['type'] == NodeType.PATTERN.value:
-                patterns1.append(neighbor)
-        
-        for neighbor in self.kg.get_neighbors(node_id2, direction='out', edge_type=EdgeType.CONTAINS):
-            if neighbor['type'] == NodeType.PATTERN.value:
-                patterns2.append(neighbor)
-        
-        # Compare patterns
-        pattern_names1 = set(p['name'] for p in patterns1)
-        pattern_names2 = set(p['name'] for p in patterns2)
-        
-        common_patterns = pattern_names1.intersection(pattern_names2)
-        all_patterns = pattern_names1.union(pattern_names2)
-        
-        pattern_similarity = len(common_patterns) / len(all_patterns) if all_patterns else 0.0
-        
-        # Combine similarities
-        overall_similarity = (lang_similarity + pattern_similarity) / 2
+        # Convert edges to dictionaries
+        edges_data = [edge.to_dict() for edge in self.edges.values()]
         
         return {
-            'repositories': [repo_id1, repo_id2],
-            'language_similarity': lang_similarity,
-            'pattern_similarity': pattern_similarity,
-            'overall_similarity': overall_similarity,
-            'language_distributions': {
-                repo_id1: lang_dist1,
-                repo_id2: lang_dist2
-            },
-            'common_patterns': list(common_patterns)
+            'format': format,
+            'timestamp': time.time(),
+            'nodes': nodes_data,
+            'edges': edges_data
         }
     
-    def save(self) -> None:
-        """Save the knowledge graph."""
-        self.kg.save()
-        
-        # Save repository node mapping
-        mapping_path = os.path.join(self.kg.storage_dir, 'repo_mapping.json')
-        
-        try:
-            with open(mapping_path, 'w') as f:
-                json.dump(self.repo_nodes, f, indent=2)
-            
-            self.logger.info(f"Saved repository node mapping for {len(self.repo_nodes)} repositories")
-        except Exception as e:
-            self.logger.error(f"Error saving repository node mapping: {str(e)}")
-    
-    def visualize_repository_similarity_network(self, min_similarity: float = 0.6,
-                                             output_file: Optional[str] = None) -> Dict[str, Any]:
+    def import_graph(self, data: Dict[str, Any], merge: bool = False) -> bool:
         """
-        Visualize the similarity network between repositories.
+        Import a knowledge graph.
         
         Args:
-            min_similarity: Minimum similarity threshold
-            output_file: Optional file to save the visualization to
+            data: Graph data to import
+            merge: Whether to merge with existing graph
             
         Returns:
-            Visualization data
+            Import success
         """
+        if not merge:
+            # Clear existing graph
+            self.nodes = {}
+            self.edges = {}
+            self.node_type_index = {}
+            self.repository_index = {}
+            self.edge_type_index = {}
+            self.node_connections = {}
+        
         try:
-            import matplotlib.pyplot as plt
-            import networkx as nx
-            
-            # Create a graph of repositories
-            G = nx.Graph()
-            
-            # Add nodes for each repository
-            for repo_id, node_id in self.repo_nodes.items():
-                repo_node = self.kg.get_node(node_id)
-                G.add_node(repo_id, name=repo_node['name'])
-            
-            # Compute similarities between repositories
-            for repo_id1 in self.repo_nodes:
-                for repo_id2 in self.repo_nodes:
-                    if repo_id1 >= repo_id2:  # Avoid duplicate comparisons
-                        continue
-                    
-                    try:
-                        similarity = self.compute_repository_similarity(repo_id1, repo_id2)
-                        if similarity['overall_similarity'] >= min_similarity:
-                            G.add_edge(
-                                repo_id1, 
-                                repo_id2, 
-                                weight=similarity['overall_similarity'],
-                                similarity=similarity
-                            )
-                    except Exception as e:
-                        self.logger.error(f"Error computing similarity between {repo_id1} and {repo_id2}: {str(e)}")
-            
-            # Create the plot
-            plt.figure(figsize=(12, 12))
-            
-            # Calculate node sizes based on number of files
-            sizes = {}
-            for repo_id, node_id in self.repo_nodes.items():
-                file_count = 0
-                for neighbor in self.kg.get_neighbors(node_id, direction='out', edge_type=EdgeType.CONTAINS):
-                    if neighbor['type'] == NodeType.FILE.value:
-                        file_count += 1
+            # Import nodes
+            for node_data in data.get('nodes', []):
+                node = GraphNode.from_dict(node_data)
                 
-                sizes[repo_id] = 100 + 10 * file_count
+                # Add to graph
+                self.nodes[node.id] = node
+                
+                # Update indices
+                node_type = node.node_type
+                if node_type not in self.node_type_index:
+                    self.node_type_index[node_type] = set()
+                
+                self.node_type_index[node_type].add(node.id)
+                
+                if node.repository_id:
+                    if node.repository_id not in self.repository_index:
+                        self.repository_index[node.repository_id] = set()
+                    
+                    self.repository_index[node.repository_id].add(node.id)
+                
+                # Initialize node connections
+                self.node_connections[node.id] = {'in': set(), 'out': set()}
+                
+                # Save to storage
+                self._save_node(node)
             
-            # Use spring layout for positioning
-            pos = nx.spring_layout(G, weight='weight')
+            # Import edges
+            for edge_data in data.get('edges', []):
+                edge = GraphEdge.from_dict(edge_data)
+                
+                # Add to graph
+                self.edges[edge.id] = edge
+                
+                # Update indices
+                edge_type = edge.edge_type
+                if edge_type not in self.edge_type_index:
+                    self.edge_type_index[edge_type] = set()
+                
+                self.edge_type_index[edge_type].add(edge.id)
+                
+                # Update node connections
+                source_id = edge.source_id
+                target_id = edge.target_id
+                
+                if source_id in self.node_connections:
+                    self.node_connections[source_id]['out'].add(edge.id)
+                
+                if target_id in self.node_connections:
+                    self.node_connections[target_id]['in'].add(edge.id)
+                
+                # Save to storage
+                self._save_edge(edge)
             
-            # Draw nodes
-            nx.draw_networkx_nodes(
-                G, 
-                pos, 
-                node_size=[sizes.get(n, 100) for n in G.nodes()],
-                alpha=0.8
-            )
-            
-            # Draw edges with width proportional to similarity
-            edge_widths = [G[u][v]['weight'] * 5 for u, v in G.edges()]
-            nx.draw_networkx_edges(G, pos, width=edge_widths, alpha=0.5)
-            
-            # Draw labels
-            labels = {n: G.nodes[n]['name'] for n in G.nodes()}
-            nx.draw_networkx_labels(G, pos, labels=labels, font_size=10)
-            
-            # Configure plot
-            plt.axis('off')
-            plt.title(f"Repository Similarity Network ({G.number_of_nodes()} repositories, {G.number_of_edges()} connections)")
-            
-            # Save to file if specified
-            if output_file:
-                plt.savefig(output_file, dpi=300, bbox_inches='tight')
-                plt.close()
-            
-            # Return visualization data
-            return {
-                'repository_count': G.number_of_nodes(),
-                'connection_count': G.number_of_edges(),
-                'average_similarity': np.mean([G[u][v]['weight'] for u, v in G.edges()]) if G.number_of_edges() > 0 else 0.0,
-                'output_file': output_file
-            }
+            self.logger.info(f"Imported graph with {len(data.get('nodes', []))} nodes and {len(data.get('edges', []))} edges")
+            return True
         
         except Exception as e:
-            self.logger.error(f"Error generating visualization: {str(e)}")
-            return {'error': str(e)}
+            self.logger.error(f"Error importing graph: {e}")
+            return False

@@ -40,7 +40,7 @@ import visualizations
 
 # Import API Gateway for enhanced version
 try:
-    from services.api_gateway.gateway import get_gateway_instance
+    from services_connector import ServicesConnector
     ENHANCED_AVAILABLE = True
 except ImportError:
     ENHANCED_AVAILABLE = False
@@ -97,11 +97,15 @@ def initialize_session_state():
 def initialize_enhanced_session_state():
     """Initialize enhanced session state if not already done"""
     if 'enhanced_initialized' not in st.session_state and ENHANCED_AVAILABLE:
-        # Initialize API Gateway
-        st.session_state.api_gateway = get_gateway_instance()
+        # Initialize Services Connector
+        st.session_state.services_connector = ServicesConnector()
+        
+        # Initialize services
+        services = st.session_state.services_connector.initialize_all_services()
+        st.session_state.initialized_services = services
         
         # Initialize service registry
-        st.session_state.services_status = {}
+        st.session_state.services_status = st.session_state.services_connector.get_service_status()
         
         # Initialize service states
         st.session_state.repository_analysis = None
@@ -118,15 +122,11 @@ def initialize_enhanced_session_state():
         
         # Mark as initialized
         st.session_state.enhanced_initialized = True
-        
-        # Update service status
-        update_service_status()
 
 def update_service_status():
     """Update the status of all services"""
-    if 'api_gateway' in st.session_state and ENHANCED_AVAILABLE:
-        gateway = st.session_state.api_gateway
-        st.session_state.services_status = gateway.get_service_status()
+    if 'services_connector' in st.session_state and ENHANCED_AVAILABLE:
+        st.session_state.services_status = st.session_state.services_connector.get_service_status()
 
 ########################
 # ORIGINAL APP FUNCTIONS

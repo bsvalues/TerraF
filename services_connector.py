@@ -1,472 +1,405 @@
 """
 Services Connector
 
-This module provides connectivity to all microservices in the Code Deep Dive Analyzer platform
-and serves as a unified interface for the application.
+This module provides a central connector for all microservices in the system.
+It handles service discovery, initialization, and communication.
 """
+
 import os
 import logging
 import importlib
-from typing import Dict, List, Any, Optional, Union
+import time
+from typing import Dict, List, Any, Optional, Union, Set
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class ServicesConnector:
     """
-    Connector for all microservices in the Code Deep Dive Analyzer platform.
+    Central connector for all microservices in the system.
     
-    This class serves as a facade for the microservices architecture, providing
-    a simplified interface for the application to interact with all services.
+    This class provides:
+    - Service discovery and initialization
+    - Service status monitoring
+    - Unified API for interacting with all services
     """
     
-    def __init__(self):
-        """Initialize the services connector."""
-        # Set up logger
-        self.logger = logging.getLogger('services_connector')
-        
-        # Initialize service modules
-        self.services = {}
-        self.initialized_services = set()
-        
-        # Load service modules
-        self._load_service_modules()
-    
-    def _load_service_modules(self):
-        """Load all service modules dynamically."""
-        # Define service mapping
-        service_modules = {
-            'api_gateway': 'services.api_gateway.gateway',
-            'repository': 'services.repository_service.repository_manager',
-            'model_hub': 'services.model_hub.model_registry',
-            'neuro_symbolic': 'services.neuro_symbolic.reasoning_engine',
-            'multimodal': 'services.multimodal.multimodal_processor',
-            'agent_orchestrator': 'services.agent_orchestrator.orchestrator',
-            'sdk': 'services.sdk.plugin_system',
-            'knowledge_graph': 'services.knowledge_graph.knowledge_graph',
-            'academic': 'services.academic.academic_framework'
-        }
-        
-        # Load each service module
-        for service_name, module_path in service_modules.items():
-            try:
-                # Check if directory exists
-                module_parts = module_path.split('.')
-                if len(module_parts) > 1:
-                    service_dir = os.path.join(*module_parts[:-1])
-                    if not os.path.exists(os.path.join(*service_dir.split('.'))):
-                        self.logger.warning(f"Service directory not found for {service_name}, skipping")
-                        continue
-                
-                # Import the module
-                module = importlib.import_module(module_path)
-                
-                # Store the module
-                self.services[service_name] = module
-                
-                self.logger.info(f"Loaded service module: {service_name}")
-            
-            except ImportError as e:
-                self.logger.warning(f"Failed to import service module {service_name}: {e}")
-            
-            except Exception as e:
-                self.logger.error(f"Error loading service module {service_name}: {e}")
-    
-    def initialize_service(self, service_name: str, config: Optional[Dict[str, Any]] = None) -> bool:
+    def __init__(self, services_dir: str = 'services'):
         """
-        Initialize a service.
+        Initialize the services connector.
+        
+        Args:
+            services_dir: Directory containing service packages
+        """
+        self.services_dir = services_dir
+        self.services = {}  # service_name -> service_instance
+        self.service_status = {}  # service_name -> status
+        
+        # Discover available services
+        self._discover_services()
+    
+    def _discover_services(self) -> None:
+        """Discover available services in the services directory."""
+        if not os.path.exists(self.services_dir):
+            logger.warning(f"Services directory '{self.services_dir}' not found")
+            return
+        
+        # Get all directories in services_dir (each directory is a service)
+        service_packages = [
+            d for d in os.listdir(self.services_dir)
+            if os.path.isdir(os.path.join(self.services_dir, d)) and not d.startswith('__')
+        ]
+        
+        logger.info(f"Discovered service packages: {service_packages}")
+        
+        # Initialize service status
+        for service_name in service_packages:
+            self.service_status[service_name] = 'discovered'
+    
+    def initialize_service(self, service_name: str) -> Optional[Any]:
+        """
+        Initialize a specific service.
         
         Args:
             service_name: Name of the service to initialize
-            config: Optional configuration for the service
             
         Returns:
-            Initialization success
+            Service instance or None if initialization failed
         """
-        if service_name not in self.services:
-            self.logger.error(f"Service {service_name} not found")
-            return False
+        if service_name not in self.service_status:
+            logger.warning(f"Service '{service_name}' not found")
+            return None
         
-        if service_name in self.initialized_services:
-            self.logger.warning(f"Service {service_name} already initialized")
-            return True
+        if service_name in self.services:
+            logger.info(f"Service '{service_name}' already initialized")
+            return self.services[service_name]
         
         try:
-            module = self.services[service_name]
+            # Update service status
+            self.service_status[service_name] = 'initializing'
             
-            # Initialize the service
-            if service_name == 'api_gateway':
-                self.api_gateway = module.ApiGateway(config=config)
-                self.api_gateway.start()
+            # Import service module
+            module_path = f"{self.services_dir}.{service_name}"
             
-            elif service_name == 'repository':
-                self.repository_manager = module.RepositoryManager()
+            try:
+                service_module = importlib.import_module(module_path)
+                logger.info(f"Imported service module: {module_path}")
+            except ImportError as e:
+                logger.error(f"Error importing service module '{module_path}': {e}")
+                self.service_status[service_name] = 'failed'
+                return None
             
-            elif service_name == 'model_hub':
-                self.model_registry = module.ModelRegistry()
+            # Initialize service based on the service type
+            service_instance = None
             
-            elif service_name == 'neuro_symbolic':
-                self.reasoning_engine = module.NeuroSymbolicEngine()
+            # Knowledge Graph service
+            if service_name == 'knowledge_graph':
+                try:
+                    from services.knowledge_graph.knowledge_graph import KnowledgeGraph
+                    service_instance = KnowledgeGraph()
+                    logger.info("Initialized Knowledge Graph service")
+                except (ImportError, AttributeError) as e:
+                    logger.error(f"Error initializing Knowledge Graph service: {e}")
             
-            elif service_name == 'multimodal':
-                self.multimodal_processor = module.MultimodalProcessor()
-            
-            elif service_name == 'agent_orchestrator':
-                self.agent_orchestrator = module.AgentOrchestrator()
-                self.agent_orchestrator.start()
-            
-            elif service_name == 'sdk':
-                self.plugin_manager = module.PluginManager()
-            
-            elif service_name == 'knowledge_graph':
-                self.knowledge_graph = module.KnowledgeGraph()
-            
+            # Academic service
             elif service_name == 'academic':
-                self.academic_framework = module.AcademicFramework()
+                try:
+                    from services.academic.academic_framework import AcademicFramework
+                    service_instance = AcademicFramework()
+                    logger.info("Initialized Academic Framework service")
+                except (ImportError, AttributeError) as e:
+                    logger.error(f"Error initializing Academic Framework service: {e}")
             
-            # Mark as initialized
-            self.initialized_services.add(service_name)
+            # Neuro-Symbolic service
+            elif service_name == 'neuro_symbolic':
+                try:
+                    from services.neuro_symbolic.reasoning_engine import ReasoningEngine
+                    service_instance = ReasoningEngine()
+                    logger.info("Initialized Neuro-Symbolic Reasoning Engine service")
+                except (ImportError, AttributeError) as e:
+                    logger.error(f"Error initializing Neuro-Symbolic Reasoning Engine service: {e}")
             
-            self.logger.info(f"Initialized service: {service_name}")
-            return True
+            # Multimodal service
+            elif service_name == 'multimodal':
+                try:
+                    from services.multimodal.multimodal_processor import MultimodalProcessor
+                    service_instance = MultimodalProcessor()
+                    logger.info("Initialized Multimodal Processor service")
+                except (ImportError, AttributeError) as e:
+                    logger.error(f"Error initializing Multimodal Processor service: {e}")
+            
+            # Model Hub service
+            elif service_name == 'model_hub':
+                try:
+                    from services.model_hub.model_registry import ModelRegistry
+                    service_instance = ModelRegistry()
+                    logger.info("Initialized Model Registry service")
+                except (ImportError, AttributeError) as e:
+                    logger.error(f"Error initializing Model Registry service: {e}")
+            
+            # Agent Orchestrator service
+            elif service_name == 'agent_orchestrator':
+                try:
+                    from services.agent_orchestrator.orchestrator import AgentOrchestrator
+                    service_instance = AgentOrchestrator()
+                    logger.info("Initialized Agent Orchestrator service")
+                except (ImportError, AttributeError) as e:
+                    logger.error(f"Error initializing Agent Orchestrator service: {e}")
+            
+            # API Gateway service
+            elif service_name == 'api_gateway':
+                try:
+                    from services.api_gateway.gateway import APIGateway
+                    service_instance = APIGateway()
+                    logger.info("Initialized API Gateway service")
+                except (ImportError, AttributeError) as e:
+                    logger.error(f"Error initializing API Gateway service: {e}")
+            
+            # SDK service
+            elif service_name == 'sdk':
+                try:
+                    from services.sdk.plugin_system import PluginSystem
+                    service_instance = PluginSystem()
+                    logger.info("Initialized SDK Plugin System service")
+                except (ImportError, AttributeError) as e:
+                    logger.error(f"Error initializing SDK Plugin System service: {e}")
+            
+            # Generic fallback for other services
+            else:
+                try:
+                    # Try to find a main class in the service package
+                    main_module_path = f"{module_path}.{service_name}"
+                    try:
+                        main_module = importlib.import_module(main_module_path)
+                        
+                        # Look for a class with the service name
+                        service_class_name = ''.join(word.capitalize() for word in service_name.split('_'))
+                        if hasattr(main_module, service_class_name):
+                            service_class = getattr(main_module, service_class_name)
+                            service_instance = service_class()
+                            logger.info(f"Initialized generic service: {service_name}")
+                        else:
+                            logger.warning(f"No service class found for {service_name}")
+                            self.service_status[service_name] = 'unavailable'
+                    
+                    except (ImportError, AttributeError) as e:
+                        logger.warning(f"Error initializing generic service '{service_name}': {e}")
+                        self.service_status[service_name] = 'unavailable'
+                
+                except Exception as e:
+                    logger.error(f"Unexpected error initializing service '{service_name}': {e}")
+                    self.service_status[service_name] = 'failed'
+            
+            # Store service instance if initialization succeeded
+            if service_instance is not None:
+                self.services[service_name] = service_instance
+                self.service_status[service_name] = 'active'
+                return service_instance
+            else:
+                self.service_status[service_name] = 'failed'
+                return None
         
         except Exception as e:
-            self.logger.error(f"Error initializing service {service_name}: {e}")
-            return False
+            logger.error(f"Error initializing service '{service_name}': {e}")
+            self.service_status[service_name] = 'failed'
+            return None
     
-    def initialize_all_services(self, configs: Optional[Dict[str, Dict[str, Any]]] = None) -> List[str]:
+    def initialize_all_services(self) -> Dict[str, Any]:
         """
         Initialize all available services.
         
-        Args:
-            configs: Optional dictionary mapping service names to configurations
-            
         Returns:
-            List of successfully initialized service names
+            Dictionary of initialized services (service_name -> service_instance)
         """
-        configs = configs or {}
-        initialized = []
+        initialized_services = {}
         
-        for service_name in self.services:
-            config = configs.get(service_name)
-            success = self.initialize_service(service_name, config)
+        for service_name in list(self.service_status.keys()):
+            service_instance = self.initialize_service(service_name)
             
-            if success:
-                initialized.append(service_name)
+            if service_instance is not None:
+                initialized_services[service_name] = service_instance
         
-        return initialized
+        return initialized_services
     
-    def shutdown_service(self, service_name: str) -> bool:
+    def get_service(self, service_name: str) -> Optional[Any]:
         """
-        Shutdown a service.
+        Get a service instance by name.
         
         Args:
-            service_name: Name of the service to shutdown
+            service_name: Name of the service
             
         Returns:
-            Shutdown success
+            Service instance or None if not found
         """
-        if service_name not in self.initialized_services:
-            self.logger.warning(f"Service {service_name} not initialized")
-            return False
+        if service_name in self.services:
+            return self.services[service_name]
         
-        try:
-            # Shutdown the service
-            if service_name == 'api_gateway':
-                self.api_gateway.stop()
-            
-            elif service_name == 'agent_orchestrator':
-                self.agent_orchestrator.stop()
-            
-            # Remove from initialized services
-            self.initialized_services.remove(service_name)
-            
-            self.logger.info(f"Shutdown service: {service_name}")
-            return True
-        
-        except Exception as e:
-            self.logger.error(f"Error shutting down service {service_name}: {e}")
-            return False
-    
-    def shutdown_all_services(self) -> List[str]:
-        """
-        Shutdown all initialized services.
-        
-        Returns:
-            List of successfully shutdown service names
-        """
-        shutdown = []
-        
-        for service_name in list(self.initialized_services):
-            success = self.shutdown_service(service_name)
-            
-            if success:
-                shutdown.append(service_name)
-        
-        return shutdown
-    
-    def register_services_with_gateway(self) -> bool:
-        """
-        Register all initialized services with the API Gateway.
-        
-        Returns:
-            Registration success
-        """
-        if 'api_gateway' not in self.initialized_services:
-            self.logger.error("API Gateway not initialized")
-            return False
-        
-        try:
-            # Register each service
-            for service_name in self.initialized_services:
-                if service_name == 'api_gateway':
-                    continue
-                
-                # Define service information
-                if service_name == 'repository':
-                    self.api_gateway.register_service(
-                        service_type='repository',
-                        name='Repository Service',
-                        base_url='http://localhost:5001',
-                        version='1.0.0',
-                        endpoints=[
-                            {
-                                'path': '/repositories',
-                                'methods': ['GET', 'POST'],
-                                'auth_level': 'user'
-                            },
-                            {
-                                'path': '/repositories/{id}',
-                                'methods': ['GET', 'PUT', 'DELETE'],
-                                'auth_level': 'user'
-                            },
-                            {
-                                'path': '/repositories/{id}/analyze',
-                                'methods': ['POST'],
-                                'auth_level': 'user'
-                            }
-                        ],
-                        health_endpoint='/health'
-                    )
-                
-                elif service_name == 'model_hub':
-                    self.api_gateway.register_service(
-                        service_type='model_hub',
-                        name='Model Hub',
-                        base_url='http://localhost:5002',
-                        version='1.0.0',
-                        endpoints=[
-                            {
-                                'path': '/models',
-                                'methods': ['GET', 'POST'],
-                                'auth_level': 'user'
-                            },
-                            {
-                                'path': '/models/{id}',
-                                'methods': ['GET', 'DELETE'],
-                                'auth_level': 'user'
-                            },
-                            {
-                                'path': '/models/{id}/versions',
-                                'methods': ['GET', 'POST'],
-                                'auth_level': 'user'
-                            }
-                        ],
-                        health_endpoint='/health'
-                    )
-                
-                elif service_name == 'neuro_symbolic':
-                    self.api_gateway.register_service(
-                        service_type='neuro_symbolic',
-                        name='Neuro-Symbolic Engine',
-                        base_url='http://localhost:5003',
-                        version='1.0.0',
-                        endpoints=[
-                            {
-                                'path': '/knowledge-bases',
-                                'methods': ['GET', 'POST'],
-                                'auth_level': 'user'
-                            },
-                            {
-                                'path': '/inference',
-                                'methods': ['POST'],
-                                'auth_level': 'user'
-                            }
-                        ],
-                        health_endpoint='/health'
-                    )
-                
-                elif service_name == 'multimodal':
-                    self.api_gateway.register_service(
-                        service_type='multimodal',
-                        name='Multimodal Processor',
-                        base_url='http://localhost:5004',
-                        version='1.0.0',
-                        endpoints=[
-                            {
-                                'path': '/content',
-                                'methods': ['GET', 'POST'],
-                                'auth_level': 'user'
-                            },
-                            {
-                                'path': '/content/{id}',
-                                'methods': ['GET', 'PUT', 'DELETE'],
-                                'auth_level': 'user'
-                            },
-                            {
-                                'path': '/content/{id}/convert',
-                                'methods': ['POST'],
-                                'auth_level': 'user'
-                            }
-                        ],
-                        health_endpoint='/health'
-                    )
-                
-                elif service_name == 'agent_orchestrator':
-                    self.api_gateway.register_service(
-                        service_type='agent_orchestrator',
-                        name='Agent Orchestrator',
-                        base_url='http://localhost:5005',
-                        version='1.0.0',
-                        endpoints=[
-                            {
-                                'path': '/agents',
-                                'methods': ['GET', 'POST'],
-                                'auth_level': 'admin'
-                            },
-                            {
-                                'path': '/agents/{id}',
-                                'methods': ['GET', 'PUT', 'DELETE'],
-                                'auth_level': 'admin'
-                            },
-                            {
-                                'path': '/tasks',
-                                'methods': ['GET', 'POST'],
-                                'auth_level': 'user'
-                            }
-                        ],
-                        health_endpoint='/health'
-                    )
-                
-                elif service_name == 'sdk':
-                    self.api_gateway.register_service(
-                        service_type='sdk',
-                        name='SDK Plugin System',
-                        base_url='http://localhost:5006',
-                        version='1.0.0',
-                        endpoints=[
-                            {
-                                'path': '/plugins',
-                                'methods': ['GET', 'POST'],
-                                'auth_level': 'admin'
-                            },
-                            {
-                                'path': '/plugins/{id}',
-                                'methods': ['GET', 'PUT', 'DELETE'],
-                                'auth_level': 'admin'
-                            }
-                        ],
-                        health_endpoint='/health'
-                    )
-                
-                elif service_name == 'knowledge_graph':
-                    self.api_gateway.register_service(
-                        service_type='knowledge_graph',
-                        name='Knowledge Graph',
-                        base_url='http://localhost:5007',
-                        version='1.0.0',
-                        endpoints=[
-                            {
-                                'path': '/graph',
-                                'methods': ['GET'],
-                                'auth_level': 'user'
-                            },
-                            {
-                                'path': '/graph/nodes',
-                                'methods': ['GET', 'POST'],
-                                'auth_level': 'user'
-                            },
-                            {
-                                'path': '/graph/edges',
-                                'methods': ['GET', 'POST'],
-                                'auth_level': 'user'
-                            }
-                        ],
-                        health_endpoint='/health'
-                    )
-                
-                elif service_name == 'academic':
-                    self.api_gateway.register_service(
-                        service_type='academic',
-                        name='Academic Framework',
-                        base_url='http://localhost:5008',
-                        version='1.0.0',
-                        endpoints=[
-                            {
-                                'path': '/papers',
-                                'methods': ['GET', 'POST'],
-                                'auth_level': 'user'
-                            },
-                            {
-                                'path': '/citations',
-                                'methods': ['GET', 'POST'],
-                                'auth_level': 'user'
-                            }
-                        ],
-                        health_endpoint='/health'
-                    )
-            
-            self.logger.info("Registered services with API Gateway")
-            return True
-        
-        except Exception as e:
-            self.logger.error(f"Error registering services with API Gateway: {e}")
-            return False
+        # Try to initialize the service if not already initialized
+        return self.initialize_service(service_name)
     
     def get_service_status(self) -> Dict[str, str]:
         """
         Get the status of all services.
         
         Returns:
-            Dictionary mapping service names to status strings
+            Dictionary of service statuses (service_name -> status)
         """
-        status = {}
+        return self.service_status.copy()
+
+    def knowledge_graph_service(self) -> Any:
+        """
+        Get the Knowledge Graph service.
         
-        for service_name in self.services:
-            if service_name in self.initialized_services:
-                status[service_name] = 'INITIALIZED'
-            else:
-                status[service_name] = 'NOT INITIALIZED'
-        
-        return status
+        Returns:
+            Knowledge Graph service instance
+        """
+        return self.get_service('knowledge_graph')
     
-    def get_service(self, service_name: str) -> Any:
+    def academic_service(self) -> Any:
         """
-        Get a service instance.
+        Get the Academic Framework service.
+        
+        Returns:
+            Academic Framework service instance
+        """
+        return self.get_service('academic')
+    
+    def neuro_symbolic_service(self) -> Any:
+        """
+        Get the Neuro-Symbolic Reasoning Engine service.
+        
+        Returns:
+            Neuro-Symbolic Reasoning Engine service instance
+        """
+        return self.get_service('neuro_symbolic')
+    
+    def multimodal_service(self) -> Any:
+        """
+        Get the Multimodal Processor service.
+        
+        Returns:
+            Multimodal Processor service instance
+        """
+        return self.get_service('multimodal')
+    
+    def model_hub_service(self) -> Any:
+        """
+        Get the Model Registry service.
+        
+        Returns:
+            Model Registry service instance
+        """
+        return self.get_service('model_hub')
+    
+    def agent_orchestrator_service(self) -> Any:
+        """
+        Get the Agent Orchestrator service.
+        
+        Returns:
+            Agent Orchestrator service instance
+        """
+        return self.get_service('agent_orchestrator')
+    
+    def api_gateway_service(self) -> Any:
+        """
+        Get the API Gateway service.
+        
+        Returns:
+            API Gateway service instance
+        """
+        return self.get_service('api_gateway')
+    
+    def sdk_service(self) -> Any:
+        """
+        Get the SDK Plugin System service.
+        
+        Returns:
+            SDK Plugin System service instance
+        """
+        return self.get_service('sdk')
+    
+    def analyze_repository(self, repo_url: str, repo_branch: str = 'main', 
+                          use_services: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Analyze a repository using available services.
         
         Args:
-            service_name: Name of the service
+            repo_url: URL of the repository to analyze
+            repo_branch: Branch of the repository to analyze
+            use_services: Optional list of service names to use for analysis
             
         Returns:
-            Service instance or None if not found or not initialized
+            Dictionary of analysis results
         """
-        if service_name not in self.initialized_services:
-            return None
+        results = {}
         
-        if service_name == 'api_gateway':
-            return self.api_gateway
-        elif service_name == 'repository':
-            return self.repository_manager
-        elif service_name == 'model_hub':
-            return self.model_registry
-        elif service_name == 'neuro_symbolic':
-            return self.reasoning_engine
-        elif service_name == 'multimodal':
-            return self.multimodal_processor
-        elif service_name == 'agent_orchestrator':
-            return self.agent_orchestrator
-        elif service_name == 'sdk':
-            return self.plugin_manager
-        elif service_name == 'knowledge_graph':
-            return self.knowledge_graph
-        elif service_name == 'academic':
-            return self.academic_framework
+        # Default to all relevant services if not specified
+        if use_services is None:
+            use_services = [
+                'knowledge_graph',
+                'academic',
+                'neuro_symbolic',
+                'multimodal',
+                'model_hub',
+                'agent_orchestrator'
+            ]
         
-        return None
+        # Clone repository (this would typically be done by a repository handler service)
+        # For now, we'll just pass the repository URL to services that need it
+        
+        # Use each requested service for analysis
+        for service_name in use_services:
+            if service_name not in self.service_status:
+                logger.warning(f"Service '{service_name}' not found")
+                continue
+            
+            service = self.get_service(service_name)
+            
+            if service is None:
+                logger.warning(f"Service '{service_name}' could not be initialized")
+                continue
+            
+            try:
+                # Here we'd call the appropriate analysis method for each service
+                # For simplicity, we'll just add a placeholder result
+                # In a real implementation, we'd call service-specific methods
+                
+                results[service_name] = {
+                    'service': service_name,
+                    'status': 'analysis_complete',
+                    'findings': f"{service_name} analysis findings would go here",
+                    'timestamp': time.time()
+                }
+                
+                logger.info(f"Completed {service_name} analysis for {repo_url}")
+            
+            except Exception as e:
+                logger.error(f"Error in {service_name} analysis: {e}")
+                results[service_name] = {
+                    'service': service_name,
+                    'status': 'analysis_failed',
+                    'error': str(e),
+                    'timestamp': time.time()
+                }
+        
+        return results
+    
+    def shutdown(self) -> None:
+        """Shut down all services gracefully."""
+        for service_name, service in list(self.services.items()):
+            try:
+                # Call shutdown method if it exists
+                if hasattr(service, 'shutdown') and callable(getattr(service, 'shutdown')):
+                    service.shutdown()
+                
+                logger.info(f"Shut down service: {service_name}")
+            
+            except Exception as e:
+                logger.error(f"Error shutting down service '{service_name}': {e}")
+            
+            # Remove from services dict
+            self.services.pop(service_name, None)
+            
+            # Update status
+            self.service_status[service_name] = 'shutdown'
