@@ -5,6 +5,7 @@ import shutil
 import logging
 import time
 from pathlib import Path
+from collections import defaultdict
 
 # Import analyzer modules
 from repository_handler import clone_repository, get_repository_structure
@@ -12,6 +13,7 @@ from code_analyzer import perform_code_review
 from database_analyzer import analyze_database_structures
 from modularization_analyzer import analyze_modularization
 from agent_readiness_analyzer import analyze_agent_readiness
+from workflow_analyzer import analyze_workflow_patterns
 from report_generator import generate_summary_report
 from utils import save_analysis_results, load_analysis_results
 import visualizations
@@ -51,6 +53,7 @@ def reset_app():
         st.session_state.database_analysis = None 
         st.session_state.modularization_analysis = None
         st.session_state.agent_readiness_analysis = None
+        st.session_state.workflow_patterns_analysis = None
         st.session_state.summary_report = None
         
         # UI state
@@ -213,7 +216,14 @@ def run_analysis():
                 agent_readiness_analysis = analyze_agent_readiness(repo_path)
                 st.session_state.agent_readiness_analysis = agent_readiness_analysis
                 st.session_state.analysis_results['agent_readiness'] = agent_readiness_analysis
-                progress_bar.progress(90)
+                progress_bar.progress(85)
+            
+            # Analyze workflow patterns
+            status_text.text("Analyzing workflow patterns...")
+            workflow_patterns_analysis = analyze_workflow_patterns(repo_path)
+            st.session_state.workflow_patterns_analysis = workflow_patterns_analysis
+            st.session_state.analysis_results['workflow_patterns'] = workflow_patterns_analysis
+            progress_bar.progress(90)
             
             # Generate summary report
             status_text.text("Generating summary report...")
@@ -749,6 +759,101 @@ def render_agent_readiness_tab():
         for i, rec in enumerate(recommendations):
             st.markdown(f"{i+1}. {rec}")
 
+def render_workflow_tab():
+    """Render the workflow patterns analysis tab"""
+    if not st.session_state.get('workflow_patterns_analysis'):
+        st.info("Workflow patterns analysis has not been performed yet.")
+        return
+    
+    st.header("Workflow Patterns Analysis")
+    
+    workflow_analysis = st.session_state.workflow_patterns_analysis
+    
+    # Display workflow files
+    workflows = workflow_analysis.get('workflows', [])
+    if workflows:
+        st.subheader(f"Workflow Components ({len(workflows)})")
+        
+        # Group workflows by pattern
+        patterns_to_files = defaultdict(list)
+        
+        for workflow in workflows:
+            file_path = workflow.get('file', 'Unknown')
+            for pattern in workflow.get('patterns', set()):
+                patterns_to_files[pattern].append(file_path)
+        
+        # Create tabs for each pattern
+        if patterns_to_files:
+            pattern_tabs = st.tabs(list(patterns_to_files.keys()))
+            
+            for i, (pattern, files) in enumerate(patterns_to_files.items()):
+                with pattern_tabs[i]:
+                    pretty_pattern = pattern.replace('_', ' ').title()
+                    st.markdown(f"**{pretty_pattern}** pattern found in {len(files)} files")
+                    
+                    for file in files:
+                        st.markdown(f"• `{file}`")
+        else:
+            for workflow in workflows:
+                file_path = workflow.get('file', 'Unknown')
+                entry_points = len(workflow.get('entry_points', []))
+                operations = len(workflow.get('operations', []))
+                
+                st.markdown(f"• `{file_path}` - {entry_points} entry points, {operations} workflow operations")
+    else:
+        st.info("No workflow components found in the repository.")
+    
+    # Display entry points
+    entry_points = workflow_analysis.get('entry_points', [])
+    if entry_points:
+        st.subheader(f"Workflow Entry Points ({len(entry_points)})")
+        
+        # Group by entry point type
+        entry_types = defaultdict(list)
+        for entry in entry_points:
+            entry_type = entry.get('type', 'unknown')
+            entry_types[entry_type].append(entry)
+        
+        # Display by type
+        for entry_type, entries in entry_types.items():
+            pretty_type = entry_type.replace('_', ' ').title()
+            with st.expander(f"{pretty_type} ({len(entries)})"):
+                for entry in entries:
+                    st.markdown(f"• `{entry.get('name', 'Unknown')}` in line {entry.get('line', 0)}")
+    
+    # Display identified patterns
+    patterns = workflow_analysis.get('patterns', [])
+    if patterns:
+        st.subheader("Identified Workflow Patterns")
+        
+        # Create a bar chart of pattern frequencies
+        import pandas as pd
+        pattern_data = []
+        
+        for pattern in patterns:
+            pattern_data.append({
+                "Pattern": pattern.get('name', 'unknown').replace('_', ' ').title(),
+                "Count": pattern.get('count', 0)
+            })
+        
+        pattern_df = pd.DataFrame(pattern_data)
+        
+        import plotly.express as px
+        fig = px.bar(pattern_df, x='Pattern', y='Count', 
+                   title='Workflow Pattern Distribution',
+                   labels={'Pattern': 'Pattern Type', 'Count': 'Frequency'},
+                   color='Count')
+        
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Display recommendations
+    recommendations = workflow_analysis.get('standardization_recommendations', [])
+    if recommendations:
+        st.subheader("Workflow Standardization Recommendations")
+        
+        for i, rec in enumerate(recommendations):
+            st.markdown(f"{i+1}. {rec}")
+
 def main():
     """Main application function"""
     initialize_session_state()
@@ -756,7 +861,7 @@ def main():
     
     # Define tabs
     tabs = ["Input", "Summary", "Repository Structure", "Code Review", "Database Analysis", 
-            "Modularization Analysis", "Agent Readiness"]
+            "Modularization Analysis", "Agent Readiness", "Workflow Patterns"]
     
     # Set current tab from session state if available
     current_tab = st.session_state.get('current_tab', 'Input')
@@ -797,6 +902,10 @@ def main():
     with tab_items[6]:  # Agent Readiness
         if current_tab == 'Agent Readiness':
             render_agent_readiness_tab()
+            
+    with tab_items[7]:  # Workflow Patterns
+        if current_tab == 'Workflow Patterns':
+            render_workflow_tab()
     
     # Handle tab switching
     if st.session_state.get('current_tab') != tabs[current_tab_idx]:
