@@ -22,6 +22,19 @@ from agent_base import (
     ModelInterface, Task, MessageType, MessagePriority, AgentCategory
 )
 
+# Import database migration manager
+try:
+    from services.database.migration_manager import MigrationManager
+except ImportError:
+    # Mock for testing without the migration manager
+    class MigrationManager:
+        def __init__(self, migrations_dir=None, db_url=None):
+            self.migrations_dir = migrations_dir
+            self.db_url = db_url
+        
+        def get_migration_status(self):
+            return {"current_revision": None, "available_revisions": []}
+
 # Import protocol server for task and messaging
 from protocol_server import (
     ProtocolMessage, AgentIdentity, Task, FeedbackRecord, LearningUpdate
