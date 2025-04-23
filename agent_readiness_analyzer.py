@@ -431,12 +431,22 @@ def analyze_agent_readiness(repo_path):
     
     # Evaluate agent-readiness
     assessment, agent_libs_used = evaluate_agent_readiness(ml_components)
-    results['assessment'] = assessment
+    if assessment:
+        # Convert assessment from dict to list of dicts for better display
+        assessment_list = []
+        for file_path, score in assessment.items():
+            assessment_list.append({
+                'file': file_path,
+                'score': score
+            })
+        
+        results['assessment'] = assessment_list
+    
     results['agent_libraries'] = agent_libs_used
     
     # Generate recommendations
     recommendations = generate_agent_readiness_recommendations(ml_components, assessment, agent_libs_used)
     results['recommendations'] = recommendations
     
-    logger.info(f"Agent-readiness analysis complete. Found {len(ml_components)} ML files.")
+    logger.info(f"Agent-readiness analysis complete. Found {len(ml_files)} ML-related files.")
     return results

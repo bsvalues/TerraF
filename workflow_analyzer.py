@@ -441,13 +441,15 @@ def analyze_workflow_patterns(repo_path):
             'workflow_functions': [func['name'] for func in workflow_components[file_path]['functions']]
         })
     
-    # Identify workflow entry points
+    # Identify entry points
     entry_points = identify_workflow_entry_points(workflow_components)
-    results['entry_points'] = entry_points
+    if entry_points:
+        results['entry_points'] = entry_points
     
     # Generate standardization recommendations
     recommendations = generate_standardization_recommendations(workflow_components, patterns_by_file)
-    results['standardization_recommendations'] = recommendations
+    if recommendations:
+        results['standardization_recommendations'] = recommendations
     
-    logger.info(f"Workflow analysis complete. Found patterns in {len(workflow_components)} files.")
+    logger.info(f"Workflow patterns analysis complete. Found {len(results['workflows'])} files with workflow patterns.")
     return results
