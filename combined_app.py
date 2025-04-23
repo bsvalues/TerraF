@@ -509,6 +509,13 @@ def render_service_status_indicator(service_name: str, status: str):
 
 def render_enhanced_tabs():
     """Render the enhanced app tabs"""
+    # Import database migration UI if available
+    DATABASE_MIGRATIONS_AVAILABLE = True
+    try:
+        import database_migration_ui
+    except ImportError:
+        DATABASE_MIGRATIONS_AVAILABLE = False
+    
     tabs = st.tabs([
         "Repository Analysis",
         "Knowledge Graph",
@@ -516,7 +523,8 @@ def render_enhanced_tabs():
         "Multimodal Analysis",
         "Agent Orchestration",
         "Academic Research",
-        "SDK & Plugins"
+        "SDK & Plugins",
+        "Database Migrations"
     ])
     
     with tabs[0]:
@@ -528,6 +536,13 @@ def render_enhanced_tabs():
     # Agent Orchestration tab
     with tabs[4]:
         render_agent_orchestration_tab()
+        
+    # Database Migrations tab
+    with tabs[7]:
+        if DATABASE_MIGRATIONS_AVAILABLE:
+            database_migration_ui.render_migration_ui()
+        else:
+            st.warning("Database Migration UI is not available.")
     
     # Add other tabs from the enhanced app...
     # These would be copied from the enhanced_app.py
