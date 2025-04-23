@@ -2,8 +2,9 @@ import os
 import ast
 import re
 import logging
-from collections import defaultdict
 from pathlib import Path
+from collections import defaultdict
+from utils import count_lines_of_code, estimate_complexity
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -13,188 +14,242 @@ class CodeVisitor(ast.NodeVisitor):
     """AST visitor for analyzing Python code"""
     
     def __init__(self):
-        self.imports = []
-        self.functions = []
         self.classes = []
+        self.functions = []
+        self.imports = []
         self.global_vars = []
         self.issues = []
-        self.complexity = 0
         self.magic_numbers = []
-        self.max_nested_level = 0
+        self.nested_blocks = []
+        
+        # Track node hierarchy
+        self.parent_stack = []
+        
+        # Track current context
+        self.current_class = None
+        self.current_function = None
     
     def visit_ClassDef(self, node):
         """Process class definitions"""
-        # Calculate class size
-        class_size = self._count_lines(node)
-        
-        # Check for large classes
-        if class_size > 100:
-            self.issues.append({
-                'type': 'large_class',
-                'message': f"Class '{node.name}' is too large ({class_size} lines)",
-                'line': node.lineno
-            })
-        
-        # Record class info
-        self.classes.append({
+        # Store class info
+        class_info = {
             'name': node.name,
             'line': node.lineno,
-            'size': class_size,
-            'methods': len([m for m in node.body if isinstance(m, ast.FunctionDef)])
-        })
+            'methods': [],
+            'class_vars': [],
+            'bases': [base.id if hasattr(base, 'id') else 'unknown' for base in node.bases]
+        }
+        self.classes.append(class_info)
         
+        # Set current class context
+        prev_class = self.current_class
+        self.current_class = class_info
+        
+        # Visit children
         self.generic_visit(node)
+        
+        # Restore previous context
+        self.current_class = prev_class
     
     def visit_FunctionDef(self, node):
         """Process function and method definitions"""
-        # Calculate function size and complexity
-        func_size = self._count_lines(node)
+        # Calculate function complexity
         complexity = self._calculate_complexity(node)
         
-        # Check for long methods
-        if func_size > 30:
+        # Count parameters
+        params = [arg.arg for arg in node.args.args]
+        
+        # Store function info
+        func_info = {
+            'name': node.name,
+            'line': node.lineno,
+            'complexity': complexity,
+            'parameters': params,
+            'loc': self._count_lines(node)
+        }
+        
+        # Check if it's a method or a function
+        if self.current_class:
+            self.current_class['methods'].append(func_info)
+        else:
+            self.functions.append(func_info)
+        
+        # Check for long parameter lists (more than 5 parameters)
+        if len(params) > 5:
             self.issues.append({
-                'type': 'long_method',
-                'message': f"Function '{node.name}' is too long ({func_size} lines)",
+                'type': 'long_parameter_list',
+                'detail': f"Function '{node.name}' has a long parameter list ({len(params)} parameters)",
                 'line': node.lineno
             })
         
-        # Check for complex methods
+        # Check for long functions (more than 50 lines)
+        lines = self._count_lines(node)
+        if lines > 50:
+            self.issues.append({
+                'type': 'long_method',
+                'detail': f"Function '{node.name}' is too long ({lines} lines)",
+                'line': node.lineno
+            })
+        
+        # Check for complex functions (complexity > 10)
         if complexity > 10:
             self.issues.append({
                 'type': 'complex_method',
-                'message': f"Function '{node.name}' is too complex (complexity: {complexity})",
+                'detail': f"Function '{node.name}' is too complex (complexity: {complexity})",
                 'line': node.lineno
             })
         
-        # Check for too many parameters
-        if len(node.args.args) > 5:
-            self.issues.append({
-                'type': 'too_many_parameters',
-                'message': f"Function '{node.name}' has too many parameters ({len(node.args.args)})",
-                'line': node.lineno
-            })
+        # Set current function context
+        prev_function = self.current_function
+        self.current_function = func_info
         
-        # Record function info
-        self.functions.append({
-            'name': node.name,
-            'line': node.lineno,
-            'size': func_size,
-            'complexity': complexity,
-            'params': len(node.args.args)
-        })
+        # Remember the parent node for child nodes
+        self.parent_stack.append(node)
         
-        # Check for nested conditionals
-        self._check_nesting_level(node, 0)
-        
+        # Visit children
         self.generic_visit(node)
+        
+        # Restore previous context
+        self.current_function = prev_function
+        self.parent_stack.pop()
     
     def visit_Import(self, node):
         """Process import statements"""
-        for name in node.names:
+        for alias in node.names:
             self.imports.append({
-                'type': 'import',
-                'module': name.name,
-                'alias': name.asname,
-                'line': node.lineno
+                'module': alias.name,
+                'alias': alias.asname,
+                'line': node.lineno,
+                'type': 'import'
             })
         self.generic_visit(node)
     
     def visit_ImportFrom(self, node):
         """Process from-import statements"""
-        for name in node.names:
+        for alias in node.names:
             self.imports.append({
-                'type': 'from_import',
                 'module': node.module,
-                'name': name.name,
-                'alias': name.asname,
-                'line': node.lineno
+                'name': alias.name,
+                'alias': alias.asname,
+                'line': node.lineno,
+                'type': 'from_import'
             })
         self.generic_visit(node)
     
     def visit_Assign(self, node):
         """Process assignments to find global variables"""
-        for target in node.targets:
-            if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant):
-                # Check if this is at the module level (global)
-                if isinstance(target.ctx, ast.Store) and hasattr(node, 'parent_node') and isinstance(node.parent_node, ast.Module):
-                    self.global_vars.append({
+        # Add a parent reference (not part of the standard AST)
+        node.parent_node = self.parent_stack[-1] if self.parent_stack else None
+        
+        # Check if it's a class variable or a global variable
+        if self.current_class and not self.current_function:
+            for target in node.targets:
+                if hasattr(target, 'id'):
+                    self.current_class['class_vars'].append({
                         'name': target.id,
-                        'value': node.value.value if hasattr(node.value, 'value') else str(node.value),
                         'line': node.lineno
                     })
+        elif not self.current_function and not self.current_class:
+            for target in node.targets:
+                if hasattr(target, 'id'):
+                    self.global_vars.append({
+                        'name': target.id,
+                        'line': node.lineno
+                    })
+        
         self.generic_visit(node)
     
     def visit_Constant(self, node):
         """Process numeric literals to find magic numbers"""
-        # Skip literals in global scope
-        if hasattr(node, 'parent_node') and not isinstance(node.parent_node, ast.Module):
-            # Only consider numeric constants that aren't 0, 1, or -1
-            if isinstance(node.value, (int, float)) and node.value not in [0, 1, -1]:
+        # Add a parent reference
+        node.parent_node = self.parent_stack[-1] if self.parent_stack else None
+        
+        if isinstance(node.value, (int, float)):
+            # Skip common numbers like 0, 1, -1
+            if node.value not in [0, 1, -1, 2, 10, 100]:
                 self.magic_numbers.append({
                     'value': node.value,
                     'line': getattr(node, 'lineno', 0)
                 })
+        
         self.generic_visit(node)
     
-    # For compatibility with Python 3.7 and earlier
     def visit_Num(self, node):
         """Process numeric literals to find magic numbers (legacy)"""
-        # Skip literals in global scope
-        if hasattr(node, 'parent_node') and not isinstance(node.parent_node, ast.Module):
-            # Only consider numeric constants that aren't 0, 1, or -1
-            if node.n not in [0, 1, -1]:
-                self.magic_numbers.append({
-                    'value': node.n,
-                    'line': getattr(node, 'lineno', 0)
-                })
+        # Add a parent reference
+        node.parent_node = self.parent_stack[-1] if self.parent_stack else None
+        
+        # Skip common numbers like 0, 1, -1
+        if node.n not in [0, 1, -1, 2, 10, 100]:
+            self.magic_numbers.append({
+                'value': node.n,
+                'line': getattr(node, 'lineno', 0)
+            })
+        
         self.generic_visit(node)
     
     def visit_If(self, node):
         """Process if statements to detect nesting"""
-        self._check_nesting_level(node, 0)
+        # Check nesting level recursively
+        nesting_level = self._check_nesting_level(node, 1)
+        if nesting_level > 3:
+            self.nested_blocks.append({
+                'type': 'nested_conditional',
+                'level': nesting_level,
+                'line': node.lineno,
+                'detail': f"Nested conditional statements (depth: {nesting_level})"
+            })
+            
+            # Add to issues as well
+            self.issues.append({
+                'type': 'nested_conditional',
+                'detail': f"Nested conditional statements (depth: {nesting_level})",
+                'line': node.lineno
+            })
+        
+        # Remember the parent node for child nodes
+        self.parent_stack.append(node)
+        
+        # Visit children
         self.generic_visit(node)
+        
+        # Restore previous context
+        self.parent_stack.pop()
     
     def _check_nesting_level(self, node, current_level):
         """Recursively check nesting level of conditional statements"""
-        # Check conditional blocks (if, for, while)
-        if isinstance(node, (ast.If, ast.For, ast.While)):
-            next_level = current_level + 1
-            self.max_nested_level = max(self.max_nested_level, next_level)
-            
-            # Flag deeply nested conditions
-            if next_level >= 3:
-                self.issues.append({
-                    'type': 'nested_conditionals',
-                    'message': f"Deeply nested conditional blocks (level {next_level})",
-                    'line': node.lineno
-                })
-            
-            # Recursively check the body
-            for item in node.body:
-                self._check_nesting_level(item, next_level)
-            
-            # Check else branch if it exists
-            if hasattr(node, 'orelse') and node.orelse:
-                for item in node.orelse:
-                    self._check_nesting_level(item, 
-                                             current_level if isinstance(node, ast.If) else next_level)
+        max_level = current_level
+        
+        # Check if and elif blocks
+        for child_node in ast.iter_child_nodes(node):
+            if isinstance(child_node, ast.If):
+                # Add parent reference to help with navigation later
+                child_node.parent_node = node
+                
+                # Recurse to find the deepest nesting
+                child_level = self._check_nesting_level(child_node, current_level + 1)
+                max_level = max(max_level, child_level)
+        
+        return max_level
     
     def _count_lines(self, node):
         """Count the number of lines in a node"""
         if hasattr(node, 'end_lineno') and hasattr(node, 'lineno'):
             return node.end_lineno - node.lineno + 1
-        return 5  # Default fallback if line information is not available
+        return 0
     
     def _calculate_complexity(self, node):
         """Calculate cyclomatic complexity of a function/method"""
-        complexity = 1  # Base complexity
+        # Start with a base complexity of 1
+        complexity = 1
         
-        # Count control flow statements
+        # Increment complexity for each branching statement
         for child in ast.walk(node):
             if isinstance(child, (ast.If, ast.While, ast.For)):
                 complexity += 1
             elif isinstance(child, ast.BoolOp) and isinstance(child.op, ast.And):
+                complexity += len(child.values) - 1
+            elif isinstance(child, ast.BoolOp) and isinstance(child.op, ast.Or):
                 complexity += len(child.values) - 1
         
         return complexity
@@ -216,68 +271,59 @@ def analyze_python_file(file_path):
         # Parse the AST
         tree = ast.parse(content, filename=file_path)
         
-        # Augment AST with parent references
-        for node in ast.walk(tree):
-            for child in ast.iter_child_nodes(node):
-                child.parent_node = node
-        
-        # Visit nodes
+        # Visit nodes and collect information
         visitor = CodeVisitor()
         visitor.visit(tree)
         
-        # Look for commented out code
+        # Count lines of code
+        loc = count_lines_of_code(file_path)
+        
+        # Find commented code blocks
         commented_code = find_commented_code(content)
         
-        # Add commented code as an issue
-        for line in commented_code:
-            visitor.issues.append({
-                'type': 'commented_code',
-                'message': "Commented-out code detected",
-                'line': line
-            })
+        # Calculate overall complexity based on various factors
+        if len(visitor.functions) > 0:
+            avg_func_complexity = sum(f.get('complexity', 0) for f in visitor.functions) / len(visitor.functions)
+        else:
+            avg_func_complexity = 0
         
-        # Calculate overall complexity
-        total_complexity = sum(func['complexity'] for func in visitor.functions)
-        average_complexity = total_complexity / len(visitor.functions) if visitor.functions else 0
+        complexity_factors = [
+            len(visitor.nested_blocks) * 0.5,
+            len(visitor.magic_numbers) * 0.1,
+            avg_func_complexity,
+            len(visitor.issues) * 0.3
+        ]
         
-        # Generate summary metrics
-        metrics = {
-            'lines_of_code': len(content.splitlines()),
-            'function_count': len(visitor.functions),
-            'class_count': len(visitor.classes),
-            'import_count': len(visitor.imports),
-            'average_complexity': round(average_complexity, 2),
-            'max_nested_level': visitor.max_nested_level
-        }
+        overall_complexity = min(10, round(sum(complexity_factors)))
         
-        # Categorize issues by type
-        issues_by_type = defaultdict(list)
-        for issue in visitor.issues:
-            issues_by_type[issue['type']].append(issue)
-        
-        return {
-            'metrics': metrics,
-            'functions': visitor.functions,
+        # Create result dictionary
+        result = {
             'classes': visitor.classes,
+            'functions': visitor.functions,
             'imports': visitor.imports,
             'global_vars': visitor.global_vars,
             'issues': visitor.issues,
-            'magic_numbers': visitor.magic_numbers
+            'magic_numbers': visitor.magic_numbers,
+            'nested_blocks': visitor.nested_blocks,
+            'commented_code': commented_code,
+            'loc': loc,
+            'complexity': overall_complexity
         }
+        
+        return result
     except Exception as e:
-        logger.error(f"Error analyzing file {file_path}: {str(e)}")
+        logger.error(f"Error analyzing Python file {file_path}: {str(e)}")
         return {
-            'metrics': {},
-            'functions': [],
             'classes': [],
+            'functions': [],
             'imports': [],
             'global_vars': [],
-            'issues': [{
-                'type': 'error',
-                'message': f"Error analyzing file: {str(e)}",
-                'line': 0
-            }],
-            'magic_numbers': []
+            'issues': [{'type': 'error', 'detail': f"Error analyzing file: {str(e)}", 'line': 0}],
+            'magic_numbers': [],
+            'nested_blocks': [],
+            'commented_code': [],
+            'loc': 0,
+            'complexity': 0
         }
 
 def find_commented_code(content):
@@ -290,24 +336,49 @@ def find_commented_code(content):
     Returns:
     - list: Line numbers where commented code blocks start
     """
+    commented_code = []
     lines = content.splitlines()
-    commented_code_lines = []
     
-    # Pattern to detect code-like comments (e.g., conditionals, functions, classes)
-    code_patterns = [
-        r'^\s*#\s*(def|class|if|for|while|return|import|from)',
-        r'^\s*#\s*[a-zA-Z0-9_]+\s*=',
-        r'^\s*#\s*[a-zA-Z0-9_]+\(',
-    ]
+    comment_block_start = None
+    consecutive_comments = 0
     
     for i, line in enumerate(lines):
-        for pattern in code_patterns:
-            if re.search(pattern, line):
-                # Add 1 to convert from 0-index to 1-index for line numbers
-                commented_code_lines.append(i + 1)
-                break
+        line = line.strip()
+        
+        if line.startswith('#') and len(line) > 1:
+            # Skip comment lines that are likely documentation
+            if any(doc_starter in line.lower() for doc_starter in 
+                   ['todo', 'hack', 'fixme', 'note', 'description', 'param', 'return']):
+                continue
+                
+            # Check if this line looks like code
+            code_line = line[1:].strip()
+            if (
+                re.match(r'(def|class|if|for|while|try|except|with|return|import|from)\s', code_line) or
+                re.match(r'[a-zA-Z_][a-zA-Z0-9_]*\s*[=+-/*]', code_line) or
+                code_line.endswith(':')
+            ):
+                if comment_block_start is None:
+                    comment_block_start = i + 1  # Line numbers are 1-based
+                consecutive_comments += 1
+        else:
+            # Reset if we've seen enough consecutive comments to call it a block
+            if consecutive_comments >= 3:
+                commented_code.append({
+                    'line': comment_block_start,
+                    'count': consecutive_comments
+                })
+            comment_block_start = None
+            consecutive_comments = 0
     
-    return commented_code_lines
+    # Check if the file ends with a comment block
+    if consecutive_comments >= 3:
+        commented_code.append({
+            'line': comment_block_start,
+            'count': consecutive_comments
+        })
+    
+    return commented_code
 
 def analyze_file(repo_path, file_path):
     """
@@ -322,15 +393,19 @@ def analyze_file(repo_path, file_path):
     """
     full_path = os.path.join(repo_path, file_path)
     
-    _, ext = os.path.splitext(file_path)
-    ext = ext.lower()
+    # Check file extension
+    _, ext = os.path.splitext(file_path.lower())
     
     if ext == '.py':
+        # Analyze Python file using AST
         return analyze_python_file(full_path)
-    
-    # Add support for other file types as needed
-    
-    return None
+    else:
+        # For other file types, just count lines and estimate complexity
+        return {
+            'loc': count_lines_of_code(full_path),
+            'complexity': estimate_complexity(full_path),
+            'issues': []
+        }
 
 def count_file_lines(file_path):
     """Count the number of lines in a file"""
@@ -352,42 +427,54 @@ def find_duplicated_code_simple(repo_path, file_paths, min_lines=5):
     Returns:
     - list: Potential code duplications
     """
-    duplications = []
+    logger.info("Looking for duplicated code...")
     
-    # Extract all file contents
-    file_contents = {}
+    # Store file content as lines
+    files_content = {}
     for file_path in file_paths:
         try:
             full_path = os.path.join(repo_path, file_path)
             with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
-                file_contents[file_path] = f.readlines()
+                content = f.read()
+            files_content[file_path] = content.splitlines()
         except Exception:
-            continue
+            pass
     
-    # Simple sliding window approach to find duplicated blocks
-    for file1, lines1 in file_contents.items():
-        for i in range(len(lines1) - min_lines + 1):
-            block = ''.join(lines1[i:i+min_lines])
-            if not block.strip():  # Skip empty blocks
+    # Look for duplicate blocks
+    duplications = []
+    
+    # Dictionary to store blocks of code and their origins
+    block_origins = {}
+    
+    # Process each file
+    for file_path, lines in files_content.items():
+        for i in range(len(lines) - min_lines + 1):
+            # Create a block of min_lines consecutive lines
+            block = '\n'.join(lines[i:i+min_lines])
+            
+            # Skip empty blocks or blocks with just whitespace
+            if not block.strip():
                 continue
                 
-            # Look for this block in other files
-            for file2, lines2 in file_contents.items():
-                if file1 == file2:  # Skip same file
-                    continue
-                    
-                for j in range(len(lines2) - min_lines + 1):
-                    compare_block = ''.join(lines2[j:j+min_lines])
-                    if block == compare_block:
-                        # Found a duplication
-                        duplications.append({
-                            'file1': file1,
-                            'start_line1': i + 1,  # 1-based line numbers
-                            'file2': file2,
-                            'start_line2': j + 1,  # 1-based line numbers
-                            'lines': min_lines
-                        })
+            # Check if we've seen this block before
+            if block in block_origins:
+                # Found a duplication
+                orig_file, orig_line = block_origins[block]
+                
+                # Avoid reporting duplications within the same file
+                if orig_file != file_path:
+                    duplications.append({
+                        'file1': orig_file,
+                        'start_line1': orig_line,
+                        'file2': file_path,
+                        'start_line2': i + 1,
+                        'lines': min_lines
+                    })
+            else:
+                # Record this block
+                block_origins[block] = (file_path, i + 1)
     
+    logger.info(f"Found {len(duplications)} potential code duplications")
     return duplications
 
 def perform_code_review(repo_path):
@@ -404,162 +491,114 @@ def perform_code_review(repo_path):
     
     # Initialize results
     results = {
-        'metrics': {},
-        'top_complex_files': [],
+        'files_analyzed': [],
+        'issues': [],
         'files_with_issues': [],
-        'duplications': [],
-        'improvement_opportunities': {}
+        'top_complex_files': [],
+        'metrics': {
+            'total_loc': 0,
+            'total_classes': 0,
+            'total_functions': 0,
+            'average_complexity': 0
+        },
+        'improvement_opportunities': {},
+        'duplications': []
     }
     
-    # Find all Python files
+    # Find Python files
     python_files = []
     for root, _, files in os.walk(repo_path):
         for file in files:
-            if file.endswith('.py'):
-                if any(part.startswith('.') for part in Path(root).parts):
-                    continue  # Skip hidden directories
+            # Skip files in hidden directories
+            rel_path = os.path.relpath(root, repo_path)
+            if any(part.startswith('.') for part in Path(rel_path).parts):
+                continue
                 
-                full_path = os.path.join(root, file)
-                rel_path = os.path.relpath(full_path, repo_path)
-                python_files.append(rel_path)
-    
-    if not python_files:
-        logger.info("No Python files found.")
-        results['improvement_opportunities']['General'] = [
-            "No Python files found in the repository."
-        ]
-        return results
+            if file.endswith('.py'):
+                python_files.append(os.path.join(rel_path, file))
     
     # Analyze each Python file
-    total_loc = 0
-    total_functions = 0
-    total_classes = 0
     total_complexity = 0
-    total_issues = 0
+    analyzed_count = 0
     
-    file_analyses = {}
     for file_path in python_files:
         analysis = analyze_file(repo_path, file_path)
         if analysis:
-            file_analyses[file_path] = analysis
+            # Count lines and complexity
+            results['metrics']['total_loc'] += analysis.get('loc', 0)
+            results['metrics']['total_classes'] += len(analysis.get('classes', []))
+            results['metrics']['total_functions'] += len(analysis.get('functions', []))
+            file_complexity = analysis.get('complexity', 0)
+            total_complexity += file_complexity
+            analyzed_count += 1
             
-            # Accumulate metrics
-            total_loc += analysis.get('metrics', {}).get('lines_of_code', 0)
-            total_functions += len(analysis.get('functions', []))
-            total_classes += len(analysis.get('classes', []))
-            
-            for func in analysis.get('functions', []):
-                total_complexity += func.get('complexity', 0)
-            
-            total_issues += len(analysis.get('issues', []))
-            
-            # Record files with issues
-            if analysis.get('issues', []):
+            # Track issues
+            file_issues = analysis.get('issues', [])
+            if file_issues:
                 results['files_with_issues'].append({
                     'file': file_path,
-                    'issue_count': len(analysis['issues']),
-                    'details': [issue['message'] for issue in analysis['issues']]
+                    'issue_count': len(file_issues),
+                    'details': [issue.get('detail', '') for issue in file_issues]
                 })
+                
+                # Group issues by type
+                for issue in file_issues:
+                    issue_with_file = issue.copy()
+                    issue_with_file['file'] = file_path
+                    results['issues'].append(issue_with_file)
+            
+            # Track complex files
+            results['top_complex_files'].append({
+                'file': file_path,
+                'complexity': file_complexity,
+                'loc': analysis.get('loc', 0)
+            })
+            
+            # Record analyzed file
+            results['files_analyzed'].append(file_path)
     
-    # Calculate overall metrics
-    results['metrics'] = {
-        'total_files': len(python_files),
-        'total_loc': total_loc,
-        'total_functions': total_functions,
-        'total_classes': total_classes,
-        'average_loc_per_file': round(total_loc / len(python_files) if python_files else 0, 2),
-        'average_complexity': round(total_complexity / total_functions if total_functions else 0, 2),
-        'issue_density': round(total_issues / total_loc * 1000 if total_loc else 0, 2)  # Issues per 1000 lines
-    }
+    # Sort complex files by complexity
+    results['top_complex_files'] = sorted(
+        results['top_complex_files'], 
+        key=lambda x: x['complexity'], 
+        reverse=True
+    )[:10]  # Keep only top 10
     
-    # Find most complex files
-    complex_files = []
-    for file_path, analysis in file_analyses.items():
-        # Calculate file complexity as sum of function complexities
-        file_complexity = sum(func.get('complexity', 0) for func in analysis.get('functions', []))
-        
-        complex_files.append({
-            'file': file_path,
-            'complexity': file_complexity,
-            'loc': analysis.get('metrics', {}).get('lines_of_code', 0),
-            'functions': len(analysis.get('functions', [])),
-            'issues': len(analysis.get('issues', []))
-        })
+    # Calculate average complexity
+    if analyzed_count > 0:
+        results['metrics']['average_complexity'] = total_complexity / analyzed_count
     
-    # Sort by complexity and take top 10
-    complex_files.sort(key=lambda x: x['complexity'], reverse=True)
-    results['top_complex_files'] = complex_files[:10]
-    
-    # Find code duplications
-    results['duplications'] = find_duplicated_code_simple(repo_path, python_files)
+    # Calculate issue density (issues per 1000 lines of code)
+    if results['metrics']['total_loc'] > 0:
+        issue_density = len(results['issues']) * 1000 / results['metrics']['total_loc']
+        results['metrics']['issue_density'] = issue_density
+    else:
+        results['metrics']['issue_density'] = 0
     
     # Generate improvement opportunities
-    improvement_opportunities = {}
-    
-    # Add general recommendations
-    general_recs = [
-        "Use consistent code formatting throughout the codebase",
-        "Add comprehensive docstrings to all public functions and classes",
-        "Implement unit tests for critical functionality",
-        "Remove unused imports and dead code"
-    ]
-    improvement_opportunities['General'] = general_recs
-    
-    # Add recommendations based on issues
-    if results['files_with_issues']:
-        code_quality_recs = []
-        
-        # Check for common issues
-        issue_counts = defaultdict(int)
-        for file_issue in results['files_with_issues']:
-            for detail in file_issue['details']:
-                for issue_type in ['long method', 'complex method', 'too many parameters', 
-                                  'nested conditionals', 'commented code', 'magic numbers']:
-                    if issue_type in detail.lower():
-                        issue_counts[issue_type] += 1
-        
-        # Add specific recommendations based on issue prevalence
-        if issue_counts.get('long method', 0) > 0:
-            code_quality_recs.append(
-                f"Refactor {issue_counts['long method']} long methods by extracting helper functions"
-            )
-        
-        if issue_counts.get('complex method', 0) > 0:
-            code_quality_recs.append(
-                f"Simplify {issue_counts['complex method']} complex methods by reducing branching logic"
-            )
-        
-        if issue_counts.get('nested conditionals', 0) > 0:
-            code_quality_recs.append(
-                f"Flatten nested conditionals in {issue_counts['nested conditionals']} locations using guard clauses or intermediate variables"
-            )
-        
-        if issue_counts.get('commented code', 0) > 0:
-            code_quality_recs.append(
-                f"Remove or properly document {issue_counts['commented code']} instances of commented-out code"
-            )
-        
-        improvement_opportunities['Code Quality'] = code_quality_recs
-    
-    # Add recommendations for complex files
-    if results['top_complex_files']:
-        refactoring_recs = [
-            f"Split the {len(results['top_complex_files'])} most complex files into smaller, focused modules",
+    results['improvement_opportunities'] = {
+        'Code Quality': [
+            "Enforce consistent coding standards with a linter like flake8 or pylint",
+            "Add docstrings to all public classes and functions",
+            "Break down complex functions into smaller, more focused ones",
+            "Reduce nesting by extracting conditions into helper functions"
+        ],
+        'Testing': [
+            "Increase test coverage for complex modules",
+            "Implement integration tests for critical component interactions",
+            "Add property-based testing for data transformation functions",
+            "Use mock objects to test components in isolation"
+        ],
+        'Architecture': [
             "Apply the Single Responsibility Principle to large classes",
-            "Use design patterns to improve code organization"
+            "Introduce design patterns for recurring problems",
+            "Consider using dependency injection for better testability",
+            "Implement proper error handling throughout the codebase"
         ]
-        improvement_opportunities['Refactoring'] = refactoring_recs
+    }
     
-    # Add recommendations for code duplications
-    if results['duplications']:
-        duplication_recs = [
-            f"Extract {len(results['duplications'])} duplicated code blocks into reusable functions or classes",
-            "Implement a consistent utility module for common operations",
-            "Use inheritance or composition to share common functionality between classes"
-        ]
-        improvement_opportunities['Code Duplication'] = duplication_recs
+    # Find duplicated code
+    results['duplications'] = find_duplicated_code_simple(repo_path, python_files)
     
-    results['improvement_opportunities'] = improvement_opportunities
-    
-    logger.info(f"Code review complete. Found {total_issues} issues across {len(results['files_with_issues'])} files.")
+    logger.info(f"Code review complete. Analyzed {len(results['files_analyzed'])} files.")
     return results
