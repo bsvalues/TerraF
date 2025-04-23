@@ -827,9 +827,614 @@ def analyze_all_dependencies(repo_path: str) -> Dict:
     # Build a dependency graph for all Python files
     graph_data = build_dependency_graph(repo_path)
     
+    # Additional analysis for TerraFusion microservices architecture
+    # This analyzes the repository for microservice patterns and plugin architecture
+    microservice_analysis = analyze_microservice_patterns(repo_path, graph_data)
+    
     return {
-        'graph_data': graph_data
+        'graph_data': graph_data,
+        'microservice_analysis': microservice_analysis
     }
+
+def analyze_microservice_patterns(repo_path: str, graph_data: Dict) -> Dict:
+    """
+    Analyze repository for microservice and plugin architecture patterns
+    
+    Parameters:
+    - repo_path: Path to the repository
+    - graph_data: Previously analyzed dependency graph data
+    
+    Returns:
+    - dict: Microservice architecture analysis results
+    """
+    logger.info(f"Analyzing microservice architecture patterns for repository at {repo_path}...")
+    
+    # Initialize results
+    results = {
+        'microservices': [],
+        'api_gateways': [],
+        'plugins': [],
+        'service_communications': [],
+        'recommendations': []
+    }
+    
+    try:
+        # Identify potential microservices based on file structure and naming
+        microservices = _identify_microservices(repo_path)
+        results['microservices'] = microservices
+        
+        # Identify API gateways based on import patterns and file contents
+        api_gateways = _identify_api_gateways(repo_path, graph_data)
+        results['api_gateways'] = api_gateways
+        
+        # Identify plugin architecture components
+        plugins = _identify_plugins(repo_path, graph_data)
+        results['plugins'] = plugins
+        
+        # Analyze service-to-service communications
+        service_comms = _analyze_service_communications(repo_path, graph_data, microservices)
+        results['service_communications'] = service_comms
+        
+        # Generate microservice-specific recommendations
+        recommendations = _generate_microservice_recommendations(microservices, api_gateways, plugins, service_comms)
+        results['recommendations'] = recommendations
+        
+        return results
+    except Exception as e:
+        logger.error(f"Error analyzing microservice patterns: {str(e)}")
+        return {
+            'microservices': [],
+            'api_gateways': [],
+            'plugins': [],
+            'service_communications': [],
+            'recommendations': [
+                "Error analyzing microservice patterns. Check the logs for details."
+            ],
+            'error': str(e)
+        }
+
+def _identify_microservices(repo_path: str) -> List[Dict]:
+    """Identify potential microservices in the repository"""
+    microservices = []
+    
+    # Look for microservice indicators in directory structure
+    service_dirs = []
+    
+    # Check for common microservice directory patterns
+    for pattern in ["services/", "apps/", "microservices/", "modules/"]:
+        service_pattern_path = os.path.join(repo_path, pattern)
+        if os.path.exists(service_pattern_path) and os.path.isdir(service_pattern_path):
+            # Add subdirectories as potential services
+            for item in os.listdir(service_pattern_path):
+                item_path = os.path.join(service_pattern_path, item)
+                if os.path.isdir(item_path) and not item.startswith('.'):
+                    service_dirs.append(os.path.join(pattern, item))
+    
+    # Look for standalone service indicators (Dockerfile, service.yml, etc.)
+    for root, dirs, files in os.walk(repo_path):
+        # Skip hidden directories and common non-service directories
+        if (os.path.basename(root).startswith('.') or 
+            "node_modules" in root or 
+            "__pycache__" in root or
+            "venv" in root or
+            ".git" in root):
+            continue
+        
+        # Check for service indicators
+        service_indicators = 0
+        has_dockerfile = False
+        has_service_config = False
+        has_package_json = False
+        has_requirements = False
+        has_api_endpoints = False
+        
+        rel_path = os.path.relpath(root, repo_path)
+        
+        for file in files:
+            if file.lower() == "dockerfile":
+                has_dockerfile = True
+                service_indicators += 2
+            elif file.lower() in ["docker-compose.yml", "docker-compose.yaml"]:
+                service_indicators += 1
+            elif file.lower() in ["service.yml", "service.yaml", "manifest.yml", "manifest.yaml"]:
+                has_service_config = True
+                service_indicators += 2
+            elif file.lower() == "package.json":
+                has_package_json = True
+                service_indicators += 1
+            elif file.lower() == "requirements.txt" or file.lower() == "pyproject.toml":
+                has_requirements = True
+                service_indicators += 1
+            elif file.lower() in ["api.py", "routes.py", "endpoints.py", "controller.py", "app.py", "server.py"]:
+                has_api_endpoints = True
+                service_indicators += 2
+        
+        # If enough indicators are present, consider it a microservice
+        if service_indicators >= 3 or has_dockerfile or has_service_config:
+            # Avoid adding if it's a child of an already identified service directory
+            if not any(rel_path.startswith(sd) for sd in service_dirs):
+                service_dirs.append(rel_path)
+    
+    # Create microservice info objects
+    for service_dir in service_dirs:
+        full_path = os.path.join(repo_path, service_dir)
+        service_name = os.path.basename(service_dir)
+        
+        # Determine service type based on files
+        service_type = "unknown"
+        if os.path.exists(os.path.join(full_path, "requirements.txt")) or os.path.exists(os.path.join(full_path, "pyproject.toml")):
+            service_type = "python"
+        elif os.path.exists(os.path.join(full_path, "package.json")):
+            service_type = "nodejs"
+        elif os.path.exists(os.path.join(full_path, "pom.xml")):
+            service_type = "java"
+        elif os.path.exists(os.path.join(full_path, "go.mod")):
+            service_type = "go"
+        
+        # Count files to determine primary language if type is unknown
+        if service_type == "unknown":
+            file_extensions = {".py": 0, ".js": 0, ".ts": 0, ".java": 0, ".go": 0}
+            
+            for root, _, files in os.walk(full_path):
+                for file in files:
+                    ext = os.path.splitext(file)[1].lower()
+                    if ext in file_extensions:
+                        file_extensions[ext] += 1
+            
+            # Determine language with most files
+            if file_extensions[".py"] > file_extensions[".js"] and file_extensions[".py"] > file_extensions[".ts"] and file_extensions[".py"] > file_extensions[".java"] and file_extensions[".py"] > file_extensions[".go"]:
+                service_type = "python"
+            elif file_extensions[".js"] > file_extensions[".ts"]:
+                service_type = "nodejs"
+            elif file_extensions[".ts"] > 0:
+                service_type = "typescript"
+            elif file_extensions[".java"] > 0:
+                service_type = "java"
+            elif file_extensions[".go"] > 0:
+                service_type = "go"
+        
+        # Analyze service files to detect dependencies and API endpoints
+        api_endpoints = []
+        dependencies = []
+        
+        # Look for API endpoints in Python files
+        if service_type in ["python"]:
+            for root, _, files in os.walk(full_path):
+                for file in files:
+                    if file.endswith(".py"):
+                        file_path = os.path.join(root, file)
+                        try:
+                            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                                content = f.read()
+                                
+                                # Check for FastAPI routes
+                                if "@app.get(" in content or "@app.post(" in content or "@router.get(" in content or "@router.post(" in content:
+                                    api_endpoints.append({
+                                        "file": os.path.relpath(file_path, repo_path),
+                                        "type": "fastapi"
+                                    })
+                                # Check for Flask routes
+                                elif "@app.route(" in content or "@blueprint.route(" in content:
+                                    api_endpoints.append({
+                                        "file": os.path.relpath(file_path, repo_path),
+                                        "type": "flask"
+                                    })
+                        except Exception as e:
+                            logger.error(f"Error reading file {file_path}: {str(e)}")
+        
+        # Look for API endpoints in JavaScript/TypeScript files
+        elif service_type in ["nodejs", "typescript"]:
+            for root, _, files in os.walk(full_path):
+                for file in files:
+                    if file.endswith((".js", ".ts")):
+                        file_path = os.path.join(root, file)
+                        try:
+                            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                                content = f.read()
+                                
+                                # Check for Express routes
+                                if "app.get(" in content or "app.post(" in content or "router.get(" in content or "router.post(" in content:
+                                    api_endpoints.append({
+                                        "file": os.path.relpath(file_path, repo_path),
+                                        "type": "express"
+                                    })
+                                # Check for Fastify routes
+                                elif "fastify.get(" in content or "fastify.post(" in content:
+                                    api_endpoints.append({
+                                        "file": os.path.relpath(file_path, repo_path),
+                                        "type": "fastify"
+                                    })
+                        except Exception as e:
+                            logger.error(f"Error reading file {file_path}: {str(e)}")
+        
+        # Add the microservice info
+        microservices.append({
+            "name": service_name,
+            "path": service_dir,
+            "type": service_type,
+            "api_endpoints": api_endpoints,
+            "dependencies": dependencies
+        })
+    
+    return microservices
+
+def _identify_api_gateways(repo_path: str, graph_data: Dict) -> List[Dict]:
+    """Identify API gateways in the repository"""
+    api_gateways = []
+    
+    # Look for files that might be API gateways
+    gateway_files = []
+    
+    for root, _, files in os.walk(repo_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            rel_path = os.path.relpath(file_path, repo_path)
+            
+            # Skip hidden files and directories
+            if (file.startswith('.') or
+                "__pycache__" in rel_path or
+                "node_modules" in rel_path or
+                ".git" in rel_path):
+                continue
+            
+            # Check for gateway indicators in filename
+            if ("gateway" in file.lower() or 
+                "proxy" in file.lower() or 
+                "router" in file.lower()):
+                gateway_files.append(rel_path)
+            
+            # For Python and JS/TS files, check content for gateway patterns
+            if file.endswith((".py", ".js", ".ts")):
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read().lower()
+                        
+                        # Check for gateway patterns in content
+                        if (("api gateway" in content or "apigateway" in content) and
+                            ("route" in content or "proxy" in content or "forward" in content)):
+                            gateway_files.append(rel_path)
+                except Exception as e:
+                    logger.error(f"Error reading file {file_path}: {str(e)}")
+    
+    # Analyze gateway files
+    for gateway_file in gateway_files:
+        file_path = os.path.join(repo_path, gateway_file)
+        
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            
+            # Determine gateway type
+            gateway_type = "unknown"
+            routes = []
+            
+            if gateway_file.endswith(".py"):
+                gateway_type = "python"
+                
+                # Check for common Python gateway frameworks
+                if "import fastapi" in content.lower():
+                    gateway_type = "fastapi"
+                elif "import flask" in content.lower():
+                    gateway_type = "flask"
+                elif "import aiohttp" in content.lower():
+                    gateway_type = "aiohttp"
+                
+                # Extract routes (simplified, would need AST parsing for accuracy)
+                import re
+                # Look for route patterns like @app.route("/path") or @app.get("/path")
+                route_patterns = re.findall(r'@\w+\.(route|get|post|put|delete)\([\'"]([^\'"]+)[\'"]', content)
+                routes = [route for _, route in route_patterns]
+                
+            elif gateway_file.endswith((".js", ".ts")):
+                gateway_type = "nodejs"
+                
+                # Check for common JS/TS gateway frameworks
+                if "express" in content.lower():
+                    gateway_type = "express"
+                elif "fastify" in content.lower():
+                    gateway_type = "fastify"
+                elif "koa" in content.lower():
+                    gateway_type = "koa"
+                elif "apollo" in content.lower() and "gateway" in content.lower():
+                    gateway_type = "apollo"
+                
+                # Extract routes (simplified)
+                import re
+                # Look for route patterns like app.get("/path") or router.post("/path")
+                route_patterns = re.findall(r'(?:app|router)\.(get|post|put|delete)\([\'"]([^\'"]+)[\'"]', content)
+                routes = [route for _, route in route_patterns]
+            
+            # Add the gateway
+            api_gateways.append({
+                "file": gateway_file,
+                "type": gateway_type,
+                "routes": routes
+            })
+        except Exception as e:
+            logger.error(f"Error analyzing gateway file {gateway_file}: {str(e)}")
+    
+    return api_gateways
+
+def _identify_plugins(repo_path: str, graph_data: Dict) -> List[Dict]:
+    """Identify plugin architecture components in the repository"""
+    plugins = []
+    
+    # Look for plugin indicators in directory structure
+    plugin_dirs = []
+    
+    # Check for common plugin directory patterns
+    for pattern in ["plugins/", "extensions/", "addons/"]:
+        plugin_pattern_path = os.path.join(repo_path, pattern)
+        if os.path.exists(plugin_pattern_path) and os.path.isdir(plugin_pattern_path):
+            # Add subdirectories as potential plugins
+            for item in os.listdir(plugin_pattern_path):
+                item_path = os.path.join(plugin_pattern_path, item)
+                if os.path.isdir(item_path) and not item.startswith('.'):
+                    plugin_dirs.append(os.path.join(pattern, item))
+    
+    # Look for plugin loader or registration files
+    plugin_loaders = []
+    
+    for root, _, files in os.walk(repo_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            rel_path = os.path.relpath(file_path, repo_path)
+            
+            # Skip hidden files and directories
+            if (file.startswith('.') or
+                "__pycache__" in rel_path or
+                "node_modules" in rel_path or
+                ".git" in rel_path):
+                continue
+            
+            # Check filename for plugin indicators
+            if ("plugin" in file.lower() and 
+                ("loader" in file.lower() or "registry" in file.lower() or "manager" in file.lower())):
+                plugin_loaders.append(rel_path)
+            
+            # For Python and JS/TS files, check content for plugin patterns
+            if file.endswith((".py", ".js", ".ts")):
+                try:
+                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read().lower()
+                        
+                        # Check for plugin patterns in content
+                        if ((("plugin" in content or "extension" in content) and
+                             ("load" in content or "register" in content)) or
+                            "pluginmanager" in content.replace(" ", "").lower()):
+                            plugin_loaders.append(rel_path)
+                except Exception as e:
+                    logger.error(f"Error reading file {file_path}: {str(e)}")
+    
+    # Create plugin info objects from directories
+    for plugin_dir in plugin_dirs:
+        full_path = os.path.join(repo_path, plugin_dir)
+        plugin_name = os.path.basename(plugin_dir)
+        
+        # Determine plugin type
+        plugin_type = "unknown"
+        if os.path.exists(os.path.join(full_path, "requirements.txt")) or os.path.exists(os.path.join(full_path, "pyproject.toml")):
+            plugin_type = "python"
+        elif os.path.exists(os.path.join(full_path, "package.json")):
+            plugin_type = "nodejs"
+        elif os.path.exists(os.path.join(full_path, "plugin.xml")) or os.path.exists(os.path.join(full_path, "manifest.xml")):
+            plugin_type = "xml-based"
+        
+        # Check for configuration files
+        config_files = []
+        for file in os.listdir(full_path):
+            if file.lower() in ["plugin.json", "manifest.json", "config.json", "plugin.yml", "plugin.yaml"]:
+                config_files.append(file)
+        
+        # Add the plugin
+        plugins.append({
+            "name": plugin_name,
+            "path": plugin_dir,
+            "type": plugin_type,
+            "config_files": config_files
+        })
+    
+    # Add plugin loader information
+    for loader_file in plugin_loaders:
+        file_path = os.path.join(repo_path, loader_file)
+        
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            
+            # Determine loader type
+            loader_type = "unknown"
+            
+            if loader_file.endswith(".py"):
+                loader_type = "python"
+            elif loader_file.endswith((".js", ".ts")):
+                loader_type = "nodejs"
+            
+            # Check if this is likely a plugin system file
+            is_plugin_system = False
+            if ("plugin" in content.lower() and 
+                ("load" in content.lower() or "register" in content.lower() or "manager" in content.lower())):
+                is_plugin_system = True
+            
+            if is_plugin_system:
+                plugins.append({
+                    "name": os.path.basename(loader_file),
+                    "path": loader_file,
+                    "type": f"{loader_type}-loader",
+                    "is_loader": True
+                })
+        except Exception as e:
+            logger.error(f"Error analyzing plugin loader file {loader_file}: {str(e)}")
+    
+    return plugins
+
+def _analyze_service_communications(repo_path: str, graph_data: Dict, microservices: List[Dict]) -> List[Dict]:
+    """Analyze communication patterns between microservices"""
+    communications = []
+    
+    # Get microservice paths for checking
+    microservice_paths = {ms["path"]: ms["name"] for ms in microservices}
+    
+    # Look for communication patterns in source files
+    for root, _, files in os.walk(repo_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            rel_path = os.path.relpath(file_path, repo_path)
+            
+            # Skip hidden files and directories
+            if (file.startswith('.') or
+                "__pycache__" in rel_path or
+                "node_modules" in rel_path or
+                ".git" in rel_path):
+                continue
+            
+            # Only check source files
+            if not file.endswith((".py", ".js", ".ts", ".java", ".go")):
+                continue
+            
+            # Determine which microservice this file belongs to
+            source_service = None
+            for ms_path, ms_name in microservice_paths.items():
+                if rel_path.startswith(ms_path):
+                    source_service = ms_name
+                    break
+            
+            # Skip if not part of a microservice
+            if not source_service:
+                continue
+            
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+                
+                # Check for HTTP/API calls
+                http_patterns = {
+                    "python": ["requests.get", "requests.post", "requests.put", "requests.delete", 
+                              "http.client", "urllib", "aiohttp.Client"],
+                    "nodejs": ["fetch(", "axios.", "http.request", "https.request"],
+                    "general": ["api_url", "apiUrl", "api_endpoint", "apiEndpoint", 
+                               "service_url", "serviceUrl", "service_endpoint", "serviceEndpoint"]
+                }
+                
+                # Check for message queue / event bus patterns
+                mq_patterns = {
+                    "python": ["kafka", "rabbitmq", "pubsub", "redis.pubsub", "nats."],
+                    "nodejs": ["kafka", "amqp", "rabbitmq", "pubsub", "redis.pubsub", "nats."],
+                    "general": ["message_broker", "messageBroker", "event_bus", "eventBus", 
+                               "publish", "subscribe", "producer", "consumer"]
+                }
+                
+                # Check for gRPC patterns
+                grpc_patterns = {
+                    "python": ["grpc.", "import grpc"],
+                    "nodejs": ["@grpc/", "grpc."],
+                    "general": ["rpc_client", "rpcClient", "stub."]
+                }
+                
+                # Determine file type
+                file_type = "general"
+                if file.endswith(".py"):
+                    file_type = "python"
+                elif file.endswith((".js", ".ts")):
+                    file_type = "nodejs"
+                
+                # Check for communication patterns
+                comm_type = None
+                comm_details = []
+                
+                # Check HTTP patterns
+                for pattern in http_patterns[file_type] + http_patterns["general"]:
+                    if pattern in content:
+                        comm_type = "http"
+                        comm_details.append(pattern)
+                
+                # Check message queue patterns
+                for pattern in mq_patterns[file_type] + mq_patterns["general"]:
+                    if pattern in content:
+                        comm_type = comm_type or "message_queue"
+                        comm_details.append(pattern)
+                
+                # Check gRPC patterns
+                for pattern in grpc_patterns[file_type] + grpc_patterns["general"]:
+                    if pattern in content:
+                        comm_type = comm_type or "grpc"
+                        comm_details.append(pattern)
+                
+                # If communication patterns found, add to results
+                if comm_type:
+                    # Try to determine target service
+                    target_service = None
+                    for ms_path, ms_name in microservice_paths.items():
+                        ms_path_parts = ms_path.split(os.sep)
+                        ms_name_parts = ms_name.split('-')
+                        
+                        # Check if service name appears in the content
+                        if ms_name in content or any(part in content for part in ms_name_parts if len(part) > 3):
+                            target_service = ms_name
+                            break
+                    
+                    communications.append({
+                        "source_service": source_service,
+                        "target_service": target_service,
+                        "file": rel_path,
+                        "type": comm_type,
+                        "details": list(set(comm_details))  # Unique patterns
+                    })
+            except Exception as e:
+                logger.error(f"Error analyzing file {file_path} for service communications: {str(e)}")
+    
+    return communications
+
+def _generate_microservice_recommendations(microservices: List[Dict], api_gateways: List[Dict], 
+                                          plugins: List[Dict], service_comms: List[Dict]) -> List[str]:
+    """Generate recommendations for microservice architecture optimization"""
+    recommendations = []
+    
+    # Check if microservices are identified
+    if not microservices:
+        recommendations.append("No clear microservice structure detected. Consider adopting a microservice architecture with well-defined service boundaries.")
+        return recommendations
+    
+    # Check for API gateway
+    if not api_gateways:
+        recommendations.append("No API gateway detected. Consider implementing an API gateway to centralize request handling and enforce cross-cutting concerns.")
+    elif len(api_gateways) > 1:
+        recommendations.append(f"Multiple API gateways detected ({len(api_gateways)}). Consider consolidating to a single gateway or implementing a federated gateway architecture.")
+    
+    # Check for plugin architecture
+    if not plugins:
+        recommendations.append("No plugin architecture detected. Consider implementing a plugin system to allow for extensibility and modularity.")
+    
+    # Check communication patterns
+    comm_types = {}
+    for comm in service_comms:
+        comm_type = comm.get("type")
+        if comm_type:
+            comm_types[comm_type] = comm_types.get(comm_type, 0) + 1
+    
+    if not comm_types:
+        recommendations.append("No clear service-to-service communication patterns detected. Consider implementing explicit communication mechanisms.")
+    elif len(comm_types) > 2:
+        comm_type_str = ", ".join(f"{k} ({v})" for k, v in comm_types.items())
+        recommendations.append(f"Multiple communication patterns detected ({comm_type_str}). Consider standardizing on one or two protocols.")
+    
+    if "http" in comm_types and comm_types.get("http", 0) > 5:
+        recommendations.append("Heavy use of HTTP for service communication detected. Consider using a more efficient protocol like gRPC for internal service communication.")
+    
+    if "message_queue" not in comm_types:
+        recommendations.append("No message queue usage detected. Consider implementing event-driven architecture for better scalability and resilience.")
+    
+    # Check for service isolation
+    if len(microservices) > 1:
+        recommendations.append(f"Ensure each microservice ({len(microservices)} detected) has its own database or schema to maintain data isolation.")
+    
+    # Add TerraFusion-specific recommendations for microservices
+    recommendations.append("Consider implementing a Model Content Protocol (MCP) for standardized communication between services.")
+    recommendations.append("Implement container orchestration (like Kubernetes) to manage the deployment of microservices.")
+    recommendations.append("Set up centralized logging and monitoring for all microservices.")
+    recommendations.append("Implement circuit breakers for resilient service-to-service communication.")
+    
+    return recommendations
 
 def generate_optimization_recommendations(graph_data: Dict) -> List[str]:
     """

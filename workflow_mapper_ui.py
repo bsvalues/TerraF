@@ -108,6 +108,10 @@ def run_dependency_analysis():
             st.session_state.workflow_dependencies_data = workflow_data
             st.session_state.dependency_graph_data = workflow_data.get('graph_data')
             
+            # Reset microservice analysis for workflow mode
+            if 'microservice_analysis' in st.session_state:
+                del st.session_state.microservice_analysis
+            
         else:
             # Analyze all dependencies
             st.info("Analyzing all project dependencies...")
@@ -115,6 +119,11 @@ def run_dependency_analysis():
             
             st.session_state.workflow_dependencies_data = None
             st.session_state.dependency_graph_data = all_data.get('graph_data')
+            
+            # Store microservice analysis if available
+            if 'microservice_analysis' in all_data:
+                st.session_state.microservice_analysis = all_data['microservice_analysis']
+                st.info(f"Detected {len(all_data['microservice_analysis'].get('microservices', []))} microservices in the TerraFusion architecture.")
         
         # Generate recommendations
         if st.session_state.dependency_graph_data:
@@ -139,108 +148,338 @@ def display_dependency_analysis_results():
         graph_data = st.session_state.dependency_graph_data
         
         if graph_data:
-            # Main dependency graph
-            st.markdown("### Module Dependency Graph")
+            # Show tabs for different visualization types
+            viz_tabs = st.tabs(["Module Dependencies", "Bottleneck Analysis", "Critical Paths", "Microservice Architecture"])
             
-            fig = visualize_dependency_graph(
-                graph_data, 
-                highlight_bottlenecks=st.session_state.highlight_bottlenecks
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Display metrics
-            metrics = graph_data.get('metrics', {})
-            if metrics:
-                col1, col2, col3 = st.columns(3)
+            with viz_tabs[0]:  # Module Dependencies
+                # Main dependency graph
+                st.markdown("### Module Dependency Graph")
                 
-                with col1:
-                    st.metric("Modules", metrics.get('node_count', 0))
+                fig = visualize_dependency_graph(
+                    graph_data, 
+                    highlight_bottlenecks=st.session_state.highlight_bottlenecks
+                )
                 
-                with col2:
-                    st.metric("Dependencies", metrics.get('edge_count', 0))
+                st.plotly_chart(fig, use_container_width=True)
                 
-                with col3:
-                    st.metric("Avg. Dependencies", round(metrics.get('average_degree', 0), 2))
-            
-            # Display bottlenecks if any
-            bottlenecks = graph_data.get('bottlenecks', [])
-            if bottlenecks:
-                st.markdown("### Bottleneck Analysis")
-                st.markdown(f"Found **{len(bottlenecks)}** potential bottlenecks in the codebase.")
-                
-                # Bottleneck visualization
-                bottleneck_fig = visualize_bottlenecks(graph_data)
-                st.plotly_chart(bottleneck_fig, use_container_width=True)
-                
-                # Display detailed bottleneck information
-                with st.expander("Detailed Bottleneck Information", expanded=False):
-                    st.markdown("#### Top Bottlenecks")
+                # Display metrics
+                metrics = graph_data.get('metrics', {})
+                if metrics:
+                    col1, col2, col3 = st.columns(3)
                     
-                    for i, bottleneck in enumerate(bottlenecks[:10]):  # Show top 10
-                        severity = bottleneck.get('severity', 0)
-                        severity_color = (
-                            "🔴" if severity > 0.5 else 
-                            "🟠" if severity > 0.3 else 
-                            "🟡"
-                        )
-                        
-                        st.markdown(f"{severity_color} **{os.path.basename(bottleneck['file'])}**")
-                        st.markdown(f"""
-                        - **File:** `{bottleneck['file']}`
-                        - **Centrality:** {bottleneck['centrality']:.3f}
-                        - **Incoming Dependencies:** {bottleneck['in_degree']}
-                        - **Outgoing Dependencies:** {bottleneck['out_degree']}
-                        - **Severity Score:** {bottleneck['severity']:.2f}
-                        """)
-                        
-                        if i < len(bottlenecks) - 1:
-                            st.markdown("---")
+                    with col1:
+                        st.metric("Modules", metrics.get('node_count', 0))
+                    
+                    with col2:
+                        st.metric("Dependencies", metrics.get('edge_count', 0))
+                    
+                    with col3:
+                        st.metric("Avg. Dependencies", round(metrics.get('average_degree', 0), 2))
             
-            # Display critical paths if any
-            critical_paths = graph_data.get('critical_paths', [])
-            if critical_paths:
-                st.markdown("### Critical Path Analysis")
-                
-                # Separate cycles and long paths
-                cycles = [p for p in critical_paths if p['type'] == 'cycle']
-                long_paths = [p for p in critical_paths if p['type'] == 'path']
-                
-                if cycles:
-                    st.markdown(f"Found **{len(cycles)}** circular dependencies.")
-                
-                if long_paths:
-                    st.markdown(f"Found **{len(long_paths)}** long dependency chains.")
-                
-                # Critical paths visualization
-                critical_path_fig = visualize_critical_paths(graph_data)
-                st.plotly_chart(critical_path_fig, use_container_width=True)
-                
-                # Display detailed critical path information
-                with st.expander("Detailed Critical Path Information", expanded=False):
-                    if cycles:
-                        st.markdown("#### Circular Dependencies")
+            with viz_tabs[1]:  # Bottleneck Analysis
+                # Display bottlenecks if any
+                bottlenecks = graph_data.get('bottlenecks', [])
+                if bottlenecks:
+                    st.markdown("### Bottleneck Analysis")
+                    st.markdown(f"Found **{len(bottlenecks)}** potential bottlenecks in the codebase.")
+                    
+                    # Bottleneck visualization
+                    bottleneck_fig = visualize_bottlenecks(graph_data)
+                    st.plotly_chart(bottleneck_fig, use_container_width=True)
+                    
+                    # Display detailed bottleneck information
+                    with st.expander("Detailed Bottleneck Information", expanded=False):
+                        st.markdown("#### Top Bottlenecks")
                         
-                        for i, cycle in enumerate(cycles):
-                            st.markdown(f"**Cycle {i+1}** (Length: {cycle['length']})")
-                            st.markdown(f"- **Path:** {cycle['path_str']}")
-                            st.markdown(f"- **Severity:** {cycle['severity']}")
+                        for i, bottleneck in enumerate(bottlenecks[:10]):  # Show top 10
+                            severity = bottleneck.get('severity', 0)
+                            severity_color = (
+                                "🔴" if severity > 0.5 else 
+                                "🟠" if severity > 0.3 else 
+                                "🟡"
+                            )
                             
-                            if i < len(cycles) - 1:
+                            st.markdown(f"{severity_color} **{os.path.basename(bottleneck['file'])}**")
+                            st.markdown(f"""
+                            - **File:** `{bottleneck['file']}`
+                            - **Centrality:** {bottleneck['centrality']:.3f}
+                            - **Incoming Dependencies:** {bottleneck['in_degree']}
+                            - **Outgoing Dependencies:** {bottleneck['out_degree']}
+                            - **Severity Score:** {bottleneck['severity']:.2f}
+                            """)
+                            
+                            if i < len(bottlenecks) - 1:
                                 st.markdown("---")
+                else:
+                    st.info("No bottlenecks detected in the codebase.")
+            
+            with viz_tabs[2]:  # Critical Paths
+                # Display critical paths if any
+                critical_paths = graph_data.get('critical_paths', [])
+                if critical_paths:
+                    st.markdown("### Critical Path Analysis")
+                    
+                    # Separate cycles and long paths
+                    cycles = [p for p in critical_paths if p['type'] == 'cycle']
+                    long_paths = [p for p in critical_paths if p['type'] == 'path']
+                    
+                    if cycles:
+                        st.markdown(f"Found **{len(cycles)}** circular dependencies.")
                     
                     if long_paths:
-                        st.markdown("#### Long Dependency Chains")
-                        
-                        for i, path in enumerate(long_paths):
-                            st.markdown(f"**Path {i+1}** (Length: {path['length']})")
-                            st.markdown(f"- **Path:** {path['path_str']}")
-                            st.markdown(f"- **Severity:** {path['severity']}")
+                        st.markdown(f"Found **{len(long_paths)}** long dependency chains.")
+                    
+                    # Critical paths visualization
+                    critical_path_fig = visualize_critical_paths(graph_data)
+                    st.plotly_chart(critical_path_fig, use_container_width=True)
+                    
+                    # Display detailed critical path information
+                    with st.expander("Detailed Critical Path Information", expanded=False):
+                        if cycles:
+                            st.markdown("#### Circular Dependencies")
                             
-                            if i < len(long_paths) - 1:
-                                st.markdown("---")
+                            for i, cycle in enumerate(cycles):
+                                st.markdown(f"**Cycle {i+1}** (Length: {cycle['length']})")
+                                st.markdown(f"- **Path:** {cycle['path_str']}")
+                                st.markdown(f"- **Severity:** {cycle['severity']}")
+                                
+                                if i < len(cycles) - 1:
+                                    st.markdown("---")
+                        
+                        if long_paths:
+                            st.markdown("#### Long Dependency Chains")
+                            
+                            for i, path in enumerate(long_paths):
+                                st.markdown(f"**Path {i+1}** (Length: {path['length']})")
+                                st.markdown(f"- **Path:** {path['path_str']}")
+                                st.markdown(f"- **Severity:** {path['severity']}")
+                                
+                                if i < len(long_paths) - 1:
+                                    st.markdown("---")
+                else:
+                    st.info("No critical paths detected in the codebase.")
             
-            # Display optimization recommendations
+            with viz_tabs[3]:  # Microservice Architecture
+                # Display microservice architecture analysis
+                microservice_analysis = st.session_state.get('microservice_analysis')
+                if microservice_analysis:
+                    st.markdown("### TerraFusion Microservice Architecture Analysis")
+                    
+                    # Show microservices
+                    microservices = microservice_analysis.get('microservices', [])
+                    if microservices:
+                        st.markdown(f"#### Detected Microservices ({len(microservices)})")
+                        
+                        ms_cols = st.columns(min(len(microservices), 3))
+                        for i, microservice in enumerate(microservices):
+                            col_index = i % len(ms_cols)
+                            with ms_cols[col_index]:
+                                ms_name = microservice.get('name', 'Unknown')
+                                ms_type = microservice.get('type', 'unknown')
+                                ms_path = microservice.get('path', '')
+                                ms_endpoints = microservice.get('api_endpoints', [])
+                                
+                                # Determine icon based on service type
+                                icon = "🔹"
+                                if ms_type == "python":
+                                    icon = "🐍"
+                                elif ms_type in ["nodejs", "typescript"]:
+                                    icon = "🟢"
+                                elif ms_type == "java":
+                                    icon = "☕"
+                                elif ms_type == "go":
+                                    icon = "🔵"
+                                
+                                st.markdown(f"##### {icon} {ms_name}")
+                                st.markdown(f"**Type:** {ms_type}")
+                                st.markdown(f"**Path:** `{ms_path}`")
+                                
+                                if ms_endpoints:
+                                    with st.expander(f"API Endpoints ({len(ms_endpoints)})", expanded=False):
+                                        for endpoint in ms_endpoints:
+                                            st.markdown(f"- `{endpoint.get('file')}` ({endpoint.get('type')})")
+                        
+                        # Create a visualization of the microservice architecture
+                        st.markdown("#### Microservice Architecture Visualization")
+                        
+                        # Create a placeholder for the graph
+                        if len(microservices) > 0:
+                            try:
+                                import plotly.graph_objects as go
+                                import networkx as nx
+                                
+                                # Create a graph for visualization
+                                G = nx.DiGraph()
+                                
+                                # Add microservice nodes
+                                for ms in microservices:
+                                    G.add_node(ms['name'], 
+                                             type=ms['type'], 
+                                             path=ms['path'])
+                                
+                                # Add connections between services
+                                service_comms = microservice_analysis.get('service_communications', [])
+                                for comm in service_comms:
+                                    source = comm.get('source_service')
+                                    target = comm.get('target_service')
+                                    comm_type = comm.get('type')
+                                    
+                                    if source and target:
+                                        G.add_edge(source, target, type=comm_type)
+                                
+                                # Create a spring layout
+                                pos = nx.spring_layout(G, seed=42)
+                                
+                                # Create edge traces
+                                edge_x = []
+                                edge_y = []
+                                edge_text = []
+                                
+                                for edge in G.edges(data=True):
+                                    x0, y0 = pos[edge[0]]
+                                    x1, y1 = pos[edge[1]]
+                                    
+                                    edge_x.extend([x0, x1, None])
+                                    edge_y.extend([y0, y1, None])
+                                    
+                                    edge_text.append(edge[2].get('type', 'connection'))
+                                
+                                edge_trace = go.Scatter(
+                                    x=edge_x, y=edge_y,
+                                    line=dict(width=1.5, color='rgba(50, 50, 50, 0.8)'),
+                                    hoverinfo='none',
+                                    mode='lines'
+                                )
+                                
+                                # Create node traces based on service type
+                                node_types = set(nx.get_node_attributes(G, 'type').values())
+                                
+                                node_traces = []
+                                
+                                for node_type in node_types:
+                                    nodes_of_type = [n for n, data in G.nodes(data=True) if data.get('type') == node_type]
+                                    
+                                    node_x = []
+                                    node_y = []
+                                    node_text = []
+                                    
+                                    for node in nodes_of_type:
+                                        x, y = pos[node]
+                                        node_x.append(x)
+                                        node_y.append(y)
+                                        node_text.append(node)
+                                    
+                                    # Determine color based on type
+                                    color = 'rgba(31, 119, 180, 0.8)'  # Default blue
+                                    if node_type == 'python':
+                                        color = 'rgba(44, 160, 44, 0.8)'  # Green
+                                    elif node_type in ['nodejs', 'typescript']:
+                                        color = 'rgba(255, 127, 14, 0.8)'  # Orange
+                                    elif node_type == 'java':
+                                        color = 'rgba(214, 39, 40, 0.8)'  # Red
+                                    elif node_type == 'go':
+                                        color = 'rgba(148, 103, 189, 0.8)'  # Purple
+                                    
+                                    node_trace = go.Scatter(
+                                        x=node_x, y=node_y,
+                                        mode='markers+text',
+                                        text=node_text,
+                                        textposition="top center",
+                                        marker=dict(
+                                            showscale=False,
+                                            color=color,
+                                            size=20,
+                                            line=dict(width=1, color='rgba(0, 0, 0, 0.8)')
+                                        ),
+                                        hoverinfo='text',
+                                        hovertext=node_text,
+                                        name=node_type
+                                    )
+                                    
+                                    node_traces.append(node_trace)
+                                
+                                # Create figure
+                                fig = go.Figure(data=[edge_trace] + node_traces,
+                                              layout=go.Layout(
+                                                  title='Microservice Architecture',
+                                                  titlefont=dict(size=16),
+                                                  showlegend=True,
+                                                  hovermode='closest',
+                                                  margin=dict(b=20, l=5, r=5, t=40),
+                                                  xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                                  yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                                  legend=dict(
+                                                      yanchor="top",
+                                                      y=0.99,
+                                                      xanchor="left",
+                                                      x=0.01
+                                                  ),
+                                                  height=600,
+                                                  paper_bgcolor='rgba(255, 255, 255, 1)',
+                                                  plot_bgcolor='rgba(255, 255, 255, 1)'
+                                              ))
+                                
+                                st.plotly_chart(fig, use_container_width=True)
+                            except Exception as e:
+                                st.error(f"Error creating microservice visualization: {str(e)}")
+                    else:
+                        st.info("No microservices detected in the codebase.")
+                    
+                    # Show API gateways
+                    api_gateways = microservice_analysis.get('api_gateways', [])
+                    if api_gateways:
+                        st.markdown(f"#### API Gateways ({len(api_gateways)})")
+                        
+                        for i, gateway in enumerate(api_gateways):
+                            file = gateway.get('file', 'Unknown')
+                            gateway_type = gateway.get('type', 'unknown')
+                            routes = gateway.get('routes', [])
+                            
+                            st.markdown(f"**Gateway {i+1}:** `{file}` ({gateway_type})")
+                            
+                            if routes:
+                                st.markdown(f"Routes: {', '.join(routes)}")
+                    
+                    # Show plugin architecture
+                    plugins = microservice_analysis.get('plugins', [])
+                    if plugins:
+                        st.markdown(f"#### Plugin Architecture ({len(plugins)})")
+                        
+                        # Separate plugins and loaders
+                        regular_plugins = [p for p in plugins if not p.get('is_loader', False)]
+                        loaders = [p for p in plugins if p.get('is_loader', False)]
+                        
+                        plugin_cols = st.columns(2)
+                        with plugin_cols[0]:
+                            st.markdown(f"**Plugins ({len(regular_plugins)})**")
+                            for plugin in regular_plugins:
+                                name = plugin.get('name', 'Unknown')
+                                plugin_type = plugin.get('type', 'unknown')
+                                config_files = plugin.get('config_files', [])
+                                
+                                st.markdown(f"- **{name}** ({plugin_type})")
+                                if config_files:
+                                    st.markdown(f"  Config: {', '.join(config_files)}")
+                        
+                        with plugin_cols[1]:
+                            st.markdown(f"**Plugin Loaders ({len(loaders)})**")
+                            for loader in loaders:
+                                name = loader.get('name', 'Unknown')
+                                loader_type = loader.get('type', 'unknown')
+                                
+                                st.markdown(f"- **{name}** ({loader_type})")
+                    
+                    # Show recommendations for microservice architecture
+                    recommendations = microservice_analysis.get('recommendations', [])
+                    if recommendations:
+                        st.markdown("#### TerraFusion-Specific Recommendations")
+                        
+                        for i, recommendation in enumerate(recommendations):
+                            st.markdown(f"{i+1}. {recommendation}")
+                else:
+                    st.info("No microservice architecture analysis data available. Please run the analysis with 'All Dependencies' mode.")
+            
+            # Display optimization recommendations at the bottom
             recommendations = st.session_state.get('optimization_recommendations', [])
             if recommendations:
                 st.markdown("### Optimization Recommendations")
