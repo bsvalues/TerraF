@@ -1,9 +1,6 @@
 """
-Model Hub Service
+Model Hub Package
 
-This service manages AI models used by the system, providing:
-- Model registration and discovery
-- Model versioning
-- Model evaluation and benchmarking
-- A/B testing framework
+This service provides centralized model management, versioning, and serving
+for all AI models used in the Code Deep Dive Analyzer system.
 """

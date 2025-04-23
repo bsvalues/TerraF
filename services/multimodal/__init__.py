@@ -1,6 +1,6 @@
 """
-Multimodal Understanding Package
+Multimodal Package
 
-This package provides components for multimodal code-language understanding,
-enabling bidirectional translation and cross-modal alignment between code and natural language.
+This service provides processing capabilities for multiple modalities (code, text, diagrams),
+enabling unified analysis and generation across different representation formats.
 """

@@ -1,6 +1,6 @@
 """
-Neuro-Symbolic Reasoning Package
+Neuro-Symbolic Package
 
-This package provides components for neuro-symbolic reasoning,
-combining neural networks with symbolic logic for code analysis.
+This service provides a hybrid approach combining neural networks with symbolic reasoning,
+enabling explainable AI with robust logical reasoning capabilities.
 """

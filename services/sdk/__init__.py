@@ -1,6 +1,6 @@
 """
-Developer SDK Package
+SDK Package
 
-This package provides components for third-party developers to extend the system,
-including client libraries, plugin interfaces, and documentation generators.
+This service provides a Software Development Kit (SDK) for third-party developers,
+enabling them to extend the system with custom plugins and integrate with external tools.
 """

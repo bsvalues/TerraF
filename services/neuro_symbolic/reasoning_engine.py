@@ -1,133 +1,108 @@
 """
 Neuro-Symbolic Reasoning Engine
 
-This module provides the core reasoning engine that combines
-neural network capabilities with symbolic logical reasoning.
+This module implements a hybrid reasoning engine that combines neural networks with
+symbolic reasoning to provide explainable AI with robust logical reasoning capabilities.
 """
 import os
-import re
 import json
 import logging
-from typing import Dict, List, Any, Optional, Union, Tuple, Set
 import time
-import uuid
+import numpy as np
+from typing import Dict, List, Any, Optional, Union, Tuple, Set, Callable
+from enum import Enum
+import re
 
-# Placeholder for Z3 import - in a real implementation, this would use the Z3 theorem prover
-# import z3
+class ReasoningMode(Enum):
+    """Reasoning modes supported by the engine."""
+    NEURAL = "neural"
+    SYMBOLIC = "symbolic"
+    HYBRID = "hybrid"
 
-class Symbol:
-    """Base class for symbols in the reasoning system."""
-    def __init__(self, name: str, symbol_type: str, attributes: Optional[Dict[str, Any]] = None):
+
+class SymbolicRule:
+    """
+    Represents a symbolic rule in the reasoning system.
+    
+    A rule has the form:
+    IF <conditions> THEN <conclusions>
+    
+    where conditions and conclusions are logical expressions.
+    """
+    
+    def __init__(self, rule_id: str, name: str, conditions: str, conclusions: str,
+               confidence: float = 1.0, context: Optional[str] = None):
         """
-        Initialize a new symbol.
+        Initialize a symbolic rule.
         
         Args:
-            name: Name of the symbol
-            symbol_type: Type of the symbol
-            attributes: Optional attributes of the symbol
+            rule_id: Unique identifier for the rule
+            name: Human-readable name
+            conditions: Conditions part of the rule (IF part)
+            conclusions: Conclusions part of the rule (THEN part)
+            confidence: Confidence score (0.0 to 1.0)
+            context: Optional context where the rule applies
         """
-        self.id = str(uuid.uuid4())
+        self.id = rule_id
         self.name = name
-        self.symbol_type = symbol_type
-        self.attributes = attributes or {}
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert the symbol to a dictionary."""
-        return {
-            'id': self.id,
-            'name': self.name,
-            'type': self.symbol_type,
-            'attributes': self.attributes
-        }
-    
-    @staticmethod
-    def from_dict(data: Dict[str, Any]) -> 'Symbol':
-        """Create a symbol from a dictionary."""
-        symbol = Symbol(data['name'], data['type'], data.get('attributes', {}))
-        symbol.id = data['id']
-        return symbol
-
-
-class Rule:
-    """A logical rule in the reasoning system."""
-    def __init__(self, name: str, premises: List[str], conclusion: str, 
-                confidence: float = 1.0, explanation: Optional[str] = None):
-        """
-        Initialize a new rule.
-        
-        Args:
-            name: Name of the rule
-            premises: List of premise expressions
-            conclusion: Conclusion expression
-            confidence: Confidence factor for the rule (0.0 to 1.0)
-            explanation: Optional natural language explanation
-        """
-        self.id = str(uuid.uuid4())
-        self.name = name
-        self.premises = premises
-        self.conclusion = conclusion
+        self.conditions = conditions
+        self.conclusions = conclusions
         self.confidence = confidence
-        self.explanation = explanation
+        self.context = context
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert the rule to a dictionary."""
+        """Convert rule to a dictionary."""
         return {
             'id': self.id,
             'name': self.name,
-            'premises': self.premises,
-            'conclusion': self.conclusion,
+            'conditions': self.conditions,
+            'conclusions': self.conclusions,
             'confidence': self.confidence,
-            'explanation': self.explanation
+            'context': self.context
         }
     
-    @staticmethod
-    def from_dict(data: Dict[str, Any]) -> 'Rule':
-        """Create a rule from a dictionary."""
-        rule = Rule(
-            data['name'], 
-            data['premises'], 
-            data['conclusion'], 
-            data.get('confidence', 1.0), 
-            data.get('explanation')
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'SymbolicRule':
+        """
+        Create a rule from a dictionary.
+        
+        Args:
+            data: Rule data dictionary
+        
+        Returns:
+            SymbolicRule instance
+        """
+        return cls(
+            rule_id=data['id'],
+            name=data['name'],
+            conditions=data['conditions'],
+            conclusions=data['conclusions'],
+            confidence=data.get('confidence', 1.0),
+            context=data.get('context')
         )
-        rule.id = data['id']
-        return rule
+    
+    def __str__(self) -> str:
+        """Get string representation of the rule."""
+        return f"IF {self.conditions} THEN {self.conclusions}"
 
 
-class SymbolicKnowledgeBase:
-    """A knowledge base of symbols and rules."""
-    def __init__(self):
-        """Initialize the knowledge base."""
-        self.symbols = {}
-        self.rules = {}
-        self.facts = set()
-        self.logger = logging.getLogger('symbolic_kb')
+class KnowledgeBase:
+    """
+    Knowledge base containing symbolic facts and rules.
+    """
     
-    def add_symbol(self, symbol: Symbol) -> str:
+    def __init__(self, name: str, domain: Optional[str] = None):
         """
-        Add a symbol to the knowledge base.
+        Initialize a knowledge base.
         
         Args:
-            symbol: Symbol to add
-            
-        Returns:
-            ID of the added symbol
+            name: Name of the knowledge base
+            domain: Optional domain of the knowledge base
         """
-        self.symbols[symbol.id] = symbol
-        return symbol.id
-    
-    def add_rule(self, rule: Rule) -> str:
-        """
-        Add a rule to the knowledge base.
-        
-        Args:
-            rule: Rule to add
-            
-        Returns:
-            ID of the added rule
-        """
-        self.rules[rule.id] = rule
-        return rule.id
+        self.name = name
+        self.domain = domain
+        self.facts = set()  # Set of fact strings
+        self.rules = {}  # rule_id -> SymbolicRule
     
     def add_fact(self, fact: str) -> None:
         """
@@ -136,590 +111,944 @@ class SymbolicKnowledgeBase:
         Args:
             fact: Fact to add
         """
-        self.facts.add(fact)
+        self.facts.add(fact.strip())
     
-    def get_symbol(self, symbol_id: str) -> Optional[Symbol]:
+    def remove_fact(self, fact: str) -> bool:
         """
-        Get a symbol by ID.
+        Remove a fact from the knowledge base.
         
         Args:
-            symbol_id: ID of the symbol
+            fact: Fact to remove
             
         Returns:
-            Symbol or None if not found
+            Removal success
         """
-        return self.symbols.get(symbol_id)
+        if fact in self.facts:
+            self.facts.remove(fact)
+            return True
+        return False
     
-    def get_rule(self, rule_id: str) -> Optional[Rule]:
+    def add_rule(self, rule: SymbolicRule) -> None:
         """
-        Get a rule by ID.
+        Add a rule to the knowledge base.
         
         Args:
-            rule_id: ID of the rule
-            
-        Returns:
-            Rule or None if not found
+            rule: Rule to add
         """
-        return self.rules.get(rule_id)
+        self.rules[rule.id] = rule
     
-    def query_symbols(self, symbol_type: Optional[str] = None, 
-                     attributes: Optional[Dict[str, Any]] = None) -> List[Symbol]:
+    def remove_rule(self, rule_id: str) -> bool:
         """
-        Query symbols by type and attributes.
+        Remove a rule from the knowledge base.
         
         Args:
-            symbol_type: Optional type to filter by
-            attributes: Optional attributes to filter by
+            rule_id: ID of the rule to remove
             
         Returns:
-            List of matching symbols
+            Removal success
         """
-        result = []
-        
-        for symbol in self.symbols.values():
-            # Filter by type
-            if symbol_type and symbol.symbol_type != symbol_type:
-                continue
-            
-            # Filter by attributes
-            if attributes:
-                match = True
-                for key, value in attributes.items():
-                    if key not in symbol.attributes or symbol.attributes[key] != value:
-                        match = False
-                        break
-                
-                if not match:
-                    continue
-            
-            result.append(symbol)
-        
-        return result
+        if rule_id in self.rules:
+            del self.rules[rule_id]
+            return True
+        return False
     
-    def forward_chain(self, max_iterations: int = 100) -> Set[str]:
+    def get_matching_rules(self, context: Optional[str] = None) -> List[SymbolicRule]:
         """
-        Perform forward chaining inference to derive new facts.
+        Get rules matching a context.
         
         Args:
-            max_iterations: Maximum number of inference iterations
+            context: Context to match
             
         Returns:
-            Set of all facts after inference
+            List of matching rules
         """
-        current_facts = self.facts.copy()
-        new_facts_derived = True
-        iteration = 0
+        if context is None:
+            return list(self.rules.values())
         
-        while new_facts_derived and iteration < max_iterations:
-            new_facts_derived = False
-            iteration += 1
-            
-            # Try to apply each rule
-            for rule in self.rules.values():
-                # Check if all premises are satisfied
-                premises_satisfied = True
-                for premise in rule.premises:
-                    if premise not in current_facts:
-                        premises_satisfied = False
-                        break
-                
-                # If all premises are satisfied, add the conclusion as a new fact
-                if premises_satisfied and rule.conclusion not in current_facts:
-                    current_facts.add(rule.conclusion)
-                    self.logger.info(f"Derived new fact: {rule.conclusion} (via rule: {rule.name})")
-                    new_facts_derived = True
-        
-        # Update the knowledge base with the new facts
-        self.facts = current_facts
-        
-        return self.facts
+        return [rule for rule in self.rules.values() if rule.context is None or rule.context == context]
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert the knowledge base to a dictionary."""
+        """Convert knowledge base to a dictionary."""
         return {
-            'symbols': {id: symbol.to_dict() for id, symbol in self.symbols.items()},
-            'rules': {id: rule.to_dict() for id, rule in self.rules.items()},
-            'facts': list(self.facts)
+            'name': self.name,
+            'domain': self.domain,
+            'facts': list(self.facts),
+            'rules': [rule.to_dict() for rule in self.rules.values()]
         }
     
-    @staticmethod
-    def from_dict(data: Dict[str, Any]) -> 'SymbolicKnowledgeBase':
-        """Create a knowledge base from a dictionary."""
-        kb = SymbolicKnowledgeBase()
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'KnowledgeBase':
+        """
+        Create a knowledge base from a dictionary.
         
-        # Load symbols
-        for symbol_id, symbol_data in data.get('symbols', {}).items():
-            symbol = Symbol.from_dict(symbol_data)
-            kb.symbols[symbol_id] = symbol
+        Args:
+            data: Knowledge base data dictionary
         
-        # Load rules
-        for rule_id, rule_data in data.get('rules', {}).items():
-            rule = Rule.from_dict(rule_data)
-            kb.rules[rule_id] = rule
+        Returns:
+            KnowledgeBase instance
+        """
+        kb = cls(name=data['name'], domain=data.get('domain'))
         
-        # Load facts
-        kb.facts = set(data.get('facts', []))
+        for fact in data.get('facts', []):
+            kb.add_fact(fact)
+        
+        for rule_data in data.get('rules', []):
+            kb.add_rule(SymbolicRule.from_dict(rule_data))
         
         return kb
 
 
-class NeuroSymbolicReasoner:
+class InferenceResult:
     """
-    Neuro-Symbolic Reasoning Engine.
-    
-    This engine combines neural networks for pattern recognition
-    with symbolic reasoning for logical inference.
+    Result of an inference operation.
     """
     
-    def __init__(self, model_provider: Any):
+    def __init__(self, inferred_facts: List[str], 
+               rule_activations: List[Dict[str, Any]],
+               confidence: float):
+        """
+        Initialize an inference result.
+        
+        Args:
+            inferred_facts: List of inferred facts
+            rule_activations: List of rule activations
+            confidence: Overall confidence score
+        """
+        self.inferred_facts = inferred_facts
+        self.rule_activations = rule_activations
+        self.confidence = confidence
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert inference result to a dictionary."""
+        return {
+            'inferred_facts': self.inferred_facts,
+            'rule_activations': self.rule_activations,
+            'confidence': self.confidence
+        }
+
+
+class NeuralNetworkInfo:
+    """
+    Information about a neural network used in the reasoning system.
+    """
+    
+    def __init__(self, network_id: str, name: str, task: str,
+               model_registry_id: Optional[str] = None,
+               embedding_dimension: Optional[int] = None,
+               metadata: Optional[Dict[str, Any]] = None):
+        """
+        Initialize neural network information.
+        
+        Args:
+            network_id: Unique identifier for the network
+            name: Human-readable name
+            task: Task the network is designed for
+            model_registry_id: Optional ID in the model registry
+            embedding_dimension: Optional dimension of the embeddings
+            metadata: Optional network metadata
+        """
+        self.id = network_id
+        self.name = name
+        self.task = task
+        self.model_registry_id = model_registry_id
+        self.embedding_dimension = embedding_dimension
+        self.metadata = metadata or {}
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert neural network info to a dictionary."""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'task': self.task,
+            'model_registry_id': self.model_registry_id,
+            'embedding_dimension': self.embedding_dimension,
+            'metadata': self.metadata
+        }
+
+
+class NeuroSymbolicEngine:
+    """
+    Neuro-symbolic reasoning engine.
+    
+    This class provides:
+    - Hybrid reasoning combining neural networks and symbolic logic
+    - Forward and backward chaining inference
+    - Knowledge base management
+    - Explanation generation
+    """
+    
+    def __init__(self, storage_dir: Optional[str] = None):
         """
         Initialize the reasoning engine.
         
         Args:
-            model_provider: Provider for neural models
+            storage_dir: Optional directory for persistent storage
         """
-        self.model_provider = model_provider
-        self.knowledge_base = SymbolicKnowledgeBase()
-        self.logger = logging.getLogger('neuro_symbolic')
+        # Set up storage directory
+        if storage_dir is None:
+            storage_dir = os.path.join(os.getcwd(), 'neuro_symbolic_storage')
         
-        # Initialize the symbolic reasoning engine
-        self._init_reasoning_engine()
+        self.storage_dir = storage_dir
+        os.makedirs(storage_dir, exist_ok=True)
         
-        # Load built-in rules
-        self._load_built_in_rules()
+        # Initialize logger
+        self.logger = logging.getLogger('neuro_symbolic_engine')
+        
+        # Initialize knowledge bases
+        self.knowledge_bases = {}  # name -> KnowledgeBase
+        
+        # Initialize neural networks
+        self.neural_networks = {}  # network_id -> NeuralNetworkInfo
+        
+        # Initialize neural network proxies (for actual model access)
+        self.network_proxies = {}  # network_id -> callable
+        
+        # Default embeddings cache
+        self.embeddings_cache = {}  # term -> numpy array
+        
+        # Load existing data
+        self._load_data()
     
-    def _init_reasoning_engine(self) -> None:
-        """Initialize the symbolic reasoning engine."""
-        # In a real implementation, this would initialize the Z3 solver or another reasoning engine
-        self.logger.info("Initialized symbolic reasoning engine")
+    def _load_data(self) -> None:
+        """Load existing data from storage."""
+        # Load knowledge bases
+        kb_dir = os.path.join(self.storage_dir, 'knowledge_bases')
+        if os.path.exists(kb_dir):
+            for filename in os.listdir(kb_dir):
+                if filename.endswith('.json'):
+                    kb_path = os.path.join(kb_dir, filename)
+                    try:
+                        with open(kb_path, 'r') as f:
+                            kb_data = json.load(f)
+                        
+                        kb = KnowledgeBase.from_dict(kb_data)
+                        self.knowledge_bases[kb.name] = kb
+                        
+                        self.logger.info(f"Loaded knowledge base: {kb.name}")
+                    except Exception as e:
+                        self.logger.error(f"Error loading knowledge base from {kb_path}: {e}")
+        
+        # Load neural network info
+        nn_dir = os.path.join(self.storage_dir, 'neural_networks')
+        if os.path.exists(nn_dir):
+            for filename in os.listdir(nn_dir):
+                if filename.endswith('.json'):
+                    nn_path = os.path.join(nn_dir, filename)
+                    try:
+                        with open(nn_path, 'r') as f:
+                            nn_data = json.load(f)
+                        
+                        network_id = nn_data['id']
+                        nn_info = NeuralNetworkInfo(
+                            network_id=network_id,
+                            name=nn_data['name'],
+                            task=nn_data['task'],
+                            model_registry_id=nn_data.get('model_registry_id'),
+                            embedding_dimension=nn_data.get('embedding_dimension'),
+                            metadata=nn_data.get('metadata', {})
+                        )
+                        
+                        self.neural_networks[network_id] = nn_info
+                        
+                        self.logger.info(f"Loaded neural network info: {nn_info.name}")
+                    except Exception as e:
+                        self.logger.error(f"Error loading neural network info from {nn_path}: {e}")
     
-    def _load_built_in_rules(self) -> None:
-        """Load built-in reasoning rules."""
-        # In a real implementation, this would load rules from a configuration file
-        
-        # Code quality rules
-        self.knowledge_base.add_rule(Rule(
-            "High Cyclomatic Complexity",
-            ["function(F)", "cyclomatic_complexity(F, C)", "C > 10"],
-            "high_complexity(F)",
-            0.9,
-            "Functions with cyclomatic complexity greater than 10 are considered complex"
-        ))
-        
-        self.knowledge_base.add_rule(Rule(
-            "Long Function",
-            ["function(F)", "line_count(F, L)", "L > 50"],
-            "long_function(F)",
-            0.8,
-            "Functions with more than 50 lines are considered long"
-        ))
-        
-        self.knowledge_base.add_rule(Rule(
-            "Code Smell Candidate",
-            ["high_complexity(F)", "long_function(F)"],
-            "code_smell_candidate(F)",
-            0.95,
-            "Functions that are both complex and long are likely code smell candidates"
-        ))
-        
-        # Architecture rules
-        self.knowledge_base.add_rule(Rule(
-            "Circular Dependency",
-            ["module(M1)", "module(M2)", "depends_on(M1, M2)", "depends_on(M2, M1)"],
-            "circular_dependency(M1, M2)",
-            1.0,
-            "Two modules that depend on each other create a circular dependency"
-        ))
-        
-        self.knowledge_base.add_rule(Rule(
-            "God Class",
-            ["class(C)", "method_count(C, M)", "M > 20"],
-            "god_class_candidate(C)",
-            0.85,
-            "Classes with more than 20 methods are candidates for the God Class anti-pattern"
-        ))
-        
-        # Database rules
-        self.knowledge_base.add_rule(Rule(
-            "Missing Index",
-            ["table(T)", "column(T, C)", "frequently_queried(T, C)", "not has_index(T, C)"],
-            "missing_index(T, C)",
-            0.9,
-            "Frequently queried columns should have an index"
-        ))
-        
-        self.logger.info("Loaded built-in reasoning rules")
-    
-    def extract_symbols_from_code(self, code: str, language: str) -> List[Symbol]:
+    def _save_knowledge_base(self, kb: KnowledgeBase) -> None:
         """
-        Extract symbols from code using neural analysis.
+        Save a knowledge base to storage.
         
         Args:
-            code: Source code to analyze
-            language: Programming language of the code
+            kb: Knowledge base to save
+        """
+        kb_dir = os.path.join(self.storage_dir, 'knowledge_bases')
+        os.makedirs(kb_dir, exist_ok=True)
+        
+        kb_path = os.path.join(kb_dir, f"{kb.name}.json")
+        
+        with open(kb_path, 'w') as f:
+            json.dump(kb.to_dict(), f, indent=2)
+    
+    def _save_neural_network_info(self, nn_info: NeuralNetworkInfo) -> None:
+        """
+        Save neural network info to storage.
+        
+        Args:
+            nn_info: Neural network info to save
+        """
+        nn_dir = os.path.join(self.storage_dir, 'neural_networks')
+        os.makedirs(nn_dir, exist_ok=True)
+        
+        nn_path = os.path.join(nn_dir, f"{nn_info.id}.json")
+        
+        with open(nn_path, 'w') as f:
+            json.dump(nn_info.to_dict(), f, indent=2)
+    
+    def create_knowledge_base(self, name: str, domain: Optional[str] = None) -> KnowledgeBase:
+        """
+        Create a new knowledge base.
+        
+        Args:
+            name: Name of the knowledge base
+            domain: Optional domain of the knowledge base
             
         Returns:
-            List of extracted symbols
+            Created knowledge base
         """
-        # Load the appropriate neural model for the language
-        model_info = self._get_model_for_language(language)
+        kb = KnowledgeBase(name=name, domain=domain)
+        self.knowledge_bases[name] = kb
         
-        # Use the neural model to extract symbols
-        extraction_result = self.model_provider.infer(
-            model_info,
+        # Save to storage
+        self._save_knowledge_base(kb)
+        
+        self.logger.info(f"Created knowledge base: {name}")
+        return kb
+    
+    def get_knowledge_base(self, name: str) -> Optional[KnowledgeBase]:
+        """
+        Get a knowledge base by name.
+        
+        Args:
+            name: Name of the knowledge base
+            
+        Returns:
+            Knowledge base or None if not found
+        """
+        return self.knowledge_bases.get(name)
+    
+    def list_knowledge_bases(self) -> List[Dict[str, Any]]:
+        """
+        List all knowledge bases.
+        
+        Returns:
+            List of knowledge base info dictionaries
+        """
+        return [
             {
-                'code': code,
-                'task': 'symbol_extraction'
+                'name': kb.name,
+                'domain': kb.domain,
+                'fact_count': len(kb.facts),
+                'rule_count': len(kb.rules)
             }
-        )
-        
-        # Process the extraction result into symbols
-        symbols = []
-        
-        # This is a simplified example - in a real implementation,
-        # the neural model would return structured data
-        for item in extraction_result.get('symbols', []):
-            symbol = Symbol(
-                item['name'],
-                item['type'],
-                item.get('attributes', {})
-            )
-            symbols.append(symbol)
-            
-            # Add the symbol to the knowledge base
-            self.knowledge_base.add_symbol(symbol)
-        
-        # Also add facts based on the extracted symbols
-        for fact in extraction_result.get('facts', []):
-            self.knowledge_base.add_fact(fact)
-        
-        return symbols
-    
-    def _get_model_for_language(self, language: str) -> Dict[str, Any]:
-        """
-        Get the appropriate neural model for a programming language.
-        
-        Args:
-            language: Programming language
-            
-        Returns:
-            Model information
-        """
-        # In a real implementation, this would look up the appropriate model
-        # based on the language and task
-        return {
-            'id': 'symbol_extraction_model',
-            'name': f"{language}_symbol_extraction",
-            'type': 'code_analysis'
-        }
-    
-    def generate_logical_representation(self, code: str, language: str) -> Dict[str, Any]:
-        """
-        Generate a logical representation of code.
-        
-        Args:
-            code: Source code to analyze
-            language: Programming language of the code
-            
-        Returns:
-            Logical representation of the code
-        """
-        # Extract symbols from the code
-        symbols = self.extract_symbols_from_code(code, language)
-        
-        # Perform symbolic reasoning to derive new facts
-        facts = self.knowledge_base.forward_chain()
-        
-        # Return the logical representation
-        return {
-            'symbols': [symbol.to_dict() for symbol in symbols],
-            'facts': list(facts),
-            'language': language
-        }
-    
-    def reason_about_code(self, code: str, language: str, query: str) -> Dict[str, Any]:
-        """
-        Perform reasoning about code based on a natural language query.
-        
-        Args:
-            code: Source code to analyze
-            language: Programming language of the code
-            query: Natural language query
-            
-        Returns:
-            Reasoning results
-        """
-        # Generate the logical representation
-        logical_rep = self.generate_logical_representation(code, language)
-        
-        # Translate the natural language query to a logical query
-        logical_query = self._translate_query_to_logical(query, language)
-        
-        # Execute the logical query against the knowledge base
-        query_results = self._execute_logical_query(logical_query)
-        
-        # Generate a natural language explanation
-        explanation = self._generate_explanation(query, query_results)
-        
-        return {
-            'query': query,
-            'logical_query': logical_query,
-            'results': query_results,
-            'explanation': explanation,
-            'confidence': self._calculate_confidence(query_results)
-        }
-    
-    def _translate_query_to_logical(self, query: str, language: str) -> Dict[str, Any]:
-        """
-        Translate a natural language query to a logical query.
-        
-        Args:
-            query: Natural language query
-            language: Programming language context
-            
-        Returns:
-            Logical query representation
-        """
-        # Load a translation model
-        model_info = {
-            'id': 'query_translation_model',
-            'name': 'nl_to_logical_query',
-            'type': 'code_analysis'
-        }
-        
-        # Use the model to translate the query
-        result = self.model_provider.infer(
-            model_info,
-            {
-                'query': query,
-                'language': language
-            }
-        )
-        
-        return result.get('logical_query', {})
-    
-    def _execute_logical_query(self, logical_query: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Execute a logical query against the knowledge base.
-        
-        Args:
-            logical_query: Logical query representation
-            
-        Returns:
-            Query results
-        """
-        # In a real implementation, this would use the Z3 solver or another
-        # symbolic reasoning engine to execute the query
-        
-        # For now, we'll simulate some results
-        query_type = logical_query.get('type', 'unknown')
-        
-        if query_type == 'fact_check':
-            # Check if a fact exists
-            fact = logical_query.get('fact')
-            exists = fact in self.knowledge_base.facts
-            return {
-                'type': 'boolean',
-                'value': exists,
-                'fact': fact
-            }
-        
-        elif query_type == 'symbol_search':
-            # Search for symbols
-            symbol_type = logical_query.get('symbol_type')
-            attributes = logical_query.get('attributes', {})
-            
-            matching_symbols = self.knowledge_base.query_symbols(symbol_type, attributes)
-            
-            return {
-                'type': 'symbols',
-                'symbols': [symbol.to_dict() for symbol in matching_symbols]
-            }
-        
-        elif query_type == 'pattern_detection':
-            # Detect patterns
-            pattern_name = logical_query.get('pattern_name')
-            
-            # Find all facts related to this pattern
-            pattern_facts = [fact for fact in self.knowledge_base.facts 
-                           if fact.startswith(f"{pattern_name}(")]
-            
-            return {
-                'type': 'pattern',
-                'pattern_name': pattern_name,
-                'instances': pattern_facts
-            }
-        
-        else:
-            # Unknown query type
-            return {
-                'type': 'error',
-                'message': f"Unknown query type: {query_type}"
-            }
-    
-    def _generate_explanation(self, query: str, query_results: Dict[str, Any]) -> str:
-        """
-        Generate a natural language explanation of query results.
-        
-        Args:
-            query: Original natural language query
-            query_results: Query results
-            
-        Returns:
-            Natural language explanation
-        """
-        # Load an explanation model
-        model_info = {
-            'id': 'explanation_model',
-            'name': 'logical_to_nl_explanation',
-            'type': 'code_analysis'
-        }
-        
-        # Use the model to generate an explanation
-        result = self.model_provider.infer(
-            model_info,
-            {
-                'query': query,
-                'results': query_results
-            }
-        )
-        
-        return result.get('explanation', 'No explanation available.')
-    
-    def _calculate_confidence(self, query_results: Dict[str, Any]) -> float:
-        """
-        Calculate confidence in the query results.
-        
-        Args:
-            query_results: Query results
-            
-        Returns:
-            Confidence value (0.0 to 1.0)
-        """
-        # In a real implementation, this would calculate a confidence score
-        # based on the reasoning chain and the confidence of individual rules
-        
-        # For now, return a placeholder confidence
-        return 0.85
-    
-    def explain_reasoning_chain(self, fact: str) -> Dict[str, Any]:
-        """
-        Explain the reasoning chain that led to a derived fact.
-        
-        Args:
-            fact: The derived fact to explain
-            
-        Returns:
-            Explanation of the reasoning chain
-        """
-        # In a real implementation, this would trace the inference steps
-        # that led to the given fact
-        
-        # For now, return a placeholder explanation
-        return {
-            'fact': fact,
-            'is_derived': fact in self.knowledge_base.facts,
-            'explanation': "This fact was derived through logical reasoning.",
-            'reasoning_chain': [
-                {
-                    'step': 1,
-                    'rule': 'Example Rule',
-                    'premises': ['premise1', 'premise2'],
-                    'conclusion': fact
-                }
-            ]
-        }
-    
-    def suggest_improvements(self, code: str, language: str) -> Dict[str, Any]:
-        """
-        Suggest improvements for code based on reasoning.
-        
-        Args:
-            code: Source code to analyze
-            language: Programming language of the code
-            
-        Returns:
-            Suggested improvements
-        """
-        # Generate the logical representation
-        self.generate_logical_representation(code, language)
-        
-        # Find improvement candidates based on known patterns
-        improvement_queries = [
-            {'type': 'pattern_detection', 'pattern_name': 'code_smell_candidate'},
-            {'type': 'pattern_detection', 'pattern_name': 'circular_dependency'},
-            {'type': 'pattern_detection', 'pattern_name': 'god_class_candidate'},
-            {'type': 'pattern_detection', 'pattern_name': 'missing_index'}
+            for kb in self.knowledge_bases.values()
         ]
-        
-        improvement_candidates = []
-        for query in improvement_queries:
-            results = self._execute_logical_query(query)
-            if results['type'] == 'pattern' and results['instances']:
-                improvement_candidates.append(results)
-        
-        # Generate improvement suggestions
-        suggestions = self._generate_improvement_suggestions(improvement_candidates, language)
-        
-        return {
-            'improvement_candidates': improvement_candidates,
-            'suggestions': suggestions
-        }
     
-    def _generate_improvement_suggestions(self, candidates: List[Dict[str, Any]], 
-                                         language: str) -> List[Dict[str, Any]]:
+    def delete_knowledge_base(self, name: str) -> bool:
         """
-        Generate improvement suggestions based on improvement candidates.
+        Delete a knowledge base.
         
         Args:
-            candidates: Improvement candidates
-            language: Programming language
+            name: Name of the knowledge base
             
         Returns:
-            List of improvement suggestions
+            Deletion success
         """
-        # Load a suggestion model
-        model_info = {
-            'id': 'suggestion_model',
-            'name': 'code_improvement_suggestion',
-            'type': 'code_analysis'
-        }
+        if name not in self.knowledge_bases:
+            return False
         
-        # Use the model to generate suggestions
-        result = self.model_provider.infer(
-            model_info,
-            {
-                'candidates': candidates,
-                'language': language
-            }
+        # Remove from memory
+        del self.knowledge_bases[name]
+        
+        # Remove from storage
+        kb_path = os.path.join(self.storage_dir, 'knowledge_bases', f"{name}.json")
+        if os.path.exists(kb_path):
+            os.remove(kb_path)
+        
+        self.logger.info(f"Deleted knowledge base: {name}")
+        return True
+    
+    def register_neural_network(self, name: str, task: str,
+                              model_registry_id: Optional[str] = None,
+                              embedding_dimension: Optional[int] = None,
+                              metadata: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Register a neural network.
+        
+        Args:
+            name: Human-readable name
+            task: Task the network is designed for
+            model_registry_id: Optional ID in the model registry
+            embedding_dimension: Optional dimension of the embeddings
+            metadata: Optional network metadata
+            
+        Returns:
+            Network ID
+        """
+        # Generate network ID
+        network_id = str(uuid.uuid4())
+        
+        # Create neural network info
+        nn_info = NeuralNetworkInfo(
+            network_id=network_id,
+            name=name,
+            task=task,
+            model_registry_id=model_registry_id,
+            embedding_dimension=embedding_dimension,
+            metadata=metadata
         )
         
-        return result.get('suggestions', [])
+        # Store neural network info
+        self.neural_networks[network_id] = nn_info
+        
+        # Save to storage
+        self._save_neural_network_info(nn_info)
+        
+        self.logger.info(f"Registered neural network: {name} (ID: {network_id})")
+        return network_id
     
-    def save_knowledge_base(self, file_path: str) -> None:
+    def set_network_proxy(self, network_id: str, proxy_function: Callable) -> bool:
         """
-        Save the knowledge base to a file.
+        Set the proxy function for a neural network.
+        
+        This function will be called to access the actual neural network model.
         
         Args:
-            file_path: Path to save to
+            network_id: ID of the neural network
+            proxy_function: Function to call to access the model
+            
+        Returns:
+            Success
         """
-        data = self.knowledge_base.to_dict()
+        if network_id not in self.neural_networks:
+            return False
         
-        with open(file_path, 'w') as f:
-            json.dump(data, f, indent=2)
-        
-        self.logger.info(f"Saved knowledge base to {file_path}")
+        self.network_proxies[network_id] = proxy_function
+        return True
     
-    def load_knowledge_base(self, file_path: str) -> None:
+    def get_network_proxy(self, network_id: str) -> Optional[Callable]:
         """
-        Load the knowledge base from a file.
+        Get the proxy function for a neural network.
         
         Args:
-            file_path: Path to load from
+            network_id: ID of the neural network
+            
+        Returns:
+            Proxy function or None if not found
         """
-        with open(file_path, 'r') as f:
-            data = json.load(f)
+        return self.network_proxies.get(network_id)
+    
+    def list_neural_networks(self) -> List[Dict[str, Any]]:
+        """
+        List all registered neural networks.
         
-        self.knowledge_base = SymbolicKnowledgeBase.from_dict(data)
+        Returns:
+            List of neural network info dictionaries
+        """
+        return [nn_info.to_dict() for nn_info in self.neural_networks.values()]
+    
+    def delete_neural_network(self, network_id: str) -> bool:
+        """
+        Delete a neural network.
         
-        self.logger.info(f"Loaded knowledge base from {file_path}")
+        Args:
+            network_id: ID of the neural network
+            
+        Returns:
+            Deletion success
+        """
+        if network_id not in self.neural_networks:
+            return False
+        
+        # Remove from memory
+        del self.neural_networks[network_id]
+        
+        if network_id in self.network_proxies:
+            del self.network_proxies[network_id]
+        
+        # Remove from storage
+        nn_path = os.path.join(self.storage_dir, 'neural_networks', f"{network_id}.json")
+        if os.path.exists(nn_path):
+            os.remove(nn_path)
+        
+        self.logger.info(f"Deleted neural network: {network_id}")
+        return True
+    
+    def forward_chaining(self, kb_name: str, facts: List[str],
+                       context: Optional[str] = None,
+                       max_iterations: int = 10) -> InferenceResult:
+        """
+        Perform forward chaining inference.
+        
+        Args:
+            kb_name: Name of the knowledge base
+            facts: Initial facts
+            context: Optional context for rule selection
+            max_iterations: Maximum number of inference iterations
+            
+        Returns:
+            Inference result
+        """
+        kb = self.get_knowledge_base(kb_name)
+        if not kb:
+            return InferenceResult([], [], 0.0)
+        
+        # Merge initial facts with knowledge base facts
+        all_facts = set(facts) | kb.facts
+        inferred_facts = set()
+        rule_activations = []
+        
+        # Get rules for the context
+        rules = kb.get_matching_rules(context)
+        
+        # Forward chaining
+        iterations = 0
+        while iterations < max_iterations:
+            new_facts = set()
+            activated_rules = []
+            
+            for rule in rules:
+                # Check if rule conditions are satisfied
+                if self._check_conditions(rule.conditions, all_facts):
+                    # Apply rule to infer new facts
+                    conclusions = self._parse_conclusions(rule.conclusions)
+                    
+                    # Add only new facts
+                    new_conclusions = set(conclusions) - all_facts
+                    
+                    if new_conclusions:
+                        new_facts |= new_conclusions
+                        
+                        # Record rule activation
+                        activated_rules.append({
+                            'rule_id': rule.id,
+                            'name': rule.name,
+                            'confidence': rule.confidence,
+                            'inferred': list(new_conclusions)
+                        })
+            
+            # Stop if no new facts were inferred
+            if not new_facts:
+                break
+            
+            # Add new facts to all facts
+            all_facts |= new_facts
+            inferred_facts |= new_facts
+            rule_activations.extend(activated_rules)
+            
+            iterations += 1
+        
+        # Calculate overall confidence
+        if not rule_activations:
+            confidence = 1.0
+        else:
+            confidence = sum(a['confidence'] for a in rule_activations) / len(rule_activations)
+        
+        return InferenceResult(
+            inferred_facts=list(inferred_facts),
+            rule_activations=rule_activations,
+            confidence=confidence
+        )
+    
+    def backward_chaining(self, kb_name: str, query: str,
+                        facts: List[str],
+                        context: Optional[str] = None,
+                        max_depth: int = 10) -> InferenceResult:
+        """
+        Perform backward chaining inference.
+        
+        Args:
+            kb_name: Name of the knowledge base
+            query: Query to prove
+            facts: Initial facts
+            context: Optional context for rule selection
+            max_depth: Maximum recursion depth
+            
+        Returns:
+            Inference result
+        """
+        kb = self.get_knowledge_base(kb_name)
+        if not kb:
+            return InferenceResult([], [], 0.0)
+        
+        # Merge initial facts with knowledge base facts
+        all_facts = set(facts) | kb.facts
+        
+        # Get rules for the context
+        rules = kb.get_matching_rules(context)
+        
+        # Initialize inference result
+        inferred_facts = set()
+        rule_activations = []
+        
+        # Recursive helper function
+        def prove(subgoal: str, depth: int) -> bool:
+            # Base case: maximum depth reached
+            if depth >= max_depth:
+                return False
+            
+            # Base case: subgoal is already in facts
+            if subgoal in all_facts:
+                return True
+            
+            # Find rules that can infer the subgoal
+            for rule in rules:
+                # Check if rule can infer the subgoal
+                conclusions = self._parse_conclusions(rule.conclusions)
+                
+                if subgoal in conclusions:
+                    # Get conditions that need to be satisfied
+                    conditions = self._parse_conditions(rule.conditions)
+                    
+                    # Try to prove all conditions
+                    all_conditions_met = True
+                    for condition in conditions:
+                        if not prove(condition, depth + 1):
+                            all_conditions_met = False
+                            break
+                    
+                    # If all conditions are met, the subgoal is proved
+                    if all_conditions_met:
+                        # Record rule activation
+                        rule_activations.append({
+                            'rule_id': rule.id,
+                            'name': rule.name,
+                            'confidence': rule.confidence,
+                            'inferred': [subgoal]
+                        })
+                        
+                        # Add to inferred facts
+                        inferred_facts.add(subgoal)
+                        all_facts.add(subgoal)
+                        
+                        return True
+            
+            return False
+        
+        # Prove the query
+        result = prove(query, 0)
+        
+        # Calculate overall confidence
+        if not rule_activations:
+            confidence = 0.0 if not result else 1.0
+        else:
+            confidence = sum(a['confidence'] for a in rule_activations) / len(rule_activations)
+        
+        return InferenceResult(
+            inferred_facts=list(inferred_facts),
+            rule_activations=rule_activations,
+            confidence=confidence
+        )
+    
+    def hybrid_inference(self, kb_name: str, facts: List[str],
+                       queries: Optional[List[str]] = None,
+                       context: Optional[str] = None,
+                       network_id: Optional[str] = None,
+                       confidence_threshold: float = 0.5) -> InferenceResult:
+        """
+        Perform hybrid neural-symbolic inference.
+        
+        Args:
+            kb_name: Name of the knowledge base
+            facts: Initial facts
+            queries: Optional specific queries to prove
+            context: Optional context for rule selection
+            network_id: Optional neural network to use
+            confidence_threshold: Threshold for neural predictions
+            
+        Returns:
+            Inference result
+        """
+        # Perform symbolic inference first
+        if queries:
+            # Use backward chaining for specific queries
+            results = []
+            for query in queries:
+                result = self.backward_chaining(kb_name, query, facts, context)
+                results.append(result)
+            
+            # Combine results
+            combined_inferred = []
+            combined_activations = []
+            combined_confidence = 0.0
+            
+            for result in results:
+                combined_inferred.extend(result.inferred_facts)
+                combined_activations.extend(result.rule_activations)
+                combined_confidence += result.confidence
+            
+            if results:
+                combined_confidence /= len(results)
+            
+            symbolic_result = InferenceResult(
+                inferred_facts=combined_inferred,
+                rule_activations=combined_activations,
+                confidence=combined_confidence
+            )
+        else:
+            # Use forward chaining for general inference
+            symbolic_result = self.forward_chaining(kb_name, facts, context)
+        
+        # If no neural network specified, return symbolic result
+        if not network_id or network_id not in self.neural_networks:
+            return symbolic_result
+        
+        # Get neural network proxy
+        proxy = self.get_network_proxy(network_id)
+        if not proxy:
+            return symbolic_result
+        
+        # Combine all facts for neural processing
+        all_facts = facts + symbolic_result.inferred_facts
+        
+        try:
+            # Use neural network to predict additional facts
+            neural_predictions = proxy(all_facts)
+            
+            # Filter predictions by confidence threshold
+            neural_inferred = []
+            neural_activations = []
+            
+            for prediction in neural_predictions:
+                if prediction['confidence'] >= confidence_threshold:
+                    neural_inferred.append(prediction['fact'])
+                    neural_activations.append({
+                        'neural': True,
+                        'fact': prediction['fact'],
+                        'confidence': prediction['confidence']
+                    })
+            
+            # Combine symbolic and neural results
+            combined_inferred = symbolic_result.inferred_facts + neural_inferred
+            combined_activations = symbolic_result.rule_activations + neural_activations
+            
+            # Calculate combined confidence
+            if not combined_activations:
+                combined_confidence = 0.0
+            else:
+                combined_confidence = sum(a.get('confidence', 0.5) for a in combined_activations) / len(combined_activations)
+            
+            return InferenceResult(
+                inferred_facts=combined_inferred,
+                rule_activations=combined_activations,
+                confidence=combined_confidence
+            )
+        
+        except Exception as e:
+            self.logger.error(f"Error in neural inference: {e}")
+            return symbolic_result
+    
+    def _check_conditions(self, conditions_expr: str, facts: Set[str]) -> bool:
+        """
+        Check if conditions are satisfied by facts.
+        
+        Args:
+            conditions_expr: Conditions expression
+            facts: Set of facts
+            
+        Returns:
+            True if conditions are satisfied
+        """
+        # Parse conditions
+        conditions = self._parse_conditions(conditions_expr)
+        
+        # Check each condition
+        for condition in conditions:
+            if condition.startswith('NOT '):
+                # Negation
+                if condition[4:] in facts:
+                    return False
+            else:
+                # Positive condition
+                if condition not in facts:
+                    return False
+        
+        return True
+    
+    def _parse_conditions(self, conditions_expr: str) -> List[str]:
+        """
+        Parse a conditions expression into individual conditions.
+        
+        Args:
+            conditions_expr: Conditions expression
+            
+        Returns:
+            List of individual conditions
+        """
+        # Split by AND
+        conditions = conditions_expr.split(' AND ')
+        
+        # Strip whitespace
+        conditions = [c.strip() for c in conditions]
+        
+        return conditions
+    
+    def _parse_conclusions(self, conclusions_expr: str) -> List[str]:
+        """
+        Parse a conclusions expression into individual conclusions.
+        
+        Args:
+            conclusions_expr: Conclusions expression
+            
+        Returns:
+            List of individual conclusions
+        """
+        # Split by comma or AND
+        conclusions = re.split(r',|\sAND\s', conclusions_expr)
+        
+        # Strip whitespace
+        conclusions = [c.strip() for c in conclusions]
+        
+        return conclusions
+    
+    def generate_explanation(self, inference_result: InferenceResult) -> str:
+        """
+        Generate a human-readable explanation of an inference result.
+        
+        Args:
+            inference_result: Inference result to explain
+            
+        Returns:
+            Explanation string
+        """
+        if not inference_result.rule_activations:
+            return "No rules were activated during inference."
+        
+        explanation = []
+        explanation.append("Inference process:")
+        
+        # Organize rule activations by inferred facts
+        fact_explanations = {}
+        
+        for activation in inference_result.rule_activations:
+            if 'neural' in activation and activation['neural']:
+                # Neural inference
+                fact = activation['fact']
+                if fact not in fact_explanations:
+                    fact_explanations[fact] = []
+                
+                fact_explanations[fact].append(
+                    f"Neural prediction with confidence {activation['confidence']:.2f}"
+                )
+            else:
+                # Symbolic inference
+                for fact in activation.get('inferred', []):
+                    if fact not in fact_explanations:
+                        fact_explanations[fact] = []
+                    
+                    fact_explanations[fact].append(
+                        f"Applied rule '{activation['name']}' with confidence {activation['confidence']:.2f}"
+                    )
+        
+        # Generate explanation for each inferred fact
+        for i, fact in enumerate(inference_result.inferred_facts):
+            explanation.append(f"\n{i+1}. Inferred: {fact}")
+            
+            if fact in fact_explanations:
+                for exp in fact_explanations[fact]:
+                    explanation.append(f"   - {exp}")
+            else:
+                explanation.append("   - No explanation available")
+        
+        # Add overall confidence
+        explanation.append(f"\nOverall confidence: {inference_result.confidence:.2f}")
+        
+        return "\n".join(explanation)
+    
+    def store_embedding(self, term: str, embedding: np.ndarray) -> None:
+        """
+        Store an embedding for a term.
+        
+        Args:
+            term: Term to store embedding for
+            embedding: Embedding vector
+        """
+        self.embeddings_cache[term] = embedding
+    
+    def get_embedding(self, term: str) -> Optional[np.ndarray]:
+        """
+        Get embedding for a term.
+        
+        Args:
+            term: Term to get embedding for
+            
+        Returns:
+            Embedding vector or None if not found
+        """
+        return self.embeddings_cache.get(term)
+    
+    def compute_similarity(self, term1: str, term2: str) -> Optional[float]:
+        """
+        Compute similarity between two terms using embeddings.
+        
+        Args:
+            term1: First term
+            term2: Second term
+            
+        Returns:
+            Similarity score or None if embeddings not available
+        """
+        embedding1 = self.get_embedding(term1)
+        embedding2 = self.get_embedding(term2)
+        
+        if embedding1 is None or embedding2 is None:
+            return None
+        
+        # Compute cosine similarity
+        dot_product = np.dot(embedding1, embedding2)
+        norm1 = np.linalg.norm(embedding1)
+        norm2 = np.linalg.norm(embedding2)
+        
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        
+        return dot_product / (norm1 * norm2)
+    
+    def clear_embeddings_cache(self) -> None:
+        """Clear the embeddings cache."""
+        self.embeddings_cache = {}
+    
+    def export_knowledge_base(self, kb_name: str, file_path: str) -> bool:
+        """
+        Export a knowledge base to a file.
+        
+        Args:
+            kb_name: Name of the knowledge base
+            file_path: Path to export to
+            
+        Returns:
+            Export success
+        """
+        kb = self.get_knowledge_base(kb_name)
+        if not kb:
+            return False
+        
+        try:
+            with open(file_path, 'w') as f:
+                json.dump(kb.to_dict(), f, indent=2)
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"Error exporting knowledge base: {e}")
+            return False
+    
+    def import_knowledge_base(self, file_path: str, overwrite: bool = False) -> Optional[str]:
+        """
+        Import a knowledge base from a file.
+        
+        Args:
+            file_path: Path to import from
+            overwrite: Whether to overwrite existing knowledge base
+            
+        Returns:
+            Name of imported knowledge base or None on failure
+        """
+        try:
+            with open(file_path, 'r') as f:
+                kb_data = json.load(f)
+            
+            kb = KnowledgeBase.from_dict(kb_data)
+            
+            if kb.name in self.knowledge_bases and not overwrite:
+                return None
+            
+            self.knowledge_bases[kb.name] = kb
+            
+            # Save to storage
+            self._save_knowledge_base(kb)
+            
+            self.logger.info(f"Imported knowledge base: {kb.name}")
+            return kb.name
+        
+        except Exception as e:
+            self.logger.error(f"Error importing knowledge base: {e}")
+            return None

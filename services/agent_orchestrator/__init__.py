@@ -1,6 +1,6 @@
 """
-Agent Orchestrator Service
+Agent Orchestrator Package
 
-This service manages the collective agent intelligence system,
-coordinating the activities of specialized agents and enabling collaborative problem solving.
+This service provides orchestration for specialized AI agents, enabling them to work 
+together as a collective intelligence system with sophisticated communication protocols.
 """
