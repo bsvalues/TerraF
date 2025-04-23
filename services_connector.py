@@ -164,6 +164,15 @@ class ServicesConnector:
                     logger.info("Initialized SDK Plugin System service")
                 except (ImportError, AttributeError) as e:
                     logger.error(f"Error initializing SDK Plugin System service: {e}")
+                    
+            # AI Models service
+            elif service_name == 'ai_models':
+                try:
+                    from services.ai_models.ai_service import AIService
+                    service_instance = AIService()
+                    logger.info("Initialized AI Models service")
+                except (ImportError, AttributeError) as e:
+                    logger.error(f"Error initializing AI Models service: {e}")
             
             # Generic fallback for other services
             else:
@@ -318,6 +327,15 @@ class ServicesConnector:
             SDK Plugin System service instance
         """
         return self.get_service('sdk')
+        
+    def ai_models_service(self) -> Any:
+        """
+        Get the AI Models service.
+        
+        Returns:
+            AI Models service instance
+        """
+        return self.get_service('ai_models')
     
     def analyze_repository(self, repo_url: str, repo_branch: str = 'main', 
                           use_services: Optional[List[str]] = None) -> Dict[str, Any]:
