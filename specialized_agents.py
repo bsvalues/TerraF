@@ -2347,9 +2347,21 @@ def register_all_agents():
     dependency_manager = DependencyManagerAgent()
     dependency_manager.start()
     
+    # Database Agents
+    try:
+        # Import the database migration agent
+        from database_migration_agent import DatabaseMigrationAgent
+        db_migration_agent = DatabaseMigrationAgent()
+        db_migration_agent.start()
+        has_db_migration_agent = True
+    except ImportError:
+        logger.warning("Database Migration Agent not available")
+        has_db_migration_agent = False
+    
     # In a full implementation, we would register all specialized agents here
     
-    return {
+    # Build the agents dictionary
+    agents = {
         "style_enforcer": style_enforcer,
         "bug_hunter": bug_hunter,
         "performance_optimizer": performance_optimizer,
@@ -2357,6 +2369,12 @@ def register_all_agents():
         "pattern_detector": pattern_detector,
         "dependency_manager": dependency_manager
     }
+    
+    # Add database agents if available
+    if has_db_migration_agent:
+        agents["db_migration_agent"] = db_migration_agent
+    
+    return agents
 
 
 if __name__ == "__main__":
