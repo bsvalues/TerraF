@@ -1,48 +1,73 @@
 """
-API Gateway Implementation
+API Gateway
 
-This module implements the core functionality of the API Gateway service.
+This module provides a unified API Gateway for the Code Deep Dive Analyzer system,
+coordinating requests across all microservices.
 """
-import os
-import json
 import logging
+import importlib
+import os
+import sys
+import json
 import time
-from typing import Dict, List, Any, Optional, Union
-import uuid
+from typing import Dict, List, Any, Optional, Union, Tuple
+from enum import Enum
+
+# Add parent directory to path to import from sibling packages
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+class ServiceStatus(Enum):
+    """Status of a service in the API Gateway."""
+    ONLINE = "online"
+    OFFLINE = "offline"
+    DEGRADED = "degraded"
+    STARTING = "starting"
+    STOPPING = "stopping"
+    UNKNOWN = "unknown"
+
+class ServiceType(Enum):
+    """Types of services in the system."""
+    REPOSITORY = "repository"
+    KNOWLEDGE_GRAPH = "knowledge_graph"
+    MODEL_HUB = "model_hub"
+    AGENT_ORCHESTRATOR = "agent_orchestrator"
+    NEURO_SYMBOLIC = "neuro_symbolic"
+    MULTIMODAL = "multimodal"
+    SDK = "sdk"
+    ACADEMIC = "academic"
+    PROTOCOL = "protocol"
 
 class APIGateway:
     """
-    API Gateway for the Code Deep Dive Analyzer microservices.
+    API Gateway for the Code Deep Dive Analyzer system.
     
     This class provides:
-    - Request routing to appropriate microservices
-    - Authentication and authorization
-    - Rate limiting
-    - Request/response transformation
-    - Service discovery
-    - Logging and monitoring
+    - Unified access to all microservices
+    - Service discovery and routing
+    - Request validation and transformation
+    - Error handling and logging
+    - Rate limiting and throttling
     """
     
     def __init__(self, config_path: Optional[str] = None):
         """
-        Initialize the API Gateway with optional configuration.
+        Initialize the API Gateway.
         
         Args:
-            config_path: Path to configuration file
+            config_path: Optional path to configuration file
         """
-        self.services = {}
-        self.routes = {}
-        self.auth_providers = {}
-        self.rate_limits = {}
         self.logger = logging.getLogger('api_gateway')
         
         # Load configuration
         self.config = self._load_config(config_path)
         
-        # Initialize components
-        self._init_service_registry()
-        self._init_auth_providers()
-        self._init_rate_limiters()
+        # Initialize service registry
+        self.services = {}
+        self.service_instances = {}
+        self.service_status = {}
+        
+        # Register all available services
+        self._discover_services()
     
     def _load_config(self, config_path: Optional[str]) -> Dict[str, Any]:
         """
@@ -55,416 +80,555 @@ class APIGateway:
             Configuration dictionary
         """
         default_config = {
-            'service_registry': {
-                'refresh_interval': 60,  # seconds
-                'service_timeout': 5,    # seconds
+            'services': {
+                'repository': {
+                    'module': 'repository_service.repository_manager',
+                    'class': 'RepositoryManager',
+                    'enabled': True
+                },
+                'knowledge_graph': {
+                    'module': 'knowledge_graph.knowledge_graph',
+                    'class': 'MultiRepositoryKnowledgeGraph',
+                    'enabled': True
+                },
+                'model_hub': {
+                    'module': 'model_hub.model_registry',
+                    'class': 'ModelRegistry',
+                    'enabled': True
+                },
+                'agent_orchestrator': {
+                    'module': 'agent_orchestrator.orchestrator',
+                    'class': 'AgentOrchestrator',
+                    'enabled': True
+                },
+                'neuro_symbolic': {
+                    'module': 'neuro_symbolic.reasoning_engine',
+                    'class': 'NeuroSymbolicEngine',
+                    'enabled': True
+                },
+                'multimodal': {
+                    'module': 'multimodal.multimodal_processor',
+                    'class': 'MultimodalProcessor',
+                    'enabled': True
+                },
+                'sdk': {
+                    'module': 'sdk.plugin_system',
+                    'class': 'PluginManager',
+                    'enabled': True
+                },
+                'academic': {
+                    'module': 'academic.academic_framework',
+                    'class': 'AcademicFramework',
+                    'enabled': True
+                },
+                'protocol': {
+                    'module': 'protocol_server',
+                    'class': 'ProtocolServer',
+                    'enabled': True
+                }
             },
-            'auth': {
-                'token_expiry': 86400,   # 24 hours
-                'refresh_token_expiry': 604800,  # 7 days
-                'allowed_algorithms': ['HS256', 'RS256'],
+            'rate_limits': {
+                'default': 100,  # Requests per minute
+                'repository': 50,
+                'knowledge_graph': 30
             },
-            'rate_limiting': {
-                'default_limit': 100,    # requests per minute
-                'burst_limit': 200,      # max burst
-            },
-            'cors': {
-                'allowed_origins': ['*'],
-                'allowed_methods': ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-                'allowed_headers': ['Content-Type', 'Authorization'],
-                'expose_headers': ['X-Total-Count'],
-                'max_age': 86400,
-            },
-            'logging': {
-                'level': 'INFO',
-                'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            'timeouts': {
+                'default': 30,  # Seconds
+                'repository_clone': 300,
+                'knowledge_graph_query': 60
             }
         }
         
         if config_path and os.path.exists(config_path):
             try:
                 with open(config_path, 'r') as f:
-                    user_config = json.load(f)
-                    # Deep merge configs
-                    self._deep_merge(default_config, user_config)
+                    config = json.load(f)
+                
+                # Merge with defaults
+                for key, value in config.items():
+                    if key in default_config and isinstance(value, dict) and isinstance(default_config[key], dict):
+                        default_config[key].update(value)
+                    else:
+                        default_config[key] = value
+                
+                self.logger.info(f"Loaded configuration from {config_path}")
             except Exception as e:
-                self.logger.error(f"Failed to load config from {config_path}: {str(e)}")
-                self.logger.info("Using default configuration")
+                self.logger.error(f"Error loading configuration from {config_path}: {e}")
         
         return default_config
     
-    def _deep_merge(self, target: Dict, source: Dict) -> None:
+    def _discover_services(self) -> None:
+        """Discover and register available services."""
+        services_config = self.config.get('services', {})
+        
+        for service_name, service_config in services_config.items():
+            if not service_config.get('enabled', True):
+                self.logger.info(f"Service {service_name} is disabled in configuration")
+                continue
+            
+            module_name = service_config.get('module')
+            class_name = service_config.get('class')
+            
+            if not module_name or not class_name:
+                self.logger.warning(f"Invalid configuration for service {service_name}")
+                continue
+            
+            try:
+                # Register service
+                self.services[service_name] = {
+                    'module': module_name,
+                    'class': class_name,
+                    'config': service_config
+                }
+                
+                # Set initial status
+                self.service_status[service_name] = ServiceStatus.UNKNOWN
+                
+                self.logger.info(f"Registered service: {service_name}")
+            except Exception as e:
+                self.logger.error(f"Error registering service {service_name}: {e}")
+    
+    def initialize_service(self, service_name: str) -> bool:
         """
-        Deep merge two dictionaries.
+        Initialize a service.
         
         Args:
-            target: Target dictionary to merge into
-            source: Source dictionary to merge from
+            service_name: Name of the service to initialize
+            
+        Returns:
+            Initialization success
         """
-        for key, value in source.items():
-            if key in target and isinstance(target[key], dict) and isinstance(value, dict):
-                self._deep_merge(target[key], value)
-            else:
-                target[key] = value
+        if service_name not in self.services:
+            self.logger.error(f"Service {service_name} not found")
+            return False
+        
+        if service_name in self.service_instances and self.service_instances[service_name]:
+            self.logger.info(f"Service {service_name} is already initialized")
+            return True
+        
+        service_info = self.services[service_name]
+        
+        try:
+            # Update status
+            self.service_status[service_name] = ServiceStatus.STARTING
+            
+            # Import module
+            module_name = service_info['module']
+            module = importlib.import_module(module_name)
+            
+            # Get class
+            class_name = service_info['class']
+            service_class = getattr(module, class_name)
+            
+            # Initialize service
+            service_instance = service_class()
+            
+            # Store instance
+            self.service_instances[service_name] = service_instance
+            
+            # Update status
+            self.service_status[service_name] = ServiceStatus.ONLINE
+            
+            self.logger.info(f"Initialized service: {service_name}")
+            return True
+        
+        except ImportError as e:
+            self.logger.error(f"Error importing module for service {service_name}: {e}")
+            self.service_status[service_name] = ServiceStatus.OFFLINE
+            return False
+        except AttributeError as e:
+            self.logger.error(f"Error getting class for service {service_name}: {e}")
+            self.service_status[service_name] = ServiceStatus.OFFLINE
+            return False
+        except Exception as e:
+            self.logger.error(f"Error initializing service {service_name}: {e}")
+            self.service_status[service_name] = ServiceStatus.OFFLINE
+            return False
     
-    def _init_service_registry(self) -> None:
-        """Initialize the service registry."""
-        # In a real implementation, this would connect to a service registry like Consul or etcd
-        # For this example, we'll use a simple in-memory registry
-        self.service_registry = {
-            'model_hub': {
-                'instances': [
-                    {'host': 'localhost', 'port': 5001, 'health': 'healthy', 'last_checked': time.time()}
-                ],
-                'api_version': 'v1',
-            },
-            'code_analyzer': {
-                'instances': [
-                    {'host': 'localhost', 'port': 5002, 'health': 'healthy', 'last_checked': time.time()}
-                ],
-                'api_version': 'v1',
-            },
-            'repository_service': {
-                'instances': [
-                    {'host': 'localhost', 'port': 5003, 'health': 'healthy', 'last_checked': time.time()}
-                ],
-                'api_version': 'v1',
-            },
-            'agent_orchestrator': {
-                'instances': [
-                    {'host': 'localhost', 'port': 5004, 'health': 'healthy', 'last_checked': time.time()}
-                ],
-                'api_version': 'v1',
-            },
-            'continuous_learning': {
-                'instances': [
-                    {'host': 'localhost', 'port': 5005, 'health': 'healthy', 'last_checked': time.time()}
-                ],
-                'api_version': 'v1',
-            },
-            'visualization_service': {
-                'instances': [
-                    {'host': 'localhost', 'port': 5006, 'health': 'healthy', 'last_checked': time.time()}
-                ],
-                'api_version': 'v1',
-            },
-        }
-    
-    def _init_auth_providers(self) -> None:
-        """Initialize authentication providers."""
-        # In a real implementation, this would initialize various auth providers
-        # For this example, we'll use a placeholder
-        self.auth_providers = {
-            'jwt': lambda token: {'user_id': 'user123', 'roles': ['user']},
-            'api_key': lambda key: {'client_id': 'client123', 'scopes': ['read', 'write']},
-        }
-    
-    def _init_rate_limiters(self) -> None:
-        """Initialize rate limiters."""
-        # In a real implementation, this would initialize rate limiters with Redis or similar
-        # For this example, we'll use a simple in-memory counter
-        self.rate_limiters = {
-            'default': {
-                'limit': self.config['rate_limiting']['default_limit'],
-                'window': 60,  # seconds
-                'counters': {}
-            }
-        }
-    
-    def route_request(self, service_name: str, path: str, method: str, 
-                      headers: Dict[str, str], body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def get_service(self, service_name: str) -> Any:
         """
-        Route a request to the appropriate microservice.
+        Get a service instance.
+        
+        Args:
+            service_name: Name of the service
+            
+        Returns:
+            Service instance or None if not found or not initialized
+        """
+        if service_name not in self.services:
+            self.logger.error(f"Service {service_name} not found")
+            return None
+        
+        if service_name not in self.service_instances or not self.service_instances[service_name]:
+            # Try to initialize the service
+            if not self.initialize_service(service_name):
+                return None
+        
+        return self.service_instances[service_name]
+    
+    def initialize_all_services(self) -> Dict[str, bool]:
+        """
+        Initialize all registered services.
+        
+        Returns:
+            Dictionary mapping service names to initialization success
+        """
+        results = {}
+        
+        for service_name in self.services:
+            results[service_name] = self.initialize_service(service_name)
+        
+        return results
+    
+    def get_service_status(self, service_name: Optional[str] = None) -> Dict[str, str]:
+        """
+        Get status of services.
+        
+        Args:
+            service_name: Optional name of a specific service
+            
+        Returns:
+            Dictionary mapping service names to status values
+        """
+        if service_name:
+            if service_name not in self.services:
+                return {service_name: ServiceStatus.UNKNOWN.value}
+            
+            return {service_name: self.service_status[service_name].value}
+        
+        # Return status of all services
+        return {name: status.value for name, status in self.service_status.items()}
+    
+    def route_request(self, service_name: str, method_name: str, 
+                   *args, **kwargs) -> Any:
+        """
+        Route a request to a service.
         
         Args:
             service_name: Name of the target service
-            path: API endpoint path
-            method: HTTP method (GET, POST, etc.)
-            headers: HTTP headers
-            body: Request body (for POST, PUT, etc.)
+            method_name: Name of the method to call
+            *args: Positional arguments for the method
+            **kwargs: Keyword arguments for the method
             
         Returns:
-            Response from the service
+            Result of the method call
         """
-        # Check if service exists
-        if service_name not in self.service_registry:
-            return {
-                'status_code': 404,
-                'body': {'error': f"Service '{service_name}' not found"}
-            }
-        
-        # Authenticate request
-        auth_result = self._authenticate_request(headers)
-        if not auth_result['authenticated']:
-            return {
-                'status_code': 401,
-                'body': {'error': auth_result['error']}
-            }
-        
-        # Check rate limits
-        rate_limit_result = self._check_rate_limits(auth_result['identity'])
-        if not rate_limit_result['allowed']:
-            return {
-                'status_code': 429,
-                'body': {'error': 'Rate limit exceeded', 'retry_after': rate_limit_result['retry_after']}
-            }
-        
-        # Get service instance
-        service = self._get_service_instance(service_name)
+        service = self.get_service(service_name)
         if not service:
-            return {
-                'status_code': 503,
-                'body': {'error': f"No healthy instances of service '{service_name}' available"}
-            }
+            raise ValueError(f"Service {service_name} not available")
         
-        # In a real implementation, this would make an actual HTTP request to the service
-        # For this example, we'll simulate a response
-        return self._simulate_service_response(service_name, path, method, auth_result['identity'], body)
+        # Check if method exists
+        if not hasattr(service, method_name):
+            raise ValueError(f"Method {method_name} not found in service {service_name}")
+        
+        # Get method
+        method = getattr(service, method_name)
+        
+        # Check for rate limiting
+        if not self._check_rate_limit(service_name):
+            raise Exception(f"Rate limit exceeded for service {service_name}")
+        
+        # Get timeout
+        timeout = self._get_timeout(service_name, method_name)
+        
+        try:
+            # Execute method (no actual timeout implemented here for simplicity)
+            return method(*args, **kwargs)
+        except Exception as e:
+            self.logger.error(f"Error calling {method_name} on service {service_name}: {e}")
+            # Update service status if needed
+            # self._update_service_status(service_name, e)
+            raise
     
-    def _authenticate_request(self, headers: Dict[str, str]) -> Dict[str, Any]:
+    def _check_rate_limit(self, service_name: str) -> bool:
         """
-        Authenticate a request based on headers.
-        
-        Args:
-            headers: HTTP headers
-            
-        Returns:
-            Authentication result
-        """
-        # Check for Authorization header
-        auth_header = headers.get('Authorization')
-        if not auth_header:
-            return {'authenticated': False, 'error': 'Authorization header is missing'}
-        
-        # Parse auth method and token
-        parts = auth_header.split()
-        if len(parts) != 2:
-            return {'authenticated': False, 'error': 'Invalid Authorization header format'}
-        
-        auth_method, token = parts
-        
-        # Handle different auth methods
-        if auth_method.lower() == 'bearer':
-            # JWT authentication
-            if 'jwt' in self.auth_providers:
-                try:
-                    identity = self.auth_providers['jwt'](token)
-                    return {'authenticated': True, 'identity': identity}
-                except Exception as e:
-                    return {'authenticated': False, 'error': f"JWT validation failed: {str(e)}"}
-        elif auth_method.lower() == 'apikey':
-            # API key authentication
-            if 'api_key' in self.auth_providers:
-                try:
-                    identity = self.auth_providers['api_key'](token)
-                    return {'authenticated': True, 'identity': identity}
-                except Exception as e:
-                    return {'authenticated': False, 'error': f"API key validation failed: {str(e)}"}
-        
-        return {'authenticated': False, 'error': f"Unsupported authentication method: {auth_method}"}
-    
-    def _check_rate_limits(self, identity: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Check if a request exceeds rate limits.
-        
-        Args:
-            identity: Authenticated identity
-            
-        Returns:
-            Rate limit check result
-        """
-        # In a real implementation, this would check against a distributed rate limiter
-        # For this example, we'll always allow requests
-        return {'allowed': True}
-    
-    def _get_service_instance(self, service_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Get a healthy instance of a service.
+        Check if a request would exceed the rate limit.
         
         Args:
             service_name: Name of the service
             
         Returns:
-            Service instance or None if no healthy instances available
+            True if request is allowed, False if rate limit exceeded
         """
-        if service_name not in self.service_registry:
-            return None
-        
-        # Get all healthy instances
-        healthy_instances = [
-            instance for instance in self.service_registry[service_name]['instances']
-            if instance['health'] == 'healthy'
-        ]
-        
-        if not healthy_instances:
-            return None
-        
-        # In a real implementation, this would use a load balancing algorithm
-        # For this example, we'll just return the first healthy instance
-        return healthy_instances[0]
-    
-    def _simulate_service_response(self, service_name: str, path: str, method: str, 
-                                  identity: Dict[str, Any], body: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Simulate a response from a microservice.
-        
-        Args:
-            service_name: Name of the service
-            path: API endpoint path
-            method: HTTP method
-            identity: Authenticated identity
-            body: Request body
-            
-        Returns:
-            Simulated response
-        """
-        # This is just a placeholder for simulation
-        # In a real implementation, this would make an actual HTTP request to the service
-        
-        # Generate a request ID for tracing
-        request_id = str(uuid.uuid4())
-        
-        # Log the request
-        self.logger.info(f"Request {request_id}: {method} {service_name}{path}")
-        
-        # Simulate some processing time
-        time.sleep(0.1)
-        
-        # Return a simulated response
-        return {
-            'status_code': 200,
-            'headers': {
-                'Content-Type': 'application/json',
-                'X-Request-ID': request_id
-            },
-            'body': {
-                'service': service_name,
-                'path': path,
-                'method': method,
-                'timestamp': time.time(),
-                'request_id': request_id,
-                'message': 'Request processed successfully'
-            }
-        }
-    
-    def register_service(self, service_name: str, host: str, port: int) -> bool:
-        """
-        Register a new service instance.
-        
-        Args:
-            service_name: Name of the service
-            host: Service host
-            port: Service port
-            
-        Returns:
-            Registration success
-        """
-        if service_name not in self.service_registry:
-            self.service_registry[service_name] = {
-                'instances': [],
-                'api_version': 'v1'
-            }
-        
-        # Check if instance already registered
-        for instance in self.service_registry[service_name]['instances']:
-            if instance['host'] == host and instance['port'] == port:
-                # Update health and timestamp
-                instance['health'] = 'healthy'
-                instance['last_checked'] = time.time()
-                return True
-        
-        # Add new instance
-        self.service_registry[service_name]['instances'].append({
-            'host': host,
-            'port': port,
-            'health': 'healthy',
-            'last_checked': time.time()
-        })
-        
-        self.logger.info(f"Registered new instance of service '{service_name}' at {host}:{port}")
+        # This is a placeholder; a real implementation would track request counts
         return True
     
-    def deregister_service(self, service_name: str, host: str, port: int) -> bool:
+    def _get_timeout(self, service_name: str, method_name: str) -> float:
         """
-        Deregister a service instance.
+        Get timeout for a method call.
         
         Args:
             service_name: Name of the service
-            host: Service host
-            port: Service port
+            method_name: Name of the method
             
         Returns:
-            Deregistration success
+            Timeout in seconds
         """
-        if service_name not in self.service_registry:
-            return False
+        timeouts = self.config.get('timeouts', {})
         
-        # Find and remove the instance
-        instances = self.service_registry[service_name]['instances']
-        for i, instance in enumerate(instances):
-            if instance['host'] == host and instance['port'] == port:
-                instances.pop(i)
-                self.logger.info(f"Deregistered instance of service '{service_name}' at {host}:{port}")
-                return True
+        # Check for specific method timeout
+        method_key = f"{service_name}_{method_name}"
+        if method_key in timeouts:
+            return timeouts[method_key]
         
-        return False
+        # Check for service timeout
+        if service_name in timeouts:
+            return timeouts[service_name]
+        
+        # Use default timeout
+        return timeouts.get('default', 30)
     
-    def update_service_health(self, service_name: str, host: str, port: int, health: str) -> bool:
+    def _update_service_status(self, service_name: str, error: Exception) -> None:
         """
-        Update the health status of a service instance.
+        Update service status based on error.
         
         Args:
             service_name: Name of the service
-            host: Service host
-            port: Service port
-            health: Health status ('healthy' or 'unhealthy')
+            error: Exception that occurred
+        """
+        # This is a placeholder; a real implementation would analyze the error
+        # and update the service status accordingly
+        self.service_status[service_name] = ServiceStatus.DEGRADED
+    
+    def shutdown_service(self, service_name: str) -> bool:
+        """
+        Shutdown a service.
+        
+        Args:
+            service_name: Name of the service
             
         Returns:
-            Update success
+            Shutdown success
         """
-        if service_name not in self.service_registry:
+        if service_name not in self.services:
+            self.logger.error(f"Service {service_name} not found")
             return False
         
-        # Find and update the instance
-        for instance in self.service_registry[service_name]['instances']:
-            if instance['host'] == host and instance['port'] == port:
-                old_health = instance['health']
-                instance['health'] = health
-                instance['last_checked'] = time.time()
-                
-                if old_health != health:
-                    self.logger.info(
-                        f"Service '{service_name}' at {host}:{port} changed health from '{old_health}' to '{health}'"
-                    )
-                
-                return True
+        if service_name not in self.service_instances or not self.service_instances[service_name]:
+            self.logger.info(f"Service {service_name} is not initialized")
+            return True
         
-        return False
+        try:
+            # Update status
+            self.service_status[service_name] = ServiceStatus.STOPPING
+            
+            # Get service instance
+            service = self.service_instances[service_name]
+            
+            # Call shutdown method if it exists
+            if hasattr(service, 'shutdown'):
+                service.shutdown()
+            
+            # Remove instance
+            self.service_instances[service_name] = None
+            
+            # Update status
+            self.service_status[service_name] = ServiceStatus.OFFLINE
+            
+            self.logger.info(f"Shutdown service: {service_name}")
+            return True
+        
+        except Exception as e:
+            self.logger.error(f"Error shutting down service {service_name}: {e}")
+            self.service_status[service_name] = ServiceStatus.UNKNOWN
+            return False
     
-    def health_check(self) -> Dict[str, Any]:
+    def shutdown_all_services(self) -> Dict[str, bool]:
         """
-        Perform health check on the API Gateway.
+        Shutdown all initialized services.
         
         Returns:
-            Health check result
+            Dictionary mapping service names to shutdown success
         """
-        # In a real implementation, this would check resources like database connections
+        results = {}
         
-        service_counts = {}
-        healthy_counts = {}
+        for service_name in list(self.service_instances.keys()):
+            if self.service_instances[service_name]:
+                results[service_name] = self.shutdown_service(service_name)
         
-        for service_name, service_info in self.service_registry.items():
-            service_counts[service_name] = len(service_info['instances'])
-            healthy_counts[service_name] = sum(
-                1 for instance in service_info['instances'] if instance['health'] == 'healthy'
+        return results
+    
+    def execute_cross_service_operation(self, operation_name: str, 
+                                    parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute a complex operation that spans multiple services.
+        
+        Args:
+            operation_name: Name of the operation
+            parameters: Parameters for the operation
+            
+        Returns:
+            Dictionary of operation results
+        """
+        # This is a placeholder for cross-service operations
+        # In a real implementation, this would define complex workflows
+        # that coordinate multiple service calls
+        
+        if operation_name == "analyze_repository":
+            return self._execute_repository_analysis(parameters)
+        
+        elif operation_name == "build_knowledge_graph":
+            return self._execute_knowledge_graph_build(parameters)
+        
+        elif operation_name == "apply_neuro_symbolic_reasoning":
+            return self._execute_neuro_symbolic_reasoning(parameters)
+        
+        elif operation_name == "perform_academic_research":
+            return self._execute_academic_research(parameters)
+        
+        else:
+            raise ValueError(f"Unknown operation: {operation_name}")
+    
+    def _execute_repository_analysis(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute repository analysis operation.
+        
+        Args:
+            parameters: Operation parameters
+            
+        Returns:
+            Operation results
+        """
+        results = {}
+        
+        try:
+            # Get repository service
+            repo_service = self.get_service('repository')
+            if not repo_service:
+                raise ValueError("Repository service not available")
+            
+            # Clone repository
+            repo_url = parameters.get('repo_url')
+            repo_branch = parameters.get('repo_branch', 'main')
+            
+            if not repo_url:
+                raise ValueError("Repository URL is required")
+            
+            # Create repository
+            repo_id = repo_service.create_repository(
+                name=repo_url.split('/')[-1],
+                url=repo_url,
+                repo_type="git",
+                default_branch=repo_branch
             )
+            
+            results['repository_id'] = repo_id
+            
+            # Clone repository
+            clone_success = repo_service.clone_repository(repo_id)
+            results['clone_success'] = clone_success
+            
+            if not clone_success:
+                raise ValueError(f"Failed to clone repository: {repo_url}")
+            
+            # Get files
+            files = repo_service.get_repository_files(repo_id)
+            results['file_count'] = len(files)
+            
+            # Get commits
+            commits = repo_service.get_repository_commits(repo_id)
+            results['commit_count'] = len(commits)
+            
+            # Get branches
+            branches = repo_service.get_repository_branches(repo_id)
+            results['branch_count'] = len(branches)
+            
+            # If code review requested
+            if parameters.get('analyze_code', True):
+                # This is a placeholder; in a real implementation, we would
+                # analyze code using appropriate services
+                results['code_analysis'] = {
+                    'status': 'success',
+                    'file_count': len(files)
+                }
+            
+            # If database analysis requested
+            if parameters.get('analyze_database', True):
+                # This is a placeholder
+                results['database_analysis'] = {
+                    'status': 'success',
+                    'model_count': 0,
+                    'table_count': 0
+                }
+            
+            # If modularization analysis requested
+            if parameters.get('analyze_modularization', True):
+                # This is a placeholder
+                results['modularization_analysis'] = {
+                    'status': 'success',
+                    'module_count': 0
+                }
+            
+            # If agent readiness evaluation requested
+            if parameters.get('analyze_agent_readiness', True):
+                # This is a placeholder
+                results['agent_readiness_analysis'] = {
+                    'status': 'success',
+                    'readiness_score': 0.0
+                }
+            
+            return results
         
-        return {
-            'status': 'healthy',
-            'timestamp': time.time(),
-            'service_registry': {
-                'total_services': len(self.service_registry),
-                'service_counts': service_counts,
-                'healthy_counts': healthy_counts
-            }
-        }
+        except Exception as e:
+            self.logger.error(f"Error in repository analysis: {e}")
+            return {'error': str(e), 'partial_results': results}
+    
+    def _execute_knowledge_graph_build(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute knowledge graph build operation.
+        
+        Args:
+            parameters: Operation parameters
+            
+        Returns:
+            Operation results
+        """
+        # This is a placeholder for a knowledge graph build operation
+        return {'status': 'not_implemented'}
+    
+    def _execute_neuro_symbolic_reasoning(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute neuro-symbolic reasoning operation.
+        
+        Args:
+            parameters: Operation parameters
+            
+        Returns:
+            Operation results
+        """
+        # This is a placeholder for a neuro-symbolic reasoning operation
+        return {'status': 'not_implemented'}
+    
+    def _execute_academic_research(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute academic research operation.
+        
+        Args:
+            parameters: Operation parameters
+            
+        Returns:
+            Operation results
+        """
+        # This is a placeholder for an academic research operation
+        return {'status': 'not_implemented'}
+
+
+# Singleton instance for easy import
+_gateway_instance = None
+
+def get_gateway_instance(config_path: Optional[str] = None) -> APIGateway:
+    """
+    Get the singleton API Gateway instance.
+    
+    Args:
+        config_path: Optional path to configuration file
+        
+    Returns:
+        API Gateway instance
+    """
+    global _gateway_instance
+    
+    if _gateway_instance is None:
+        _gateway_instance = APIGateway(config_path)
+    
+    return _gateway_instance

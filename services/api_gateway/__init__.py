@@ -1,6 +1,6 @@
 """
-API Gateway Service
+API Gateway Package
 
-This service acts as the entry point for all client requests to the microservices architecture.
-It handles routing, authentication, rate limiting, and request/response transformation.
+This service provides a unified interface for accessing all other microservices
+in the Code Deep Dive Analyzer system.
 """
