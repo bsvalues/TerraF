@@ -29,6 +29,7 @@ dependencies = [
     "prometheus-client>=0.21.1",
     "requests>=2.32.3",
     "trafilatura>=2.0.0",
+    "google-generativeai>=0.8.5",
 ]
 
 [[tool.uv.index]]
