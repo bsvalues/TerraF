@@ -355,7 +355,7 @@ class MultiModelInterface:
                              model_name: str,
                              prompt: str, 
                              system_message: Optional[str], 
-                             max_tokens: int,
+                             max_tokens: Optional[int],
                              temperature: float) -> Tuple[str, Dict[str, Any]]:
         """Generate text using OpenAI models"""
         client = self.clients["openai"]
@@ -364,6 +364,10 @@ class MultiModelInterface:
         if system_message:
             messages.append({"role": "system", "content": system_message})
         messages.append({"role": "user", "content": prompt})
+        
+        # Set default max_tokens if None
+        if max_tokens is None:
+            max_tokens = 1000
         
         start_time = time.time()
         response = client.chat.completions.create(
@@ -391,11 +395,15 @@ class MultiModelInterface:
                                model_name: str,
                                prompt: str, 
                                system_message: Optional[str], 
-                               max_tokens: int,
+                               max_tokens: Optional[int],
                                temperature: float) -> Tuple[str, Dict[str, Any]]:
         """Generate text using Anthropic models"""
         client = self.clients["anthropic"]
         
+        # Set default max_tokens if None
+        if max_tokens is None:
+            max_tokens = 1000
+            
         start_time = time.time()
         
         # Anthropic's API expects system prompt and user message differently
@@ -427,7 +435,7 @@ class MultiModelInterface:
                                 model_name: str,
                                 prompt: str, 
                                 system_message: Optional[str], 
-                                max_tokens: int,
+                                max_tokens: Optional[int],
                                 temperature: float) -> Tuple[str, Dict[str, Any]]:
         """Generate text using Perplexity models"""
         client = self.clients["perplexity"]
@@ -440,6 +448,10 @@ class MultiModelInterface:
             messages.append({"role": "system", "content": system_message})
         messages.append({"role": "user", "content": prompt})
         
+        # Set default max_tokens if None
+        if max_tokens is None:
+            max_tokens = 1000
+            
         start_time = time.time()
         response = client.chat.completions.create(
             model=perplexity_model,

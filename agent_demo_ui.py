@@ -23,6 +23,13 @@ try:
 except ImportError:
     WORKFLOW_MAPPER_AVAILABLE = False
 
+# Import domain knowledge UI module
+try:
+    from domain_knowledge_ui import render_domain_knowledge_ui
+    DOMAIN_KNOWLEDGE_AVAILABLE = True
+except ImportError:
+    DOMAIN_KNOWLEDGE_AVAILABLE = False
+
 # Set page configuration
 st.set_page_config(
     page_title="Specialized Agent Demo",
@@ -1948,7 +1955,7 @@ def main():
     st.sidebar.title("Agent Demo UI")
     
     # Add sidebar navigation
-    sidebar_options = ["Agent Dashboard", "Task History", "Workflow Optimizer"]
+    sidebar_options = ["Agent Dashboard", "Task History", "Workflow Optimizer", "Domain Knowledge"]
     selected_view = st.sidebar.radio("Navigation", sidebar_options)
     
     # Display main content
@@ -1966,6 +1973,11 @@ def main():
             render_workflow_mapper_tab()
         else:
             st.error("Workflow Mapper functionality is not available. Please check the installation.")
+    elif selected_view == "Domain Knowledge":
+        if DOMAIN_KNOWLEDGE_AVAILABLE:
+            render_domain_knowledge_ui()
+        else:
+            st.error("Domain Knowledge functionality is not available. Please check the installation.")
 
 if __name__ == "__main__":
     main()

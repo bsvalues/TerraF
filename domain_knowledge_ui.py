@@ -398,10 +398,13 @@ def render_real_estate_statistics_tab():
         trend = result.get('trending_direction', 'Stable')
         
         # Create a styled box for market condition
+        bg_color = "#E8F4F9" if condition == "Buyer's Market" else "#F9F3E8"
+        text_color = "#2C6E9B" if condition == "Buyer's Market" else "#9B6E2C"
+        
         st.markdown(f"""
-        <div style="background-color: {'#E8F4F9' if condition == 'Buyer\'s Market' else '#F9F3E8'}; 
+        <div style="background-color: {bg_color}; 
                     padding: 20px; border-radius: 10px; margin: 10px 0;">
-            <h4 style="margin: 0; color: {'#2C6E9B' if condition == 'Buyer\'s Market' else '#9B6E2C'};">
+            <h4 style="margin: 0; color: {text_color};">
                 {condition}
             </h4>
             <p style="margin: 5px 0;">
@@ -897,6 +900,47 @@ def render_domain_expert_tab():
         "Database Optimization": "database"
     }
     
+    # Model selection
+    st.markdown("### Select AI Model (Optional)")
+    
+    # Get available models
+    available_models = []
+    try:
+        if hasattr(st.session_state.domain_agent, 'model_interface') and st.session_state.domain_agent.model_interface:
+            available_models = st.session_state.domain_agent.model_interface.get_available_models()
+    except Exception as e:
+        logger.error(f"Error getting available models: {str(e)}")
+    
+    # Create model groups
+    model_groups = {
+        "OpenAI": [m for m in available_models if "gpt" in m.lower()],
+        "Anthropic": [m for m in available_models if "claude" in m.lower()],
+        "Perplexity": [m for m in available_models if "perplexity" in m.lower()],
+        "DeepSeek": [m for m in available_models if "deepseek" in m.lower()],
+        "Google": [m for m in available_models if "gemini" in m.lower()]
+    }
+    
+    # Create model selection UI
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        model_provider = st.selectbox(
+            "Model Provider", 
+            ["Auto-select (Recommended)"] + list(model_groups.keys()),
+            help="Select a model provider or let the system choose the best model for your domain"
+        )
+    
+    with col2:
+        if model_provider == "Auto-select (Recommended)":
+            selected_model = None
+        else:
+            provider_models = model_groups.get(model_provider, [])
+            if provider_models:
+                selected_model = st.selectbox("Specific Model", provider_models)
+            else:
+                st.info(f"No {model_provider} models available. Using default.")
+                selected_model = None
+    
     # Question input
     st.markdown("### Ask a Question")
     
@@ -972,6 +1016,7 @@ def render_domain_expert_tab():
                 "type": "query_domain_knowledge",
                 "query": question,
                 "domain": domain_map[selected_domain],
+                "model": selected_model,
                 "context": {
                     "user_expertise": "novice",
                     "query_type": "informational"
@@ -997,7 +1042,73 @@ def render_domain_expert_tab():
             <h4 style="margin: 0 0 15px 0; color: #2C6E9B;">Response to your question:</h4>
             <p style="margin: 0; white-space: pre-line;">{result['response']}</p>
             <p style="margin: 10px 0 0 0; font-style: italic; font-size: 0.8em; color: #666;">
-                Source: {result.get('source', 'Domain Knowledge Model')}
+                Source: {result.get('source', 'Domain Knowledge Model')} 
+                ({result.get('provider', 'AI')})
+            </p>
+            <p style="margin: 5px 0 0 0; font-style: italic; font-size: 0.7em; color: #888;">
+                Response time: {result.get('latency', 0):.2f}s | Generated: {result.get('timestamp', '')}
             </p>
         </div>
         """, unsafe_allow_html=True)
+        
+        # Add model comparison option
+        if 'domain_agent' in st.session_state and hasattr(st.session_state.domain_agent, 'model_interface'):
+            st.markdown("### Compare With Other Models")
+            if st.button("Compare responses across different models"):
+                with st.spinner("Generating responses from multiple models..."):
+                    try:
+                        model_interface = st.session_state.domain_agent.model_interface
+                        available_models = model_interface.get_available_models()
+                        
+                        # Select up to 3 different models for comparison
+                        comparison_models = []
+                        for provider in ["OpenAI", "Anthropic", "Perplexity", "Google", "DeepSeek"]:
+                            provider_models = [m for m in available_models if 
+                                              (provider.lower() in m.lower() or 
+                                               (provider == "OpenAI" and "gpt" in m.lower()) or
+                                               (provider == "Anthropic" and "claude" in m.lower()) or 
+                                               (provider == "Google" and "gemini" in m.lower()))]
+                            if provider_models and len(comparison_models) < 3:
+                                # Avoid adding the same model used for the original response
+                                if provider_models[0] != result.get('source'):
+                                    comparison_models.append(provider_models[0])
+                        
+                        # Generate comparison responses
+                        if comparison_models:
+                            st.subheader("Model Comparisons")
+                            
+                            # Create tabs for each model
+                            comparison_tabs = st.tabs(comparison_models)
+                            
+                            # Generate responses from each model
+                            for i, model in enumerate(comparison_models):
+                                with comparison_tabs[i]:
+                                    with st.spinner(f"Generating response from {model}..."):
+                                        task = {
+                                            "type": "query_domain_knowledge",
+                                            "query": question,
+                                            "domain": domain_map[selected_domain],
+                                            "model": model,
+                                            "context": {
+                                                "user_expertise": "novice",
+                                                "query_type": "informational"
+                                            }
+                                        }
+                                        
+                                        comp_result = st.session_state.domain_agent._execute_task(task)
+                                        
+                                        if comp_result.get("status") == "success":
+                                            st.markdown(f"""
+                                            <div style="background-color: #F5F8FA; padding: 15px; border-radius: 10px; margin: 10px 0;">
+                                                <p style="margin: 0; white-space: pre-line;">{comp_result['response']}</p>
+                                                <p style="margin: 10px 0 0 0; font-style: italic; font-size: 0.8em; color: #666;">
+                                                    Response time: {comp_result.get('latency', 0):.2f}s
+                                                </p>
+                                            </div>
+                                            """, unsafe_allow_html=True)
+                                        else:
+                                            st.error(f"Failed to generate comparison from {model}")
+                        else:
+                            st.info("No additional models available for comparison.")
+                    except Exception as e:
+                        st.error(f"Error comparing models: {str(e)}")
