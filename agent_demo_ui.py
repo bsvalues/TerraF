@@ -30,6 +30,14 @@ try:
 except ImportError:
     DOMAIN_KNOWLEDGE_AVAILABLE = False
 
+# Import pattern recognition UI module
+try:
+    from pattern_recognition_ui import render_pattern_recognition_tab, add_pattern_recognition_tab
+    PATTERN_RECOGNITION_AVAILABLE = True
+except ImportError as e:
+    logger.error(f"Pattern recognition UI not available: {str(e)}")
+    PATTERN_RECOGNITION_AVAILABLE = False
+
 # Set page configuration
 st.set_page_config(
     page_title="Specialized Agent Demo",
@@ -1955,7 +1963,7 @@ def main():
     st.sidebar.title("Agent Demo UI")
     
     # Add sidebar navigation
-    sidebar_options = ["Agent Dashboard", "Task History", "Workflow Optimizer", "Domain Knowledge"]
+    sidebar_options = ["Agent Dashboard", "Task History", "Workflow Optimizer", "Domain Knowledge", "Pattern Recognition"]
     selected_view = st.sidebar.radio("Navigation", sidebar_options)
     
     # Display main content
@@ -1978,6 +1986,14 @@ def main():
             render_domain_knowledge_ui()
         else:
             st.error("Domain Knowledge functionality is not available. Please check the installation.")
+    elif selected_view == "Pattern Recognition":
+        if PATTERN_RECOGNITION_AVAILABLE:
+            # Set the repo path to the current directory for the pattern recognition
+            if 'repo_path' not in st.session_state:
+                st.session_state.repo_path = os.getcwd()
+            render_pattern_recognition_tab()
+        else:
+            st.error("Pattern Recognition functionality is not available. Please check the installation.")
 
 if __name__ == "__main__":
     main()
