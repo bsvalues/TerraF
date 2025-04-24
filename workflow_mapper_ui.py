@@ -28,6 +28,7 @@ try:
         analyze_workflow_dependencies,
         analyze_all_dependencies
     )
+    from workflow_optimizer import WorkflowOptimizer
     WORKFLOW_MAPPER_AVAILABLE = True
 except ImportError:
     logger.error("Workflow mapper functionality not available.")
@@ -42,6 +43,10 @@ def initialize_workflow_mapper_state():
         st.session_state.dependency_analysis_mode = "workflow"  # or "all"
         st.session_state.highlight_bottlenecks = True
         st.session_state.optimization_recommendations = []
+        st.session_state.workflow_optimizer = None
+        st.session_state.optimizer_results = None
+        st.session_state.selected_component_for_optimization = None
+        st.session_state.component_optimization_plan = None
         
         # Set default repo path if not already set
         if 'repo_path' not in st.session_state:
@@ -129,13 +134,23 @@ def run_dependency_analysis():
                 st.session_state.microservice_analysis = all_data['microservice_analysis']
                 st.info(f"Detected {len(all_data['microservice_analysis'].get('microservices', []))} microservices in the TerraFusion architecture.")
         
-        # Generate recommendations
+        # Generate recommendations and run workflow optimization
         if st.session_state.dependency_graph_data:
+            # Generate traditional recommendations
             st.session_state.optimization_recommendations = generate_optimization_recommendations(
                 st.session_state.dependency_graph_data
             )
             
-            st.success("Dependency analysis completed successfully!")
+            # Initialize and run the workflow optimizer
+            st.info("Running advanced workflow optimization analysis...")
+            workflow_optimizer = WorkflowOptimizer(repo_path)
+            optimization_results = workflow_optimizer.analyze_repository()
+            
+            # Store optimizer and results in session state
+            st.session_state.workflow_optimizer = workflow_optimizer
+            st.session_state.optimizer_results = optimization_results
+            
+            st.success("Dependency analysis and workflow optimization completed successfully!")
         else:
             st.warning("No dependency data was generated.")
     
@@ -153,7 +168,7 @@ def display_dependency_analysis_results():
         
         if graph_data:
             # Show tabs for different visualization types
-            viz_tabs = st.tabs(["Module Dependencies", "Bottleneck Analysis", "Critical Paths", "Microservice Architecture"])
+            viz_tabs = st.tabs(["Module Dependencies", "Bottleneck Analysis", "Critical Paths", "Microservice Architecture", "Optimization Recommendations"])
             
             with viz_tabs[0]:  # Module Dependencies
                 # Main dependency graph
@@ -266,6 +281,188 @@ def display_dependency_analysis_results():
             with viz_tabs[3]:  # Microservice Architecture
                 # Display microservice architecture analysis
                 microservice_analysis = st.session_state.get('microservice_analysis')
+                
+            with viz_tabs[4]:  # Optimization Recommendations
+                st.markdown("### Workflow Optimization Recommendations")
+                
+                # Check if we have optimization results
+                optimizer_results = st.session_state.get('optimizer_results')
+                if optimizer_results:
+                    # Display summary metrics
+                    st.markdown("#### Workflow Complexity Overview")
+                    
+                    complexity_metrics = optimizer_results.get('performance_metrics', {}).get('complexity', {})
+                    if complexity_metrics:
+                        cols = st.columns(3)
+                        with cols[0]:
+                            st.metric("Average Complexity", f"{complexity_metrics.get('average_complexity', 0):.1f}")
+                        with cols[1]:
+                            st.metric("Cyclomatic Complexity", complexity_metrics.get('cyclomatic_complexity', 0))
+                        with cols[2]:
+                            st.metric("Connected Components", complexity_metrics.get('strongly_connected_components', 0))
+                    
+                    # Display highest complexity components
+                    high_complexity = complexity_metrics.get('highest_complexity_components', [])
+                    if high_complexity:
+                        st.markdown("#### Highest Complexity Components")
+                        for item in high_complexity:
+                            st.markdown(f"- **{os.path.basename(item['file'])}**: {item['complexity']:.1f}")
+                    
+                    # Display optimization recommendations
+                    optimizer = st.session_state.get('workflow_optimizer')
+                    if optimizer:
+                        st.markdown("#### Recommended Optimizations")
+                        
+                        # Filtering options
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            impact_filter = st.selectbox(
+                                "Filter by Impact",
+                                ["All", "High", "Medium", "Low"],
+                                index=0
+                            )
+                        
+                        with col2:
+                            component_filter = st.text_input(
+                                "Filter by Component",
+                                ""
+                            )
+                        
+                        # Convert filters to appropriate format for the optimizer
+                        impact = impact_filter.lower() if impact_filter != "All" else None
+                        component = component_filter if component_filter else None
+                        
+                        # Get recommendations with filters
+                        recommendations = optimizer.get_optimization_recommendations(
+                            component_filter=component,
+                            impact_filter=impact
+                        )
+                        
+                        if recommendations:
+                            st.markdown(f"Found **{len(recommendations)}** optimization recommendations")
+                            
+                            # Show recommendations with expandable details
+                            for i, rec in enumerate(recommendations):
+                                # Determine icon based on impact
+                                impact_icon = {
+                                    'high': '🔴',
+                                    'medium': '🟠',
+                                    'low': '🟡'
+                                }.get(rec.get('impact', 'low'), '⚪')
+                                
+                                # Determine icon based on type
+                                type_icon = {
+                                    'bottleneck_refactoring': '🔄',
+                                    'circular_dependency': '🔁',
+                                    'complexity_reduction': '📉',
+                                    'long_execution_path': '⛓️',
+                                    'standardization': '📋',
+                                    'framework_adoption': '🧰',
+                                    'framework_standardization': '🔧',
+                                    'parallelization': '⚡'
+                                }.get(rec.get('type', ''), '🔨')
+                                
+                                # Format the title
+                                title = f"{impact_icon} {type_icon} **{rec.get('description', 'Optimization Recommendation')}**"
+                                
+                                with st.expander(title, expanded=i==0):
+                                    st.markdown(f"**Type:** {rec.get('type', '').replace('_', ' ').title()}")
+                                    st.markdown(f"**Impact:** {rec.get('impact', 'Unknown').title()}")
+                                    st.markdown(f"**Urgency:** {rec.get('urgency', 'Unknown').title()}")
+                                    
+                                    if 'details' in rec:
+                                        st.markdown(f"**Details:** {rec['details']}")
+                                    
+                                    if 'component' in rec and rec['component'] != 'all':
+                                        st.markdown(f"**Component:** `{rec['component']}`")
+                                    
+                                    if 'components' in rec:
+                                        components = rec['components']
+                                        if isinstance(components, list) and components:
+                                            st.markdown("**Affected Components:**")
+                                            for comp in components:
+                                                st.markdown(f"- `{comp}`")
+                                    
+                                    if 'suggestions' in rec:
+                                        st.markdown("**Suggested Actions:**")
+                                        for suggestion in rec['suggestions']:
+                                            st.markdown(f"- {suggestion}")
+                                    
+                                    # Add a button to get detailed optimization plan
+                                    if 'component' in rec and rec['component'] != 'all':
+                                        component_path = rec['component']
+                                        if st.button(f"Generate Optimization Plan for {os.path.basename(component_path)}", key=f"opt_plan_{i}"):
+                                            with st.spinner(f"Generating optimization plan for {os.path.basename(component_path)}..."):
+                                                optimization_plan = optimizer.optimize_workflow(component_path)
+                                                st.session_state.component_optimization_plan = optimization_plan
+                                                st.session_state.selected_component_for_optimization = component_path
+                            
+                            # Display the detailed optimization plan if available
+                            if st.session_state.get('component_optimization_plan'):
+                                plan = st.session_state.component_optimization_plan
+                                component = st.session_state.selected_component_for_optimization
+                                
+                                st.markdown(f"### Optimization Plan for {os.path.basename(component)}")
+                                
+                                # Effort estimation
+                                effort = plan.get('estimated_effort', {})
+                                effort_level = effort.get('level', 'unknown')
+                                effort_days = effort.get('days_estimate', 0)
+                                
+                                effort_color = {
+                                    'high': '🔴',
+                                    'medium': '🟠',
+                                    'low': '🟢'
+                                }.get(effort_level, '⚪')
+                                
+                                st.markdown(f"**Estimated Effort:** {effort_color} {effort_level.title()} ({effort_days} days)")
+                                
+                                # Expected benefits
+                                benefits = plan.get('expected_benefits', {})
+                                if benefits:
+                                    st.markdown("**Expected Benefits:**")
+                                    benefit_cols = st.columns(3)
+                                    
+                                    benefit_icons = {
+                                        'high': '🟢',
+                                        'medium': '🟠',
+                                        'low': '🔴'
+                                    }
+                                    
+                                    with benefit_cols[0]:
+                                        perf = benefits.get('performance', 'unknown')
+                                        st.markdown(f"Performance: {benefit_icons.get(perf, '⚪')} {perf.title()}")
+                                        
+                                    with benefit_cols[1]:
+                                        maint = benefits.get('maintainability', 'unknown')
+                                        st.markdown(f"Maintainability: {benefit_icons.get(maint, '⚪')} {maint.title()}")
+                                        
+                                    with benefit_cols[2]:
+                                        rel = benefits.get('reliability', 'unknown')
+                                        st.markdown(f"Reliability: {benefit_icons.get(rel, '⚪')} {rel.title()}")
+                                
+                                # Implementation steps
+                                steps = plan.get('implementation_steps', [])
+                                if steps:
+                                    st.markdown("**Implementation Steps:**")
+                                    
+                                    for step in steps:
+                                        step_num = step.get('step', 0)
+                                        title = step.get('title', 'Implementation Step')
+                                        description = step.get('description', '')
+                                        
+                                        with st.expander(f"Step {step_num}: {title}"):
+                                            st.markdown(description)
+                                            
+                                            tasks = step.get('tasks', [])
+                                            if tasks:
+                                                st.markdown("**Tasks:**")
+                                                for task in tasks:
+                                                    st.markdown(f"- {task}")
+                        else:
+                            st.info("No optimization recommendations match the current filters.")
+                else:
+                    st.info("Run the dependency analysis to generate optimization recommendations.")
                 if microservice_analysis:
                     st.markdown("### TerraFusion Microservice Architecture Analysis")
                     
