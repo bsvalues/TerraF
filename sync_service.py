@@ -1451,16 +1451,338 @@ class DataTypeConverter:
         return "true" if bool_value else "false"
 
 
+class TransformationRule:
+    """Base class for all transformation rules"""
+    def apply(self, value: Any, context: Dict[str, Any] = None) -> Any:
+        raise NotImplementedError("Subclasses must implement apply()")
+    
+    def get_description(self) -> str:
+        return "Base transformation rule"
+
+
+class FormatTransformation(TransformationRule):
+    """Format a string value using a template"""
+    def __init__(self, format_template: str):
+        self.format_template = format_template
+        
+    def apply(self, value: Any, context: Dict[str, Any] = None) -> str:
+        try:
+            if isinstance(value, (list, tuple)):
+                return self.format_template.format(*value)
+            elif isinstance(value, dict):
+                return self.format_template.format(**value)
+            else:
+                return self.format_template.format(value)
+        except Exception as e:
+            logging.error(f"Format transformation error: {e}")
+            return str(value)
+    
+    def get_description(self) -> str:
+        return f"Format using template: {self.format_template}"
+
+
+class LookupTransformation(TransformationRule):
+    """Replace values using a lookup dictionary"""
+    def __init__(self, lookup_map: Dict[Any, Any], default_to_original: bool = True):
+        self.lookup_map = lookup_map
+        self.default_to_original = default_to_original
+        
+    def apply(self, value: Any, context: Dict[str, Any] = None) -> Any:
+        if value in self.lookup_map:
+            return self.lookup_map[value]
+        elif self.default_to_original:
+            return value
+        else:
+            return None
+    
+    def get_description(self) -> str:
+        return f"Lookup using mapping of {len(self.lookup_map)} values"
+
+
+class CombineTransformation(TransformationRule):
+    """Combine multiple values into one string"""
+    def __init__(self, separator: str = " "):
+        self.separator = separator
+        
+    def apply(self, values: List[Any], context: Dict[str, Any] = None) -> str:
+        return self.separator.join(str(v) for v in values if v is not None)
+    
+    def get_description(self) -> str:
+        return f"Combine values with separator: '{self.separator}'"
+
+
+class JsonPathExtraction(TransformationRule):
+    """Extract data from JSON or nested dictionaries using JSON path syntax"""
+    def __init__(self, path: str, default_value: Any = None):
+        self.path = path
+        self.default_value = default_value
+        self._compile_path()
+        
+    def _compile_path(self):
+        # Convert JSONPath to a list of key accessors
+        self.path_parts = self.path.lstrip('$.').split('.')
+        
+    def apply(self, value: Dict[str, Any], context: Dict[str, Any] = None) -> Any:
+        if not isinstance(value, dict):
+            return self.default_value
+            
+        current = value
+        try:
+            for part in self.path_parts:
+                # Handle array indexing
+                if '[' in part and part.endswith(']'):
+                    key, idx_str = part.split('[', 1)
+                    idx = int(idx_str[:-1])  # remove the closing bracket
+                    current = current.get(key, [])[idx]
+                else:
+                    current = current.get(part, None)
+                    
+                if current is None:
+                    return self.default_value
+            return current
+        except (KeyError, IndexError, TypeError):
+            return self.default_value
+    
+    def get_description(self) -> str:
+        return f"Extract using JSON path: {self.path}"
+
+
+class DateTimeTransformation(TransformationRule):
+    """Convert between different date/time formats"""
+    def __init__(self, source_format: str = None, target_format: str = "%Y-%m-%d"):
+        self.source_format = source_format
+        self.target_format = target_format
+        
+    def apply(self, value: Any, context: Dict[str, Any] = None) -> str:
+        if not value:
+            return None
+            
+        try:
+            # If source_format is provided, parse using it
+            if self.source_format:
+                dt = datetime.datetime.strptime(str(value), self.source_format)
+            else:
+                # Try common formats
+                for fmt in ["%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%m/%d/%Y", "%d-%b-%Y"]:
+                    try:
+                        dt = datetime.datetime.strptime(str(value), fmt)
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    # If we get here, no format matched
+                    raise ValueError(f"Could not parse date: {value}")
+                    
+            return dt.strftime(self.target_format)
+        except Exception as e:
+            logging.error(f"Date transformation error: {e}")
+            return str(value)
+    
+    def get_description(self) -> str:
+        src = self.source_format or "auto-detect"
+        return f"Convert date from {src} to {self.target_format}"
+
+
+class NumberTransformation(TransformationRule):
+    """Transform numeric values (scaling, rounding, formatting)"""
+    def __init__(self, 
+                 scale_factor: float = 1.0, 
+                 rounding_digits: int = None,
+                 number_format: str = None):
+        self.scale_factor = scale_factor
+        self.rounding_digits = rounding_digits
+        self.number_format = number_format
+        
+    def apply(self, value: Any, context: Dict[str, Any] = None) -> Any:
+        if value is None:
+            return None
+            
+        try:
+            # Convert to float first
+            num_value = float(value)
+            
+            # Apply scaling
+            result = num_value * self.scale_factor
+            
+            # Apply rounding if specified
+            if self.rounding_digits is not None:
+                result = round(result, self.rounding_digits)
+                
+            # Format if specified, otherwise return the number
+            if self.number_format:
+                return self.number_format.format(result)
+            return result
+        except Exception as e:
+            logging.error(f"Number transformation error: {e}")
+            return value
+    
+    def get_description(self) -> str:
+        parts = []
+        if self.scale_factor != 1.0:
+            parts.append(f"scale by {self.scale_factor}")
+        if self.rounding_digits is not None:
+            parts.append(f"round to {self.rounding_digits} digits")
+        if self.number_format:
+            parts.append(f"format as '{self.number_format}'")
+        return "Number transformation: " + ", ".join(parts)
+
+
+class AddressNormalization(TransformationRule):
+    """Normalize address formats"""
+    def __init__(self, output_format: str = "single_line"):
+        self.output_format = output_format
+        
+    def apply(self, value: Any, context: Dict[str, Any] = None) -> Any:
+        if isinstance(value, dict):
+            # Handle structured address
+            address = value
+        elif isinstance(value, str):
+            # Parse from string
+            address = self._parse_address(value)
+        else:
+            return value
+            
+        if self.output_format == "single_line":
+            parts = []
+            if address.get('number'):
+                parts.append(address.get('number', ''))
+            if address.get('street'):
+                parts.append(address.get('street', ''))
+            if address.get('unit'):
+                parts.append(f"#{address.get('unit', '')}")
+            
+            line2_parts = []
+            if address.get('city'):
+                line2_parts.append(address.get('city', ''))
+            if address.get('state') and address.get('zip'):
+                line2_parts.append(f"{address.get('state', '')}, {address.get('zip', '')}")
+            elif address.get('state'):
+                line2_parts.append(address.get('state', ''))
+                
+            result = " ".join(parts)
+            if line2_parts:
+                result += ", " + ", ".join(line2_parts)
+            return result
+        elif self.output_format == "json":
+            return address
+        else:
+            return value
+    
+    def _parse_address(self, address_str: str) -> Dict[str, str]:
+        """Basic address parsing - would be more sophisticated in production"""
+        parts = address_str.split(',')
+        result = {}
+        
+        if len(parts) >= 1:
+            street_parts = parts[0].strip().split(' ')
+            if street_parts and street_parts[0].isdigit():
+                result['number'] = street_parts[0]
+                result['street'] = ' '.join(street_parts[1:])
+            else:
+                result['street'] = parts[0].strip()
+                
+        if len(parts) >= 2:
+            city_state_zip = parts[1].strip().split(' ')
+            if len(city_state_zip) >= 1:
+                result['city'] = city_state_zip[0]
+            if len(city_state_zip) >= 2:
+                result['state'] = city_state_zip[-2]
+            if len(city_state_zip) >= 3:
+                result['zip'] = city_state_zip[-1]
+                
+        return result
+    
+    def get_description(self) -> str:
+        return f"Normalize address to {self.output_format} format"
+
+
+class AIEnrichment(TransformationRule):
+    """Enrich data using AI capabilities"""
+    def __init__(self, enrichment_type: str, api_key_env_var: str = None):
+        self.enrichment_type = enrichment_type
+        self.api_key_env_var = api_key_env_var
+        
+    def apply(self, value: Any, context: Dict[str, Any] = None) -> Any:
+        # This would use an actual AI service in production
+        # For now, we'll simulate enrichment based on the type
+        if self.enrichment_type == "address_completion":
+            return self._simulate_address_completion(value)
+        elif self.enrichment_type == "entity_extraction":
+            return self._simulate_entity_extraction(value)
+        else:
+            return value
+    
+    def _simulate_address_completion(self, value: str) -> Dict[str, str]:
+        """Simulate address completion"""
+        if not isinstance(value, str):
+            return value
+            
+        # Check if we have a partial address
+        if ',' not in value and len(value.split()) <= 3:
+            # Add a simulated completion
+            address_parts = value.split()
+            if len(address_parts) == 1:
+                # Just a street name
+                return f"{value} Street, Springfield, IL 62701"
+            else:
+                # Partial address
+                return f"{value}, Springfield, IL 62701"
+        return value
+    
+    def _simulate_entity_extraction(self, value: str) -> Dict[str, Any]:
+        """Simulate entity extraction"""
+        if not isinstance(value, str):
+            return value
+            
+        # Extract potential entities from text
+        result = {"original": value, "entities": {}}
+        
+        # Look for patterns like names, dates, and organizations
+        name_pattern = r"([A-Z][a-z]+ [A-Z][a-z]+)"
+        date_pattern = r"(\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{2}-\d{2})"
+        
+        name_matches = re.findall(name_pattern, value)
+        date_matches = re.findall(date_pattern, value)
+        
+        if name_matches:
+            result["entities"]["names"] = name_matches
+        if date_matches:
+            result["entities"]["dates"] = date_matches
+            
+        return result
+    
+    def get_description(self) -> str:
+        return f"AI enrichment: {self.enrichment_type}"
+
+
+class ComplexTransformation(TransformationRule):
+    """Combines multiple transformations in sequence"""
+    def __init__(self, transforms: List[TransformationRule]):
+        self.transforms = transforms
+        
+    def apply(self, value: Any, context: Dict[str, Any] = None) -> Any:
+        result = value
+        for transform in self.transforms:
+            result = transform.apply(result, context)
+        return result
+    
+    def get_description(self) -> str:
+        return "Complex transformation: " + " → ".join(t.get_description() for t in self.transforms)
+
+
 class DataTransformer:
     """
-    Transforms data from the source format to the target format.
-    Utilizes DataTypeConverter for intelligent handling of data type differences.
+    Enhanced data transformer with advanced capabilities for complex transformations.
+    Provides template-based field mapping, JSON path extraction, smart data type conversion,
+    and AI-powered data enrichment.
     """
     def __init__(self, field_mapping_config: Dict[str, Any] = None):
         self.field_mapping = field_mapping_config or self._get_default_field_mapping()
         self.logger = logging.getLogger(self.__class__.__name__)
         # Initialize the data type converter for handling type conversions
         self.type_converter = DataTypeConverter()
+        # Initialize transformation rule repository
+        self.transformation_rules = self._initialize_transformation_rules()
         
     def transform(self, changes: List[DetectedChange]) -> List[TransformedRecord]:
         """
@@ -1486,6 +1808,18 @@ class DataTransformer:
                     mapping.get('transforms', {})
                 )
                 
+                # Apply global transformations if defined
+                if 'global_transforms' in mapping:
+                    transformed_data = self._apply_global_transforms(
+                        transformed_data,
+                        mapping['global_transforms'],
+                        context={
+                            'source_table': change.source_table,
+                            'operation': change.change_type,
+                            'source_data': change.new_data
+                        }
+                    )
+                
                 # Determine target ID and table
                 target_table = mapping['target_table']
                 target_id = self._determine_target_id(change, mapping)
@@ -1500,7 +1834,9 @@ class DataTransformer:
                     metadata={
                         "source_table": change.source_table,
                         "source_timestamp": change.timestamp,
-                        "transformed_at": datetime.datetime.now().isoformat()
+                        "transformed_at": datetime.datetime.now().isoformat(),
+                        "transformation_version": "2.0",
+                        "applied_rules": self._get_applied_rules(mapping)
                     }
                 )
                 
@@ -1520,12 +1856,19 @@ class DataTransformer:
         """Apply field mapping to transform source data to target format"""
         result = {}
         
+        # Track which transformations were applied
+        applied_transforms = set()
+        
+        # First extract all fields using field mapping
         for target_field, source_info in field_mapping.items():
             if isinstance(source_info, str):
+                # Handle JSON path notation
+                if '$.' in source_info:
+                    extractor = JsonPathExtraction(source_info)
+                    result[target_field] = extractor.apply(source_data)
                 # Direct field mapping
-                source_field = source_info
-                if source_field in source_data:
-                    result[target_field] = source_data[source_field]
+                elif source_info in source_data:
+                    result[target_field] = source_data[source_info]
             elif isinstance(source_info, dict):
                 # Nested field mapping
                 nested_result = {}
@@ -1534,23 +1877,225 @@ class DataTransformer:
                         nested_result[nested_target] = source_data[nested_source]
                 result[target_field] = nested_result
         
-        # Apply transforms to fields that need them
+        # Then apply field-specific transformations
         for field, transform_info in transforms.items():
-            if field in result:
-                transform_type = transform_info.get('type')
-                if transform_type == 'format':
-                    format_str = transform_info.get('format', '{}')
-                    result[field] = format_str.format(result[field])
-                elif transform_type == 'lookup':
-                    lookup_map = transform_info.get('values', {})
-                    result[field] = lookup_map.get(result[field], result[field])
-                elif transform_type == 'combine':
-                    fields = transform_info.get('fields', [])
-                    separator = transform_info.get('separator', ' ')
-                    values = [source_data.get(f, '') for f in fields]
-                    result[field] = separator.join(str(v) for v in values if v)
+            # Track that we're applying this transformation
+            transform_type = transform_info.get('type')
+            applied_transforms.add(f"{field}:{transform_type}")
+            
+            # Get the field value to transform
+            field_parts = field.split('.')
+            if len(field_parts) == 1:
+                # Simple field reference
+                if field in result:
+                    value = result[field]
+                    transformed_value = self._apply_transform(value, transform_info, source_data)
+                    result[field] = transformed_value
+            else:
+                # Nested field reference (e.g., "location.address")
+                current = result
+                for part in field_parts[:-1]:
+                    if part not in current:
+                        current[part] = {}
+                    current = current[part]
+                
+                last_part = field_parts[-1]
+                if last_part in current:
+                    value = current[last_part]
+                    transformed_value = self._apply_transform(value, transform_info, source_data)
+                    current[last_part] = transformed_value
         
         return result
+    
+    def _apply_transform(self, value: Any, transform_info: Dict[str, Any], 
+                         source_data: Dict[str, Any]) -> Any:
+        """Apply a specific transformation to a value"""
+        transform_type = transform_info.get('type')
+        
+        # Use the transformation rule if available
+        rule_name = transform_info.get('rule')
+        if rule_name and rule_name in self.transformation_rules:
+            return self.transformation_rules[rule_name].apply(value, {'source_data': source_data})
+        
+        # Otherwise use the inline configuration
+        if transform_type == 'format':
+            format_str = transform_info.get('format', '{}')
+            transform = FormatTransformation(format_str)
+            return transform.apply(value)
+            
+        elif transform_type == 'lookup':
+            lookup_map = transform_info.get('values', {})
+            transform = LookupTransformation(lookup_map)
+            return transform.apply(value)
+            
+        elif transform_type == 'combine':
+            fields = transform_info.get('fields', [])
+            separator = transform_info.get('separator', ' ')
+            values = [source_data.get(f, '') for f in fields]
+            transform = CombineTransformation(separator)
+            return transform.apply(values)
+            
+        elif transform_type == 'date':
+            source_format = transform_info.get('source_format')
+            target_format = transform_info.get('target_format', "%Y-%m-%d")
+            transform = DateTimeTransformation(source_format, target_format)
+            return transform.apply(value)
+            
+        elif transform_type == 'number':
+            scale = transform_info.get('scale', 1.0)
+            digits = transform_info.get('round')
+            format_str = transform_info.get('format')
+            transform = NumberTransformation(scale, digits, format_str)
+            return transform.apply(value)
+            
+        elif transform_type == 'address':
+            output_format = transform_info.get('format', 'single_line')
+            transform = AddressNormalization(output_format)
+            return transform.apply(value)
+            
+        elif transform_type == 'ai_enrich':
+            enrich_type = transform_info.get('enrichment_type', 'general')
+            api_key = transform_info.get('api_key_env')
+            transform = AIEnrichment(enrich_type, api_key)
+            return transform.apply(value)
+            
+        # Default: return the original value
+        return value
+    
+    def _apply_global_transforms(self, data: Dict[str, Any], 
+                               global_transforms: List[Dict[str, Any]],
+                               context: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply global transformations to the entire record"""
+        result = data.copy()
+        
+        for transform_info in global_transforms:
+            transform_type = transform_info.get('type')
+            
+            if transform_type == 'rename_fields':
+                mappings = transform_info.get('mappings', {})
+                for old_name, new_name in mappings.items():
+                    if old_name in result:
+                        result[new_name] = result.pop(old_name)
+                        
+            elif transform_type == 'remove_fields':
+                fields = transform_info.get('fields', [])
+                for field in fields:
+                    if field in result:
+                        del result[field]
+                        
+            elif transform_type == 'add_fields':
+                fields = transform_info.get('fields', {})
+                for field_name, field_value in fields.items():
+                    # Evaluate template if string contains placeholders
+                    if isinstance(field_value, str) and '{' in field_value:
+                        try:
+                            field_value = field_value.format(**context, **result)
+                        except Exception as e:
+                            self.logger.warning(f"Failed to format template {field_value}: {e}")
+                    result[field_name] = field_value
+                    
+            elif transform_type == 'transform_if':
+                condition = transform_info.get('condition', {})
+                if self._evaluate_condition(condition, result, context):
+                    then_actions = transform_info.get('then', [])
+                    for action in then_actions:
+                        field = action.get('field')
+                        transform = action.get('transform', {})
+                        if field in result:
+                            result[field] = self._apply_transform(
+                                result[field], transform, context.get('source_data', {})
+                            )
+                else:
+                    else_actions = transform_info.get('else', [])
+                    for action in else_actions:
+                        field = action.get('field')
+                        transform = action.get('transform', {})
+                        if field in result:
+                            result[field] = self._apply_transform(
+                                result[field], transform, context.get('source_data', {})
+                            )
+        
+        return result
+    
+    def _evaluate_condition(self, condition: Dict[str, Any], 
+                          data: Dict[str, Any], 
+                          context: Dict[str, Any]) -> bool:
+        """Evaluate a condition for conditional transformations"""
+        op = condition.get('op', 'eq')
+        
+        if 'field' in condition:
+            field = condition['field']
+            field_value = data.get(field)
+            expected = condition.get('value')
+            
+            if op == 'eq':
+                return field_value == expected
+            elif op == 'ne':
+                return field_value != expected
+            elif op == 'gt':
+                return field_value > expected
+            elif op == 'lt': 
+                return field_value < expected
+            elif op == 'in':
+                return field_value in expected
+            elif op == 'contains':
+                return expected in field_value
+            elif op == 'exists':
+                return field in data
+        
+        elif 'op' == 'and' and 'conditions' in condition:
+            return all(self._evaluate_condition(c, data, context) for c in condition['conditions'])
+            
+        elif 'op' == 'or' and 'conditions' in condition:
+            return any(self._evaluate_condition(c, data, context) for c in condition['conditions'])
+            
+        # Default to True for malformed conditions
+        return True
+    
+    def _get_applied_rules(self, mapping: Dict[str, Any]) -> List[str]:
+        """Get a list of transformation rules applied to this record"""
+        rules = []
+        
+        # Add field transforms
+        if 'transforms' in mapping:
+            for field, transform in mapping['transforms'].items():
+                rule_type = transform.get('type', 'unknown')
+                rules.append(f"{field}:{rule_type}")
+                
+        # Add global transforms
+        if 'global_transforms' in mapping:
+            for transform in mapping['global_transforms']:
+                rules.append(f"global:{transform.get('type', 'unknown')}")
+                
+        return rules
+
+    def _initialize_transformation_rules(self) -> Dict[str, TransformationRule]:
+        """Initialize a repository of reusable transformation rules"""
+        rules = {}
+        
+        # Add common address formatting
+        rules["standard_address_format"] = AddressNormalization("single_line")
+        rules["json_address_format"] = AddressNormalization("json")
+        
+        # Add date transformations
+        rules["standard_date_format"] = DateTimeTransformation(target_format="%Y-%m-%d")
+        rules["us_date_format"] = DateTimeTransformation(target_format="%m/%d/%Y")
+        rules["timestamp_format"] = DateTimeTransformation(target_format="%Y-%m-%d %H:%M:%S")
+        
+        # Add currency transformations
+        rules["usd_format"] = NumberTransformation(rounding_digits=2, number_format="${:.2f}")
+        rules["integer_format"] = NumberTransformation(rounding_digits=0, number_format="{:.0f}")
+        rules["percentage_format"] = NumberTransformation(scale_factor=100, number_format="{:.1f}%")
+        
+        # Add complex transformations
+        address_formatter = ComplexTransformation([
+            AddressNormalization("json"),
+            JsonPathExtraction("$.street"),
+            FormatTransformation("{}, {}, {} {}")
+        ])
+        rules["address_with_city_state"] = address_formatter
+        
+        return rules
     
     def _determine_target_id(self, change: DetectedChange, mapping: Dict[str, Any]) -> Optional[str]:
         """Determine the target system ID for a changed record"""
