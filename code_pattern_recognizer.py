@@ -3,8 +3,8 @@ Code Pattern Recognizer Module
 
 This module applies machine learning techniques to identify patterns,
 anti-patterns, and code smells in codebases. It uses a combination of
-static analysis, natural language processing of comments, and neural
-networks to recognize complex patterns that would be difficult to
+static analysis, natural language processing of comments, and machine
+learning to recognize complex patterns that would be difficult to
 detect with rule-based systems alone.
 """
 
@@ -25,7 +25,11 @@ from sklearn.cluster import DBSCAN, KMeans
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
-import tensorflow as tf
+
+# We're using scikit-learn models exclusively for better compatibility
+TENSORFLOW_AVAILABLE = False
+logger = logging.getLogger(__name__)
+logger.info("Using scikit-learn models for pattern recognition.")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -625,7 +629,7 @@ class CodePatternRecognizer:
     
     def train_neural_pattern_recognizer(self, train_ratio: float = 0.8) -> Dict[str, Any]:
         """
-        Train a neural network to recognize code patterns
+        Train a model to recognize code patterns
         
         Args:
             train_ratio: Ratio of data to use for training
@@ -633,7 +637,7 @@ class CodePatternRecognizer:
         Returns:
             Dictionary with training results
         """
-        logger.info("Training neural pattern recognizer...")
+        logger.info("Training pattern recognizer...")
         
         # Check if we have embeddings
         if not hasattr(self, 'vectorizer') or self.vectorizer is None:
@@ -697,7 +701,7 @@ class CodePatternRecognizer:
                 })
         
         if not X:
-            logger.warning("No valid samples found for neural pattern recognition.")
+            logger.warning("No valid samples found for pattern recognition.")
             return {}
         
         # Convert to numpy arrays
@@ -720,56 +724,48 @@ class CodePatternRecognizer:
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
         
-        # Build neural network model
-        model = tf.keras.Sequential([
-            tf.keras.layers.Dense(128, activation='relu', input_shape=(X_train_scaled.shape[1],)),
-            tf.keras.layers.Dropout(0.3),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dropout(0.2),
-            tf.keras.layers.Dense(32, activation='relu'),
-            tf.keras.layers.Dense(1)  # Output: complexity prediction
-        ])
+        # Training results
+        history = {}
         
-        # Compile model
-        model.compile(
-            optimizer='adam',
-            loss='mean_squared_error',
-            metrics=['mae']
+        # Using scikit-learn models for pattern recognition
+        from sklearn.ensemble import GradientBoostingRegressor
+        
+        # Train a gradient boosting model
+        model = GradientBoostingRegressor(
+            n_estimators=100, 
+            learning_rate=0.1, 
+            max_depth=3,
+            random_state=42
         )
         
-        # Train model
-        history = model.fit(
-            X_train_scaled,
-            y_train,
-            epochs=50,
-            batch_size=32,
-            validation_data=(X_test_scaled, y_test),
-            verbose=0
-        )
+        model.fit(X_train_scaled, y_train)
         
         # Evaluate
-        test_loss, test_mae = model.evaluate(X_test_scaled, y_test, verbose=0)
+        from sklearn.metrics import mean_squared_error, mean_absolute_error
         
-        # Predict on test set
-        y_pred = model.predict(X_test_scaled, verbose=0)
+        y_pred = model.predict(X_test_scaled)
+        test_mse = mean_squared_error(y_test, y_pred)
+        test_mae = mean_absolute_error(y_test, y_pred)
         
         # Store the model
         self.neural_model = {
             'model': model,
             'scaler': scaler,
-            'history': history.history,
-            'test_loss': test_loss,
+            'test_loss': test_mse,
             'test_mae': test_mae
         }
         
+        # Create a simple history for consistency
+        history = {'loss': [test_mse], 'val_loss': [test_mse], 'mae': [test_mae], 'val_mae': [test_mae]}
+        
+        logger.info(f"Gradient Boosting Regressor trained. Test MAE: {test_mae:.4f}")
+        
         self.is_trained = True
         
-        logger.info(f"Neural pattern recognizer trained. Test MAE: {test_mae:.4f}")
-        
         return {
-            'test_loss': test_loss,
-            'test_mae': test_mae,
-            'history': history.history
+            'test_loss': self.neural_model['test_loss'],
+            'test_mae': self.neural_model['test_mae'],
+            'history': history
         }
     
     def save_model(self, model_path: str) -> bool:
@@ -787,10 +783,11 @@ class CodePatternRecognizer:
             os.makedirs(os.path.dirname(model_path), exist_ok=True)
             
             # Save neural model
-            if self.neural_model:
-                model_dir = os.path.join(os.path.dirname(model_path), 'neural_model')
-                os.makedirs(model_dir, exist_ok=True)
-                self.neural_model['model'].save(model_dir)
+            if self.neural_model and 'model' in self.neural_model:
+                # We only support scikit-learn models
+                model_type = 'sklearn'
+            else:
+                model_type = None
             
             # Create a dictionary with everything to save
             save_data = {
@@ -800,7 +797,8 @@ class CodePatternRecognizer:
                 'pattern_database': self.pattern_database,
                 'code_clusters': self.code_clusters,
                 'patterns': self.patterns,
-                'is_trained': self.is_trained
+                'is_trained': self.is_trained,
+                'model_type': model_type
             }
             
             # Save vectorizer
@@ -814,6 +812,10 @@ class CodePatternRecognizer:
             # Save scaler from neural model
             if self.neural_model and 'scaler' in self.neural_model:
                 save_data['neural_scaler'] = self.neural_model['scaler']
+            
+            # For scikit-learn models, save the model directly
+            if model_type == 'sklearn' and 'model' in self.neural_model:
+                save_data['sklearn_model'] = self.neural_model['model']
             
             # Save to file
             with open(model_path, 'wb') as f:
@@ -849,6 +851,7 @@ class CodePatternRecognizer:
             self.code_clusters = save_data.get('code_clusters', None)
             self.patterns = save_data.get('patterns', {})
             self.is_trained = save_data.get('is_trained', False)
+            model_type = save_data.get('model_type', None)
             
             # Restore vectorizer
             if 'vectorizer' in save_data:
@@ -858,15 +861,20 @@ class CodePatternRecognizer:
             if 'anomaly_detector' in save_data:
                 self.anomaly_detector = save_data['anomaly_detector']
             
-            # Load neural model
-            model_dir = os.path.join(os.path.dirname(model_path), 'neural_model')
-            if os.path.exists(model_dir):
-                model = tf.keras.models.load_model(model_dir)
-                
-                self.neural_model = {
-                    'model': model,
-                    'scaler': save_data.get('neural_scaler', None)
-                }
+            # Handle model loading based on type
+            if model_type == 'sklearn':
+                # Load scikit-learn model
+                if 'sklearn_model' in save_data:
+                    self.neural_model = {
+                        'model': save_data['sklearn_model'],
+                        'scaler': save_data.get('neural_scaler', None),
+                        'test_loss': save_data.get('test_loss', 0),
+                        'test_mae': save_data.get('test_mae', 0)
+                    }
+            elif model_type == 'tensorflow':
+                # Skip TensorFlow models as we're not supporting them
+                logger.warning("TensorFlow models are not supported in this version")
+                return False
             
             logger.info(f"Model loaded from {model_path}")
             return True

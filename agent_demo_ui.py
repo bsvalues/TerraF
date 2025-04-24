@@ -11,7 +11,12 @@ import os
 import time
 import datetime
 import random
+import logging
 from typing import Dict, List, Any, Optional
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Import simplified agent registry
 from specialized_agents import register_all_agents

@@ -12,9 +12,17 @@ import time
 import logging
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
 from typing import Dict, List, Any, Optional, Tuple, Union
+
+# Optional imports
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("Plotly not available. Visualizations will be limited.")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +35,15 @@ try:
 except ImportError as e:
     logger.error(f"Pattern recognizer not available: {str(e)}")
     PATTERN_RECOGNIZER_AVAILABLE = False
+
+# Define placeholder function if the pattern recognizer is not available
+if not PATTERN_RECOGNIZER_AVAILABLE:
+    class CodePatternRecognizer:
+        def __init__(self, repo_path):
+            pass
+            
+        def analyze_repository(self):
+            return {}
 
 
 def initialize_pattern_recognition_state():
@@ -167,20 +184,30 @@ def display_pattern_analysis_results():
                 "Count": list(pattern_counts.values())
             })
             
-            # Create chart
-            fig = px.bar(
-                pattern_df,
-                x="Pattern Type",
-                y="Count",
-                title="Pattern Distribution",
-                color="Pattern Type",
-                color_discrete_sequence=px.colors.qualitative.Plotly
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
+            if PLOTLY_AVAILABLE:
+                # Create chart with Plotly
+                fig = px.bar(
+                    pattern_df,
+                    x="Pattern Type",
+                    y="Count",
+                    title="Pattern Distribution",
+                    color="Pattern Type",
+                    color_discrete_sequence=px.colors.qualitative.Plotly
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                # If Plotly is not available, show tabular data with a simple bar chart
+                st.write("Pattern Distribution (interactive visualization not available):")
+                st.dataframe(pattern_df)
+                
+                # Create a simple bar chart using Streamlit's built-in charting
+                st.bar_chart(pattern_df.set_index('Pattern Type'))
         
         except Exception as e:
             st.error(f"Error generating pattern distribution chart: {str(e)}")
+            # Show raw counts as fallback
+            st.write({k: v for k, v in pattern_counts.items() if v > 0})
         
         # Display code cluster visualization
         st.markdown("### Code Clusters")
@@ -194,7 +221,14 @@ def display_pattern_analysis_results():
             try:
                 # Prepare data for plot
                 nodes = []
-                cluster_colors = px.colors.qualitative.Plotly
+                # Define fallback colors in case Plotly is not available
+                default_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+                                 '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+                
+                if PLOTLY_AVAILABLE:
+                    cluster_colors = px.colors.qualitative.Plotly
+                else:
+                    cluster_colors = default_colors
                 
                 for cluster_id, cluster_info in clusters.items():
                     cluster_color = cluster_colors[int(cluster_id) % len(cluster_colors)]
@@ -226,57 +260,133 @@ def display_pattern_analysis_results():
                 # Convert to DataFrame for visualization
                 nodes_df = pd.DataFrame(nodes)
                 
-                # Create a network visualization
-                import networkx as nx
-                import matplotlib.pyplot as plt
+                # Try to create a plotly visualization first
+                if PLOTLY_AVAILABLE:
+                    try:
+                        # Create edges data
+                        edges = []
+                        for node in nodes:
+                            if 'parent' in node:
+                                source_id = node['id']
+                                target_id = node['parent']
+                                edges.append((source_id, target_id))
+                        
+                        # Create a plotly network graph
+                        edge_x = []
+                        edge_y = []
+                        
+                        node_x = np.random.rand(len(nodes)) * 10
+                        node_y = np.random.rand(len(nodes)) * 10
+                        node_positions = {node['id']: (x, y) for node, x, y in zip(nodes, node_x, node_y)}
+                        
+                        # Create edges
+                        for edge in edges:
+                            x0, y0 = node_positions[edge[0]]
+                            x1, y1 = node_positions[edge[1]]
+                            edge_x.extend([x0, x1, None])
+                            edge_y.extend([y0, y1, None])
+                        
+                        # Create edge trace
+                        edge_trace = go.Scatter(
+                            x=edge_x, y=edge_y,
+                            line=dict(width=0.5, color='#888'),
+                            hoverinfo='none',
+                            mode='lines')
+                        
+                        # Create node trace
+                        node_trace = go.Scatter(
+                            x=node_x, y=node_y,
+                            mode='markers',
+                            hoverinfo='text',
+                            marker=dict(
+                                showscale=True,
+                                colorscale='YlGnBu',
+                                size=[node['size'] * 5 for node in nodes],
+                                color=[i for i in range(len(nodes))],
+                                line=dict(width=2)))
+                        
+                        # Add node information for hover
+                        node_info = [f"{node['label']}" for node in nodes]
+                        node_trace.text = node_info
+                        
+                        # Create the figure
+                        fig = go.Figure(data=[edge_trace, node_trace],
+                                    layout=go.Layout(
+                                        title='Code Cluster Network',
+                                        showlegend=False,
+                                        hovermode='closest',
+                                        margin=dict(b=20, l=5, r=5, t=40),
+                                        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Error creating Plotly network visualization: {str(e)}")
+                        # Try networkx/matplotlib as fallback
+                        try_networkx = True
+                else:
+                    # If Plotly not available, try networkx/matplotlib
+                    try_networkx = True
                 
-                G = nx.Graph()
-                
-                # Add nodes
-                for node in nodes:
-                    G.add_node(node['id'], label=node['label'], size=node['size'], color=node['color'])
-                
-                # Add edges
-                for node in nodes:
-                    if 'parent' in node:
-                        G.add_edge(node['id'], node['parent'])
-                
-                # Create positions
-                pos = nx.spring_layout(G, seed=42)
-                
-                # Create a figure
-                plt.figure(figsize=(10, 8))
-                
-                # Draw nodes
-                for node_type, node_shape in [("dot", 'o'), ("triangle", '^'), ("square", 's')]:
-                    node_list = [n for n in G.nodes if nodes_df[nodes_df['id'] == n]['shape'].values[0] == node_type] if not nodes_df[nodes_df['id'] == n].empty else []
-                    node_colors = [nodes_df[nodes_df['id'] == n]['color'].values[0] for n in node_list if not nodes_df[nodes_df['id'] == n].empty]
-                    node_sizes = [nodes_df[nodes_df['id'] == n]['size'].values[0] * 100 for n in node_list if not nodes_df[nodes_df['id'] == n].empty]
-                    
-                    nx.draw_networkx_nodes(
-                        G, pos,
-                        nodelist=node_list,
-                        node_color=node_colors,
-                        node_size=node_sizes,
-                        node_shape=node_shape,
-                        alpha=0.8
-                    )
-                
-                # Draw edges
-                nx.draw_networkx_edges(G, pos, width=1.0, alpha=0.5)
-                
-                # Draw labels
-                nx.draw_networkx_labels(
-                    G, pos,
-                    font_size=10,
-                    font_family="sans-serif"
-                )
-                
-                plt.axis("off")
-                plt.tight_layout()
-                
-                # Display
-                st.pyplot(plt)
+                # Try networkx visualization as fallback or if plotly not available
+                try_networkx = False  # Set to True to enable networkx visualization (but may fail)
+                if try_networkx:
+                    try:
+                        import networkx as nx
+                        import matplotlib.pyplot as plt
+                        
+                        G = nx.Graph()
+                        
+                        # Add nodes
+                        for node in nodes:
+                            G.add_node(node['id'], label=node['label'], size=node['size'], color=node['color'])
+                        
+                        # Add edges
+                        for node in nodes:
+                            if 'parent' in node:
+                                G.add_edge(node['id'], node['parent'])
+                        
+                        # Create positions
+                        pos = nx.spring_layout(G, seed=42)
+                        
+                        # Create a figure
+                        plt.figure(figsize=(10, 8))
+                        
+                        # Draw nodes
+                        for node_type, node_shape in [("dot", 'o'), ("triangle", '^'), ("square", 's')]:
+                            node_list = [n for n in G.nodes if n in nodes_df['id'].values and nodes_df[nodes_df['id'] == n]['shape'].values[0] == node_type]
+                            node_colors = [nodes_df[nodes_df['id'] == n]['color'].values[0] for n in node_list]
+                            node_sizes = [nodes_df[nodes_df['id'] == n]['size'].values[0] * 100 for n in node_list]
+                            
+                            if node_list:
+                                nx.draw_networkx_nodes(
+                                    G, pos,
+                                    nodelist=node_list,
+                                    node_color=node_colors,
+                                    node_size=node_sizes,
+                                    node_shape=node_shape,
+                                    alpha=0.8
+                                )
+                        
+                        # Draw edges
+                        nx.draw_networkx_edges(G, pos, width=1.0, alpha=0.5)
+                        
+                        # Draw labels
+                        nx.draw_networkx_labels(
+                            G, pos,
+                            font_size=10,
+                            font_family="sans-serif"
+                        )
+                        
+                        plt.axis("off")
+                        plt.tight_layout()
+                        
+                        # Display
+                        st.pyplot(plt)
+                    except Exception as e:
+                        st.error(f"Error creating NetworkX visualization: {str(e)}")
+                        st.write("Displaying table of cluster data instead:")
+                        st.dataframe(nodes_df)
                 
                 # Show cluster details
                 with st.expander("Cluster Details"):
@@ -479,26 +589,35 @@ def display_code_anomalies():
             for a in anomalies
         ])
         
-        fig = px.scatter(
-            anomaly_df,
-            x='complexity',
-            y='line_count',
-            size='anomaly_score',
-            color='type',
-            hover_name='name',
-            title='Code Anomalies by Complexity and Size',
-            labels={
-                'complexity': 'Cyclomatic Complexity',
-                'line_count': 'Lines of Code',
-                'anomaly_score': 'Anomaly Score',
-                'type': 'Type'
-            }
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        if PLOTLY_AVAILABLE:
+            # Create interactive scatter plot with Plotly
+            fig = px.scatter(
+                anomaly_df,
+                x='complexity',
+                y='line_count',
+                size='anomaly_score',
+                color='type',
+                hover_name='name',
+                title='Code Anomalies by Complexity and Size',
+                labels={
+                    'complexity': 'Cyclomatic Complexity',
+                    'line_count': 'Lines of Code',
+                    'anomaly_score': 'Anomaly Score',
+                    'type': 'Type'
+                }
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            # If Plotly is not available, show tabular data
+            st.write("Anomaly data (interactive visualization not available):")
+            st.dataframe(anomaly_df)
     
     except Exception as e:
         st.error(f"Error visualizing anomalies: {str(e)}")
+        # Show raw data as fallback
+        st.write("Anomaly data:")
+        st.dataframe(pd.DataFrame(anomalies))
     
     # Display anomaly details
     for i, anomaly in enumerate(anomalies):
