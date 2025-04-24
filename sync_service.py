@@ -12,6 +12,7 @@ import os
 import re
 import json
 import time
+import random
 import logging
 import datetime
 from typing import Dict, List, Any, Optional, Union
@@ -1272,6 +1273,349 @@ class DataValidator:
         }
 
 
+class ConflictResolutionHandler:
+    """
+    Advanced conflict resolution handler for managing complex data conflicts
+    between source and target systems.
+    """
+    def __init__(self, source_connection: DatabaseConnection, target_connection: DatabaseConnection):
+        self.source_connection = source_connection
+        self.target_connection = target_connection
+        self.logger = logging.getLogger(self.__class__.__name__)
+        
+        # Conflict resolution strategies
+        self.resolution_strategies = {
+            "last_updated_wins": self._resolve_by_last_updated,
+            "source_wins": self._resolve_by_source_priority,
+            "target_wins": self._resolve_by_target_priority,
+            "merge": self._resolve_by_field_merge,
+            "manual": self._mark_for_manual_resolution
+        }
+        
+        # Default resolution strategy by table
+        self.default_strategies = {
+            "properties": "last_updated_wins",
+            "valuations": "last_updated_wins",
+            "assessors": "source_wins",
+            "appeals": "target_wins",
+            "attachments": "source_wins"
+        }
+        
+        # Field-level resolution configurations
+        self.field_resolution = {
+            "properties": {
+                "owner_name": "source_wins",  # Source is system of record for owner info
+                "address": "source_wins",
+                "land_value": "merge",  # Merge financial data if different
+                "improvement_value": "merge",
+                "total_value": "merge"
+            },
+            "valuations": {
+                "valuation_date": "last_updated_wins",
+                "value_amount": "merge",
+                "comments": "merge_text"  # Special handler for text fields
+            }
+        }
+        
+        # Track conflicts history
+        self.conflict_history = []
+        
+    def detect_conflicts(self, change: DetectedChange) -> Dict[str, Any]:
+        """
+        Detect potential conflicts between source and target data
+        
+        Args:
+            change: Detected change from source
+            
+        Returns:
+            Dictionary with conflict information if found
+        """
+        if change.change_type != ChangeType.UPDATE:
+            # Only updates can have conflicts
+            return None
+            
+        # Get current data in target system
+        table_name = change.source_table
+        record_id = change.record_id
+        
+        # Format target ID based on table convention 
+        target_id = f"PROP-{record_id}" if table_name == "properties" else record_id
+        
+        query = f"""
+        SELECT * FROM {table_name} 
+        WHERE property_id = :target_id
+        """
+        params = {"target_id": target_id}
+        
+        target_records = self.target_connection.execute_query(query, params)
+        
+        if not target_records:
+            # No existing record in target, no conflict
+            return None
+            
+        # Compare source and target data to identify conflicts
+        target_data = target_records[0]
+        
+        # Track conflicting fields
+        conflicts = {
+            "has_conflicts": False,
+            "conflict_fields": [],
+            "conflict_details": {},
+            "source_data": change.new_data,
+            "target_data": target_data,
+            "resolution_strategy": self.get_resolution_strategy(table_name),
+            "created_at": datetime.datetime.now().isoformat()
+        }
+        
+        # Compare fields common to both
+        for field, source_value in change.new_data.items():
+            if field in target_data and self._is_conflicting_value(source_value, target_data[field], field):
+                conflicts["has_conflicts"] = True
+                conflicts["conflict_fields"].append(field)
+                
+                # Add detailed information about the conflict
+                conflicts["conflict_details"][field] = {
+                    "source_value": source_value,
+                    "target_value": target_data[field],
+                    "field_resolution": self.get_field_resolution_strategy(table_name, field),
+                    "severity": self._determine_conflict_severity(field, source_value, target_data[field])
+                }
+                
+        return conflicts if conflicts["has_conflicts"] else None
+    
+    def resolve_conflicts(self, conflicts: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Resolve detected conflicts based on strategies
+        
+        Args:
+            conflicts: Dictionary with conflict information
+            
+        Returns:
+            Dictionary with resolution results
+        """
+        if not conflicts or not conflicts["has_conflicts"]:
+            return {"has_conflicts": False, "resolved": True, "data": conflicts["source_data"]}
+            
+        table_name = conflicts.get("table_name", "unknown")
+        resolution_results = {
+            "has_conflicts": True,
+            "resolved": False,
+            "resolution_strategy": conflicts["resolution_strategy"],
+            "source_data": conflicts["source_data"],
+            "target_data": conflicts["target_data"],
+            "resolved_data": {},
+            "unresolved_fields": []
+        }
+        
+        # Apply resolution strategy to each conflicting field
+        for field in conflicts["conflict_fields"]:
+            field_details = conflicts["conflict_details"][field]
+            field_strategy = field_details["field_resolution"]
+            
+            # Apply the appropriate resolution strategy
+            if field_strategy in self.resolution_strategies:
+                resolved_value = self.resolution_strategies[field_strategy](
+                    field,
+                    field_details["source_value"],
+                    field_details["target_value"]
+                )
+                
+                resolution_results["resolved_data"][field] = resolved_value
+            else:
+                # Mark field as unresolved
+                resolution_results["unresolved_fields"].append(field)
+                
+        # Copy non-conflicting fields from source
+        for field, value in conflicts["source_data"].items():
+            if field not in resolution_results["resolved_data"] and field not in resolution_results["unresolved_fields"]:
+                resolution_results["resolved_data"][field] = value
+                
+        # Set resolution status
+        resolution_results["resolved"] = len(resolution_results["unresolved_fields"]) == 0
+        
+        # Add to conflict history
+        self._add_to_conflict_history(conflicts, resolution_results)
+        
+        return resolution_results
+    
+    def get_resolution_strategy(self, table_name: str) -> str:
+        """Get the default resolution strategy for a table"""
+        return self.default_strategies.get(table_name, "last_updated_wins")
+    
+    def get_field_resolution_strategy(self, table_name: str, field_name: str) -> str:
+        """Get the resolution strategy for a specific field"""
+        if table_name in self.field_resolution and field_name in self.field_resolution[table_name]:
+            return self.field_resolution[table_name][field_name]
+        return self.get_resolution_strategy(table_name)
+    
+    def get_conflict_history(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get the conflict resolution history"""
+        return self.conflict_history[-limit:] if limit > 0 else self.conflict_history
+    
+    def _is_conflicting_value(self, source_value: Any, target_value: Any, field_name: str) -> bool:
+        """
+        Determine if two values are in conflict
+        
+        Args:
+            source_value: Value from source system
+            target_value: Value from target system
+            field_name: Name of the field being compared
+            
+        Returns:
+            True if values are in conflict, False otherwise
+        """
+        # Handle None/null values
+        if source_value is None and target_value is None:
+            return False
+            
+        # Special case for numeric values - allow small differences
+        if isinstance(source_value, (int, float)) and isinstance(target_value, (int, float)):
+            # For financial fields, consider a 1% difference as non-conflicting
+            if "value" in field_name.lower() or "amount" in field_name.lower():
+                if source_value == 0 and target_value == 0:
+                    return False
+                    
+                if source_value == 0:
+                    percent_diff = abs(target_value) * 100
+                elif target_value == 0:
+                    percent_diff = abs(source_value) * 100
+                else:
+                    percent_diff = abs(source_value - target_value) / max(abs(source_value), abs(target_value)) * 100
+                    
+                return percent_diff > 1.0  # More than 1% difference is a conflict
+                
+        # Handle timestamps - allow small differences
+        if "date" in field_name.lower() or "time" in field_name.lower():
+            try:
+                source_dt = None
+                target_dt = None
+                
+                if isinstance(source_value, str):
+                    source_dt = datetime.datetime.fromisoformat(source_value.replace('Z', '+00:00'))
+                if isinstance(target_value, str):
+                    target_dt = datetime.datetime.fromisoformat(target_value.replace('Z', '+00:00'))
+                    
+                if source_dt and target_dt:
+                    diff_seconds = abs((source_dt - target_dt).total_seconds())
+                    return diff_seconds > 60  # More than 1 minute difference is a conflict
+            except (ValueError, TypeError):
+                pass
+                
+        # Default comparison
+        return source_value != target_value
+    
+    def _determine_conflict_severity(self, field_name: str, source_value: Any, target_value: Any) -> str:
+        """Determine the severity of a conflict"""
+        # Critical fields with high severity conflicts
+        critical_fields = ["property_id", "parcel_number", "parcel_id", "owner_name"]
+        financial_fields = ["land_value", "improvement_value", "total_value", "value_amount", "assessed_value"]
+        
+        if field_name in critical_fields:
+            return "high"
+            
+        # Check for significant financial differences
+        if field_name in financial_fields:
+            if isinstance(source_value, (int, float)) and isinstance(target_value, (int, float)):
+                percent_diff = 0
+                
+                if source_value == 0 and target_value == 0:
+                    return "low"
+                    
+                if source_value == 0:
+                    percent_diff = abs(target_value) * 100
+                elif target_value == 0:
+                    percent_diff = abs(source_value) * 100
+                else:
+                    percent_diff = abs(source_value - target_value) / max(abs(source_value), abs(target_value)) * 100
+                
+                if percent_diff > 10:
+                    return "high"
+                elif percent_diff > 5:
+                    return "medium"
+                else:
+                    return "low"
+        
+        # Default to medium severity
+        return "medium"
+    
+    def _add_to_conflict_history(self, conflict: Dict[str, Any], resolution: Dict[str, Any]) -> None:
+        """Add a conflict and its resolution to the history"""
+        entry = {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "conflict": conflict,
+            "resolution": resolution,
+            "resolved": resolution["resolved"]
+        }
+        
+        self.conflict_history.append(entry)
+        
+        # Trim history if it gets too large
+        if len(self.conflict_history) > 1000:
+            self.conflict_history = self.conflict_history[-1000:]
+    
+    # Resolution strategies
+    def _resolve_by_last_updated(self, field: str, source_value: Any, target_value: Any) -> Any:
+        """Resolve conflict by using the most recently updated value"""
+        # In a real implementation, would check timestamps
+        # For demo purposes, we'll assume source is more recent
+        return source_value
+    
+    def _resolve_by_source_priority(self, field: str, source_value: Any, target_value: Any) -> Any:
+        """Resolve conflict by giving priority to the source value"""
+        return source_value
+    
+    def _resolve_by_target_priority(self, field: str, source_value: Any, target_value: Any) -> Any:
+        """Resolve conflict by giving priority to the target value"""
+        return target_value
+    
+    def _resolve_by_field_merge(self, field: str, source_value: Any, target_value: Any) -> Any:
+        """
+        Resolve conflict by merging values where possible
+        
+        This is a sophisticated merge function that tries to combine values
+        based on the field type and content.
+        """
+        # Handle numeric values - use average for financial fields
+        if isinstance(source_value, (int, float)) and isinstance(target_value, (int, float)):
+            return (source_value + target_value) / 2
+            
+        # Handle dictionaries - merge them
+        if isinstance(source_value, dict) and isinstance(target_value, dict):
+            result = target_value.copy()
+            result.update(source_value)  # Source values override target
+            return result
+            
+        # Handle lists - combine unique items
+        if isinstance(source_value, list) and isinstance(target_value, list):
+            return list(set(target_value + source_value))
+            
+        # Handle strings - concatenate if they're different
+        if isinstance(source_value, str) and isinstance(target_value, str):
+            if source_value == target_value:
+                return source_value
+                
+            if len(source_value) > 100 or len(target_value) > 100:
+                # For long text, take the longest
+                return source_value if len(source_value) > len(target_value) else target_value
+            else:
+                # For short text, concatenate with a delimiter
+                return f"{target_value} | {source_value}"
+                
+        # Default to source value
+        return source_value
+    
+    def _mark_for_manual_resolution(self, field: str, source_value: Any, target_value: Any) -> Any:
+        """Mark field for manual resolution"""
+        # This would normally trigger a workflow or notification
+        # For demo purposes, we'll just use a special marker object
+        return {
+            "_manual_resolution_required": True,
+            "source_value": source_value,
+            "target_value": target_value,
+            "field": field
+        }
+
+
 class SyncOrchestrator:
     """
     Orchestrates the sync process, handling change detection,
@@ -1288,6 +1632,12 @@ class SyncOrchestrator:
         self.target_connection = target_connection
         
         # Initialize components
+        
+        # Initialize conflict resolution handler
+        self.conflict_handler = ConflictResolutionHandler(
+            source_connection=source_connection,
+            target_connection=target_connection
+        )
         self.change_detector = ChangeDetector(source_connection)
         self.transformer = DataTransformer(field_mapping_config)
         self.validator = DataValidator(validation_rules)
@@ -2283,3 +2633,101 @@ class SyncService:
             return "low"
         else:
             return "none"
+    
+    def resolve_data_conflicts(self, change_record: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Detect and resolve conflicts for a change record
+        
+        Args:
+            change_record: Dictionary with change information
+            
+        Returns:
+            Dictionary with conflict resolution results
+        """
+        self.logger.info(f"Checking for conflicts: {change_record['record_id']}")
+        
+        try:
+            # Create a DetectedChange object from the record
+            change = DetectedChange(
+                record_id=change_record["record_id"],
+                source_table=change_record["source_table"],
+                change_type=ChangeType(change_record["change_type"]),
+                new_data=change_record["new_data"],
+                old_data=change_record.get("old_data", {}),
+                timestamp=change_record.get("timestamp", datetime.datetime.now().isoformat())
+            )
+            
+            # Detect conflicts
+            conflicts = self.orchestrator.conflict_handler.detect_conflicts(change)
+            
+            if not conflicts:
+                self.logger.info("No conflicts detected")
+                return {
+                    "has_conflicts": False,
+                    "message": "No conflicts detected",
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                
+            # Resolve conflicts
+            resolution = self.orchestrator.conflict_handler.resolve_conflicts(conflicts)
+            
+            # Add audit information
+            resolution["timestamp"] = datetime.datetime.now().isoformat()
+            resolution["message"] = (
+                "Conflicts successfully resolved" if resolution["resolved"] 
+                else "Some conflicts require manual resolution"
+            )
+            
+            self.logger.info(
+                f"Resolved {len(conflicts['conflict_fields']) - len(resolution['unresolved_fields'])} "
+                f"of {len(conflicts['conflict_fields'])} conflicts"
+            )
+            
+            return resolution
+            
+        except Exception as e:
+            self.logger.error(f"Error in conflict resolution: {str(e)}")
+            return {
+                "has_conflicts": True,
+                "resolved": False,
+                "error": str(e),
+                "message": "Error occurred during conflict resolution",
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def get_conflict_history(self, limit: int = 20) -> Dict[str, Any]:
+        """
+        Get the history of conflict resolutions
+        
+        Args:
+            limit: Maximum number of history entries to return
+            
+        Returns:
+            Dictionary with conflict history
+        """
+        self.logger.info(f"Getting conflict history (limit={limit})")
+        
+        try:
+            history = self.orchestrator.conflict_handler.get_conflict_history(limit)
+            
+            # Add summary statistics
+            total_conflicts = len(history)
+            resolved_count = sum(1 for entry in history if entry.get("resolved", False))
+            
+            return {
+                "history": history,
+                "summary": {
+                    "total_conflicts": total_conflicts,
+                    "resolved_conflicts": resolved_count,
+                    "unresolved_conflicts": total_conflicts - resolved_count,
+                    "resolution_rate": resolved_count / total_conflicts if total_conflicts > 0 else 0
+                },
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting conflict history: {str(e)}")
+            return {
+                "error": str(e),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
