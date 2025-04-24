@@ -3035,8 +3035,6 @@ class DataValidator:
             "last_validation_timestamp": None
         }
         
-
-    
     def _check_type(self, value: Any, expected_type: str) -> bool:
         """Check if a value matches the expected type"""
         if expected_type == 'string':
