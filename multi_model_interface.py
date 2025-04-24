@@ -478,7 +478,7 @@ class MultiModelInterface:
                               model_name: str,
                               prompt: str, 
                               system_message: Optional[str], 
-                              max_tokens: int,
+                              max_tokens: Optional[int],
                               temperature: float) -> Tuple[str, Dict[str, Any]]:
         """Generate text using DeepSeek models"""
         client = self.clients["deepseek"]
@@ -496,6 +496,10 @@ class MultiModelInterface:
             messages.append({"role": "system", "content": system_message})
         messages.append({"role": "user", "content": prompt})
         
+        # Set default max_tokens if None
+        if max_tokens is None:
+            max_tokens = 1000
+            
         start_time = time.time()
         response = client.chat.completions.create(
             model=deepseek_model,
@@ -522,7 +526,7 @@ class MultiModelInterface:
                             model_name: str,
                             prompt: str, 
                             system_message: Optional[str], 
-                            max_tokens: int,
+                            max_tokens: Optional[int],
                             temperature: float) -> Tuple[str, Dict[str, Any]]:
         """Generate text using Google Gemini models"""
         genai = self.clients["google"]
@@ -544,9 +548,17 @@ class MultiModelInterface:
             content.append({"role": "system", "parts": [system_message]})
         content.append({"role": "user", "parts": [prompt]})
         
+        # Set generation config for max_tokens if provided
+        generation_config = None
+        if max_tokens is not None:
+            generation_config = genai.GenerationConfig(max_output_tokens=max_tokens)
+        
         # Generate response
         start_time = time.time()
-        response = model.generate_content(content)
+        if generation_config:
+            response = model.generate_content(content, generation_config=generation_config)
+        else:
+            response = model.generate_content(content)
         end_time = time.time()
         
         # Extract text
