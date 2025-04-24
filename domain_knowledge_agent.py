@@ -610,7 +610,9 @@ class DomainKnowledgeAgent(Agent):
                 if comparison_models:
                     # Use multiple models comparison mode
                     self.logger.info(f"Comparing models: {comparison_models}")
-                    comparison_results = self.model_interface.analyze_with_multiple_models(
+                    
+                    # Get response from multiple models
+                    multi_model_results = self.model_interface.analyze_with_multiple_models(
                         prompt=query,
                         system_message=self._get_domain_system_message(domain),
                         models=comparison_models,
@@ -618,13 +620,24 @@ class DomainKnowledgeAgent(Agent):
                         temperature=0.3
                     )
                     
+                    # Format for UI display
+                    comparison_results = {}
+                    for model_name, model_response in multi_model_results.get("responses", {}).items():
+                        comparison_results[model_name] = {
+                            "text": model_response.get("text", "No response generated"),
+                            "latency": model_response.get("metadata", {}).get("latency", 0),
+                            "token_count": model_response.get("metadata", {}).get("token_count", 0),
+                            "provider": model_response.get("metadata", {}).get("provider", "unknown")
+                        }
+                    
                     return {
                         "status": "success",
                         "query": query,
                         "domain": domain,
                         "comparison_results": comparison_results,
                         "model_comparison": True,
-                        "timestamp": datetime.datetime.now().isoformat()
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "errors": multi_model_results.get("errors", {})
                     }
                 else:
                     # Single model mode
