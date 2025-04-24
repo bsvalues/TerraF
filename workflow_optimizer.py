@@ -118,6 +118,10 @@ class WorkflowOptimizer:
                 in_degree = G.in_degree(file_path)
                 out_degree = G.out_degree(file_path)
                 
+                # Convert degree views to integers
+                in_degree_value = in_degree if isinstance(in_degree, int) else 0
+                out_degree_value = out_degree if isinstance(out_degree, int) else 0
+                
                 # Centrality measures
                 try:
                     # How important is this file in connecting different parts of the codebase
@@ -131,7 +135,7 @@ class WorkflowOptimizer:
                     closeness = 0
                     
                 # Calculate a composite complexity score
-                structural_complexity = in_degree + out_degree
+                structural_complexity = in_degree_value + out_degree_value
                 connectivity_score = (betweenness * 10) + (closeness * 5)
                 
                 # Overall complexity is a weighted combination of all factors
@@ -149,8 +153,8 @@ class WorkflowOptimizer:
                     'structural_complexity': structural_complexity,
                     'connectivity_score': connectivity_score,
                     'overall_complexity': overall_complexity,
-                    'in_degree': in_degree,
-                    'out_degree': out_degree
+                    'in_degree': in_degree_value,
+                    'out_degree': out_degree_value
                 }
         
         # Calculate system-level complexity metrics

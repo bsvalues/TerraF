@@ -16,6 +16,13 @@ from typing import Dict, List, Any, Optional
 # Import simplified agent registry
 from specialized_agents import register_all_agents
 
+# Import workflow mapper UI module
+try:
+    from workflow_mapper_ui import render_workflow_mapper_tab, add_workflow_mapper_tab
+    WORKFLOW_MAPPER_AVAILABLE = True
+except ImportError:
+    WORKFLOW_MAPPER_AVAILABLE = False
+
 # Set page configuration
 st.set_page_config(
     page_title="Specialized Agent Demo",
@@ -1941,7 +1948,7 @@ def main():
     st.sidebar.title("Agent Demo UI")
     
     # Add sidebar navigation
-    sidebar_options = ["Agent Dashboard", "Task History"]
+    sidebar_options = ["Agent Dashboard", "Task History", "Workflow Optimizer"]
     selected_view = st.sidebar.radio("Navigation", sidebar_options)
     
     # Display main content
@@ -1951,6 +1958,14 @@ def main():
         render_demo_tabs()
     elif selected_view == "Task History":
         render_task_history()
+    elif selected_view == "Workflow Optimizer":
+        if WORKFLOW_MAPPER_AVAILABLE:
+            # Set the repo path to the current directory for the workflow mapper
+            if 'repo_path' not in st.session_state:
+                st.session_state.repo_path = os.getcwd()
+            render_workflow_mapper_tab()
+        else:
+            st.error("Workflow Mapper functionality is not available. Please check the installation.")
 
 if __name__ == "__main__":
     main()
