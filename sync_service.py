@@ -276,14 +276,217 @@ class SyncResult:
             return 0.0
 
 
-class ChangeDetector:
+class IncrementalETLOptimizer:
     """
-    Detects changes in the source system that need to be synchronized
-    to the target system.
+    Optimizes change data capture and incremental ETL processes
+    by monitoring transaction logs and efficiently tracking changes.
     """
     def __init__(self, source_connection: DatabaseConnection):
         self.source_connection = source_connection
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.cdc_tracking = {}  # Tracks last processed position for each table
+        
+    def initialize_cdc_tracking(self, tables: List[str]) -> None:
+        """Initialize CDC tracking for a list of tables"""
+        for table in tables:
+            if table not in self.cdc_tracking:
+                self.cdc_tracking[table] = {
+                    "last_lsn": None,  # Log Sequence Number
+                    "last_timestamp": None,
+                    "tracking_enabled": True,
+                    "tracking_method": self._detect_optimal_tracking_method(table)
+                }
+                
+    def _detect_optimal_tracking_method(self, table: str) -> str:
+        """Detect the optimal change tracking method for a table"""
+        # In a real implementation, this would analyze table structure, indexes, etc.
+        # For demo purposes, we'll return a default method
+        return "timestamp_column"
+    
+    def get_change_tracking_config(self, table: str) -> Dict[str, Any]:
+        """Get change tracking configuration for a table"""
+        if table not in self.cdc_tracking:
+            self.initialize_cdc_tracking([table])
+        return self.cdc_tracking[table]
+    
+    def update_tracking_position(self, table: str, lsn: Optional[str] = None, 
+                               timestamp: Optional[str] = None) -> None:
+        """Update the tracking position for a table"""
+        if table in self.cdc_tracking:
+            if lsn is not None:
+                self.cdc_tracking[table]["last_lsn"] = lsn
+            if timestamp is not None:
+                self.cdc_tracking[table]["last_timestamp"] = timestamp
+    
+    def generate_incremental_query(self, table: str, last_sync_time: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Generate an optimized query for detecting changes since last sync
+        
+        Args:
+            table: Table name to detect changes for
+            last_sync_time: Optional override for last sync time
+            
+        Returns:
+            Dictionary with query information
+        """
+        tracking_config = self.get_change_tracking_config(table)
+        tracking_method = tracking_config["tracking_method"]
+        
+        # Use provided last_sync_time or the tracked timestamp
+        effective_timestamp = last_sync_time or tracking_config["last_timestamp"]
+        
+        if tracking_method == "timestamp_column":
+            query = f"""
+            SELECT * FROM {table} 
+            WHERE last_updated > :timestamp
+            ORDER BY last_updated ASC
+            """
+            params = {"timestamp": effective_timestamp}
+            
+        elif tracking_method == "transaction_log":
+            query = f"""
+            SELECT * FROM change_log 
+            WHERE table_name = :table 
+            AND log_sequence_number > :lsn
+            ORDER BY log_sequence_number ASC
+            """
+            params = {
+                "table": table,
+                "lsn": tracking_config["last_lsn"]
+            }
+            
+        elif tracking_method == "change_tracking":
+            query = f"""
+            SELECT * FROM {table}_changes 
+            WHERE change_time > :timestamp
+            ORDER BY change_time ASC
+            """
+            params = {"timestamp": effective_timestamp}
+            
+        else:
+            # Fallback to timestamp-based query
+            query = f"""
+            SELECT * FROM {table} 
+            WHERE last_updated > :timestamp
+            ORDER BY last_updated ASC
+            """
+            params = {"timestamp": effective_timestamp or "1900-01-01"}
+            
+        return {
+            "query": query,
+            "params": params,
+            "tracking_method": tracking_method
+        }
+    
+    def estimate_change_volume(self, table: str, last_sync_time: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Estimate the volume of changes since last sync
+        
+        Args:
+            table: Table name to estimate changes for
+            last_sync_time: Optional override for last sync time
+            
+        Returns:
+            Dictionary with estimation information
+        """
+        tracking_config = self.get_change_tracking_config(table)
+        effective_timestamp = last_sync_time or tracking_config["last_timestamp"]
+        
+        # In a real implementation, this would use table statistics and sampling
+        # For demo purposes, we'll simulate an estimate
+        if effective_timestamp is None:
+            # No previous sync, assume full table
+            return {
+                "table": table,
+                "estimated_rows": 1000,
+                "estimated_size_mb": 10,
+                "full_sync_recommended": True,
+                "reason": "No previous sync information"
+            }
+        
+        # Parse timestamp to calculate age
+        if isinstance(effective_timestamp, str):
+            try:
+                last_sync = datetime.datetime.fromisoformat(effective_timestamp.replace('Z', '+00:00'))
+                now = datetime.datetime.now(datetime.timezone.utc)
+                hours_since_sync = (now - last_sync).total_seconds() / 3600
+                
+                # Simulate different volume based on age
+                if hours_since_sync > 168:  # > 1 week
+                    return {
+                        "table": table,
+                        "estimated_rows": 500,
+                        "estimated_size_mb": 5,
+                        "full_sync_recommended": True,
+                        "reason": f"Last sync was {hours_since_sync:.1f} hours ago"
+                    }
+                elif hours_since_sync > 24:  # > 1 day
+                    return {
+                        "table": table,
+                        "estimated_rows": 100,
+                        "estimated_size_mb": 1,
+                        "full_sync_recommended": False,
+                        "reason": f"Last sync was {hours_since_sync:.1f} hours ago"
+                    }
+                else:
+                    return {
+                        "table": table,
+                        "estimated_rows": 10,
+                        "estimated_size_mb": 0.1,
+                        "full_sync_recommended": False,
+                        "reason": f"Last sync was {hours_since_sync:.1f} hours ago"
+                    }
+            except ValueError:
+                # Couldn't parse timestamp
+                return {
+                    "table": table,
+                    "estimated_rows": 100,
+                    "estimated_size_mb": 1,
+                    "full_sync_recommended": False,
+                    "reason": "Using default estimate"
+                }
+        
+        return {
+            "table": table,
+            "estimated_rows": 50,
+            "estimated_size_mb": 0.5,
+            "full_sync_recommended": False,
+            "reason": "Using default estimate"
+        }
+    
+    def optimize_batch_size(self, table: str, last_sync_time: Optional[str] = None) -> int:
+        """
+        Optimize batch size for processing changes
+        
+        Args:
+            table: Table name to optimize for
+            last_sync_time: Optional override for last sync time
+            
+        Returns:
+            Recommended batch size
+        """
+        estimate = self.estimate_change_volume(table, last_sync_time)
+        
+        # Calculate optimal batch size based on estimated volume
+        if estimate["estimated_rows"] > 1000:
+            return 500
+        elif estimate["estimated_rows"] > 100:
+            return 100
+        elif estimate["estimated_rows"] > 10:
+            return 50
+        else:
+            return 25
+
+
+class ChangeDetector:
+    """
+    Detects changes in the source system that need to be synchronized
+    to the target system. Uses IncrementalETLOptimizer for improved efficiency.
+    """
+    def __init__(self, source_connection: DatabaseConnection):
+        self.source_connection = source_connection
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.etl_optimizer = IncrementalETLOptimizer(source_connection)
         
     def detect_changes(self, last_sync_time: Optional[str] = None) -> List[DetectedChange]:
         """
@@ -356,13 +559,315 @@ class ChangeDetector:
         return op_map.get(operation.upper(), ChangeType.NO_CHANGE)
 
 
+class DataTypeConverter:
+    """
+    Handles data type conversions between different database systems.
+    Specializes in converting between legacy data types and modern ones.
+    """
+    def __init__(self):
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.conversion_registry = self._build_conversion_registry()
+        
+    def _build_conversion_registry(self) -> Dict[str, Dict[str, callable]]:
+        """Build registry of conversion functions for different data types"""
+        registry = {}
+        
+        # Register string type conversions
+        registry["VARCHAR"] = {
+            "VARCHAR": self._direct_copy,
+            "TEXT": self._direct_copy,
+            "CHAR": self._pad_or_truncate,
+            "JSONB": self._string_to_json
+        }
+        
+        # Register numeric type conversions
+        registry["INTEGER"] = {
+            "INTEGER": self._direct_copy,
+            "BIGINT": self._direct_copy,
+            "DECIMAL": self._int_to_decimal,
+            "NUMERIC": self._int_to_decimal,
+            "UUID": self._int_to_uuid,
+            "VARCHAR": self._int_to_string
+        }
+        
+        registry["DECIMAL"] = {
+            "DECIMAL": self._direct_copy,
+            "NUMERIC": self._direct_copy,
+            "INTEGER": self._decimal_to_int,
+            "VARCHAR": self._decimal_to_string
+        }
+        
+        # Register date/time type conversions
+        registry["DATE"] = {
+            "DATE": self._direct_copy,
+            "DATETIME": self._date_to_datetime,
+            "TIMESTAMP": self._date_to_timestamp,
+            "VARCHAR": self._date_to_string
+        }
+        
+        registry["DATETIME"] = {
+            "DATETIME": self._direct_copy,
+            "TIMESTAMP": self._datetime_to_timestamp,
+            "DATE": self._datetime_to_date,
+            "VARCHAR": self._datetime_to_string
+        }
+        
+        # Register boolean type conversions
+        registry["BIT"] = {
+            "BIT": self._direct_copy,
+            "BOOLEAN": self._bit_to_boolean,
+            "INTEGER": self._bit_to_int,
+            "VARCHAR": self._bit_to_string
+        }
+        
+        return registry
+    
+    def convert_value(self, value: Any, source_type: str, target_type: str) -> Any:
+        """
+        Convert a value from source type to target type
+        
+        Args:
+            value: The value to convert
+            source_type: The source data type (e.g., "INTEGER", "VARCHAR(100)")
+            target_type: The target data type (e.g., "NUMERIC(10,2)", "JSONB")
+            
+        Returns:
+            The converted value
+        """
+        if value is None:
+            return None
+            
+        # Extract base types by removing size/precision specifications
+        base_source_type = self._extract_base_type(source_type)
+        base_target_type = self._extract_base_type(target_type)
+        
+        if base_source_type not in self.conversion_registry:
+            raise ValueError(f"Unsupported source type: {source_type}")
+            
+        if base_target_type not in self.conversion_registry[base_source_type]:
+            raise ValueError(f"Unsupported conversion: {source_type} to {target_type}")
+            
+        # Get conversion function and apply it
+        conversion_func = self.conversion_registry[base_source_type][base_target_type]
+        return conversion_func(value, source_type, target_type)
+    
+    def _extract_base_type(self, data_type: str) -> str:
+        """Extract base type without size/precision specifications"""
+        match = re.match(r'^([A-Z]+)', data_type)
+        if match:
+            return match.group(1)
+        return data_type
+    
+    # Direct conversion (no type change)
+    def _direct_copy(self, value: Any, source_type: str, target_type: str) -> Any:
+        """Direct copy of value (no conversion needed)"""
+        return value
+    
+    # String type conversions
+    def _pad_or_truncate(self, value: str, source_type: str, target_type: str) -> str:
+        """Pad or truncate string to fit CHAR fixed length"""
+        if not isinstance(value, str):
+            value = str(value)
+            
+        # Extract target length
+        match = re.match(r'CHAR\((\d+)\)', target_type)
+        if match:
+            length = int(match.group(1))
+            if len(value) < length:
+                return value.ljust(length)
+            else:
+                return value[:length]
+        return value
+    
+    def _string_to_json(self, value: str, source_type: str, target_type: str) -> Dict[str, Any]:
+        """Convert string to JSON"""
+        if isinstance(value, dict):
+            return value
+            
+        try:
+            # Try parsing as JSON
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            # If not valid JSON, wrap in a simple object
+            return {"value": value}
+    
+    # Numeric type conversions
+    def _int_to_decimal(self, value: int, source_type: str, target_type: str) -> float:
+        """Convert integer to decimal/numeric"""
+        try:
+            # Extract precision and scale if specified
+            match = re.match(r'(DECIMAL|NUMERIC)\((\d+),(\d+)\)', target_type)
+            if match:
+                precision = int(match.group(2))
+                scale = int(match.group(3))
+                
+                # Format with the right precision
+                format_str = f"{{:.{scale}f}}"
+                formatted = format_str.format(float(value))
+                
+                # Ensure it doesn't exceed precision
+                parts = formatted.split('.')
+                if len(parts[0]) > (precision - scale):
+                    raise ValueError(f"Value {value} exceeds precision of {target_type}")
+                    
+                return float(formatted)
+            return float(value)
+        except (ValueError, TypeError):
+            return 0.0
+    
+    def _int_to_uuid(self, value: int, source_type: str, target_type: str) -> str:
+        """Convert integer to UUID string"""
+        try:
+            # Create a deterministic UUID using the integer as a seed
+            import hashlib
+            md5 = hashlib.md5(str(value).encode()).hexdigest()
+            return f"{md5[:8]}-{md5[8:12]}-{md5[12:16]}-{md5[16:20]}-{md5[20:32]}"
+        except Exception:
+            # Fallback to a random UUID if conversion fails
+            import uuid
+            return str(uuid.uuid4())
+    
+    def _int_to_string(self, value: int, source_type: str, target_type: str) -> str:
+        """Convert integer to string"""
+        return str(value)
+    
+    def _decimal_to_int(self, value: float, source_type: str, target_type: str) -> int:
+        """Convert decimal to integer"""
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return 0
+    
+    def _decimal_to_string(self, value: float, source_type: str, target_type: str) -> str:
+        """Convert decimal to string"""
+        try:
+            # Extract source scale if specified to maintain precision
+            match = re.match(r'(DECIMAL|NUMERIC)\((\d+),(\d+)\)', source_type)
+            if match:
+                scale = int(match.group(3))
+                format_str = f"{{:.{scale}f}}"
+                return format_str.format(value)
+            return str(value)
+        except (ValueError, TypeError):
+            return "0"
+    
+    # Date/time type conversions
+    def _date_to_datetime(self, value: str, source_type: str, target_type: str) -> str:
+        """Convert date to datetime"""
+        try:
+            if isinstance(value, str):
+                # Parse the date string
+                parsed_date = datetime.datetime.strptime(value, "%Y-%m-%d")
+                # Return ISO format with time component
+                return parsed_date.strftime("%Y-%m-%d %H:%M:%S")
+            elif isinstance(value, datetime.date) and not isinstance(value, datetime.datetime):
+                # Add time component to date object
+                return datetime.datetime.combine(value, datetime.time()).strftime("%Y-%m-%d %H:%M:%S")
+            return value
+        except (ValueError, TypeError):
+            return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    def _date_to_timestamp(self, value: str, source_type: str, target_type: str) -> str:
+        """Convert date to timestamp"""
+        # First convert to datetime, then to timestamp format
+        datetime_str = self._date_to_datetime(value, source_type, "DATETIME")
+        try:
+            parsed = datetime.datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
+            return parsed.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        except (ValueError, TypeError):
+            return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    
+    def _date_to_string(self, value: str, source_type: str, target_type: str) -> str:
+        """Convert date to string"""
+        try:
+            if isinstance(value, str):
+                # Try to parse and format consistently
+                parsed_date = datetime.datetime.strptime(value, "%Y-%m-%d")
+                return parsed_date.strftime("%Y-%m-%d")
+            elif isinstance(value, (datetime.date, datetime.datetime)):
+                return value.strftime("%Y-%m-%d")
+            return str(value)
+        except (ValueError, TypeError):
+            return str(value)
+    
+    def _datetime_to_timestamp(self, value: str, source_type: str, target_type: str) -> str:
+        """Convert datetime to timestamp"""
+        try:
+            if isinstance(value, str):
+                # Parse the datetime string
+                parsed = datetime.datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+                return parsed.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            elif isinstance(value, datetime.datetime):
+                return value.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            return value
+        except (ValueError, TypeError):
+            return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    
+    def _datetime_to_date(self, value: str, source_type: str, target_type: str) -> str:
+        """Convert datetime to date (truncate time component)"""
+        try:
+            if isinstance(value, str):
+                # Parse the datetime string
+                parsed = datetime.datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+                return parsed.strftime("%Y-%m-%d")
+            elif isinstance(value, datetime.datetime):
+                return value.strftime("%Y-%m-%d")
+            return value
+        except (ValueError, TypeError):
+            return datetime.datetime.now().strftime("%Y-%m-%d")
+    
+    def _datetime_to_string(self, value: str, source_type: str, target_type: str) -> str:
+        """Convert datetime to string"""
+        try:
+            if isinstance(value, str):
+                # Validate it's a proper datetime
+                datetime.datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+                return value
+            elif isinstance(value, datetime.datetime):
+                return value.strftime("%Y-%m-%d %H:%M:%S")
+            return str(value)
+        except (ValueError, TypeError):
+            return str(value)
+    
+    # Boolean type conversions
+    def _bit_to_boolean(self, value: Any, source_type: str, target_type: str) -> bool:
+        """Convert bit to boolean"""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int) or isinstance(value, str) and value.isdigit():
+            return bool(int(value))
+        if isinstance(value, str):
+            return value.lower() in ('true', 't', 'yes', 'y', '1')
+        return bool(value)
+    
+    def _bit_to_int(self, value: Any, source_type: str, target_type: str) -> int:
+        """Convert bit to integer"""
+        if isinstance(value, bool):
+            return 1 if value else 0
+        if isinstance(value, int):
+            return 1 if value else 0
+        if isinstance(value, str):
+            if value.isdigit():
+                return 1 if int(value) else 0
+            return 1 if value.lower() in ('true', 't', 'yes', 'y', '1') else 0
+        return 1 if value else 0
+    
+    def _bit_to_string(self, value: Any, source_type: str, target_type: str) -> str:
+        """Convert bit to string"""
+        bool_value = self._bit_to_boolean(value, source_type, "BOOLEAN")
+        return "true" if bool_value else "false"
+
+
 class DataTransformer:
     """
     Transforms data from the source format to the target format.
+    Utilizes DataTypeConverter for intelligent handling of data type differences.
     """
     def __init__(self, field_mapping_config: Dict[str, Any] = None):
         self.field_mapping = field_mapping_config or self._get_default_field_mapping()
         self.logger = logging.getLogger(self.__class__.__name__)
+        # Initialize the data type converter for handling type conversions
+        self.type_converter = DataTypeConverter()
         
     def transform(self, changes: List[DetectedChange]) -> List[TransformedRecord]:
         """
@@ -970,6 +1475,548 @@ class SyncOrchestrator:
 
 
 # API for using the SyncService
+class SchemaComparisonTool:
+    """
+    Tool for comparing database schemas between source and target systems.
+    Helps identify structural differences for creating transformation mappings.
+    """
+    def __init__(self, source_connection: DatabaseConnection, target_connection: DatabaseConnection):
+        self.source_connection = source_connection
+        self.target_connection = target_connection
+        self.logger = logging.getLogger(self.__class__.__name__)
+        
+    def get_source_schema(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get the schema details from the source database.
+        
+        Returns:
+            Dictionary of table names and their column details
+        """
+        # In a real implementation, this would use database metadata APIs
+        # For this demo, we'll return a simulated schema
+        return {
+            "properties": {
+                "property_id": {"type": "INTEGER", "nullable": False, "primary_key": True},
+                "parcel_number": {"type": "VARCHAR(20)", "nullable": False},
+                "owner_name": {"type": "VARCHAR(100)", "nullable": False},
+                "address": {"type": "VARCHAR(200)", "nullable": False},
+                "land_value": {"type": "DECIMAL(12,2)", "nullable": False},
+                "improvement_value": {"type": "DECIMAL(12,2)", "nullable": False},
+                "total_value": {"type": "DECIMAL(12,2)", "nullable": False},
+                "last_updated": {"type": "DATETIME", "nullable": False}
+            },
+            "valuations": {
+                "valuation_id": {"type": "INTEGER", "nullable": False, "primary_key": True},
+                "property_id": {"type": "INTEGER", "nullable": False, "foreign_key": "properties.property_id"},
+                "valuation_date": {"type": "DATE", "nullable": False},
+                "value_amount": {"type": "DECIMAL(12,2)", "nullable": False},
+                "value_type": {"type": "VARCHAR(50)", "nullable": False},
+                "assessor_id": {"type": "INTEGER", "nullable": True}
+            },
+            "assessors": {
+                "assessor_id": {"type": "INTEGER", "nullable": False, "primary_key": True},
+                "name": {"type": "VARCHAR(100)", "nullable": False},
+                "certification": {"type": "VARCHAR(50)", "nullable": True},
+                "active": {"type": "BIT", "nullable": False}
+            }
+        }
+    
+    def get_target_schema(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get the schema details from the target database.
+        
+        Returns:
+            Dictionary of table names and their column details
+        """
+        # In a real implementation, this would use database metadata APIs
+        # For this demo, we'll return a simulated schema
+        return {
+            "properties": {
+                "property_id": {"type": "VARCHAR(20)", "nullable": False, "primary_key": True},
+                "parcel_id": {"type": "VARCHAR(20)", "nullable": False},
+                "ownership": {"type": "JSONB", "nullable": False},
+                "location": {"type": "JSONB", "nullable": False},
+                "valuation": {"type": "JSONB", "nullable": False},
+                "metadata": {"type": "JSONB", "nullable": False}
+            },
+            "valuations": {
+                "valuation_id": {"type": "UUID", "nullable": False, "primary_key": True},
+                "property_id": {"type": "VARCHAR(20)", "nullable": False, "foreign_key": "properties.property_id"},
+                "assessment_date": {"type": "TIMESTAMP", "nullable": False},
+                "assessed_value": {"type": "NUMERIC(15,2)", "nullable": False},
+                "assessment_type": {"type": "VARCHAR(50)", "nullable": False},
+                "assessor": {"type": "JSONB", "nullable": True}
+            },
+            "assessors": {
+                "assessor_id": {"type": "UUID", "nullable": False, "primary_key": True},
+                "personal_info": {"type": "JSONB", "nullable": False},
+                "certifications": {"type": "JSONB", "nullable": True},
+                "is_active": {"type": "BOOLEAN", "nullable": False}
+            }
+        }
+    
+    def compare_schemas(self) -> Dict[str, Any]:
+        """
+        Compare source and target schemas to identify differences and transformation needs.
+        
+        Returns:
+            Dictionary with comparison results
+        """
+        source_schema = self.get_source_schema()
+        target_schema = self.get_target_schema()
+        
+        comparison_results = {
+            "tables": {
+                "common": [],
+                "source_only": [],
+                "target_only": []
+            },
+            "column_differences": {},
+            "data_type_conversions": [],
+            "suggested_mappings": {}
+        }
+        
+        # Find common tables and tables that exist only in one schema
+        source_tables = set(source_schema.keys())
+        target_tables = set(target_schema.keys())
+        
+        comparison_results["tables"]["common"] = list(source_tables.intersection(target_tables))
+        comparison_results["tables"]["source_only"] = list(source_tables - target_tables)
+        comparison_results["tables"]["target_only"] = list(target_tables - source_tables)
+        
+        # For common tables, analyze column differences
+        for table in comparison_results["tables"]["common"]:
+            source_cols = set(source_schema[table].keys())
+            target_cols = set(target_schema[table].keys())
+            
+            comparison_results["column_differences"][table] = {
+                "common": list(source_cols.intersection(target_cols)),
+                "source_only": list(source_cols - target_cols),
+                "target_only": list(target_cols - source_cols)
+            }
+            
+            # Identify data type conversions needed
+            for col in comparison_results["column_differences"][table]["common"]:
+                source_type = source_schema[table][col]["type"]
+                target_type = target_schema[table][col]["type"]
+                
+                if source_type != target_type:
+                    comparison_results["data_type_conversions"].append({
+                        "table": table,
+                        "column": col,
+                        "source_type": source_type,
+                        "target_type": target_type,
+                        "conversion_complexity": self._estimate_conversion_complexity(source_type, target_type)
+                    })
+            
+            # Generate suggested mappings
+            comparison_results["suggested_mappings"][table] = self._generate_mappings(
+                source_schema[table], 
+                target_schema[table]
+            )
+        
+        return comparison_results
+    
+    def _estimate_conversion_complexity(self, source_type: str, target_type: str) -> str:
+        """Estimate complexity of data type conversion"""
+        # Conversions from numeric to numeric are simple
+        if ("INT" in source_type or "DECIMAL" in source_type or "NUMERIC" in source_type) and \
+           ("INT" in target_type or "DECIMAL" in target_type or "NUMERIC" in target_type):
+            return "simple"
+        
+        # Conversions between similar string types are simple
+        if ("CHAR" in source_type or "TEXT" in source_type) and \
+           ("CHAR" in target_type or "TEXT" in target_type):
+            return "simple"
+        
+        # Conversions between date/time types are moderate
+        if ("DATE" in source_type or "TIME" in source_type) and \
+           ("DATE" in target_type or "TIME" in target_type):
+            return "moderate"
+        
+        # Special case for complex conversions
+        if "JSONB" in target_type:
+            return "complex"
+        
+        # Default to complex for all other conversions
+        return "complex"
+    
+    def _generate_mappings(self, source_columns: Dict[str, Any], target_columns: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate suggested field mappings between source and target"""
+        mappings = {}
+        
+        # Handle JSON/JSONB target columns
+        json_target_columns = {col: details for col, details in target_columns.items() 
+                              if "JSONB" in details["type"]}
+        
+        # For each JSON target column, suggest source columns that might map to it
+        for json_col, details in json_target_columns.items():
+            if json_col == "ownership":
+                mappings[json_col] = {
+                    "primary_owner": "owner_name",
+                    "ownership_type": "COMPUTED"
+                }
+            elif json_col == "location":
+                mappings[json_col] = {
+                    "address_line1": "address",
+                    "city": "PARSED",
+                    "state": "PARSED",
+                    "zip": "PARSED"
+                }
+            elif json_col == "valuation":
+                mappings[json_col] = {
+                    "land": "land_value",
+                    "improvements": "improvement_value",
+                    "total": "total_value",
+                    "assessment_date": "last_updated"
+                }
+            elif json_col == "metadata":
+                mappings[json_col] = {
+                    "last_sync": "GENERATED",
+                    "sync_status": "GENERATED"
+                }
+            
+        # For regular columns, suggest direct mappings
+        for target_col, target_details in target_columns.items():
+            if "JSONB" not in target_details["type"]:
+                # Look for exact matches
+                if target_col in source_columns:
+                    mappings[target_col] = target_col
+                # Look for similar column names
+                else:
+                    for source_col in source_columns:
+                        if target_col.lower() in source_col.lower() or source_col.lower() in target_col.lower():
+                            mappings[target_col] = source_col
+                            break
+        
+        return mappings
+    
+    def generate_mapping_config(self) -> Dict[str, Any]:
+        """
+        Generate a comprehensive mapping configuration based on schema comparison.
+        
+        Returns:
+            Dictionary with mapping configuration for use by the DataTransformer
+        """
+        comparison = self.compare_schemas()
+        
+        mapping_config = {}
+        for table, mapping in comparison["suggested_mappings"].items():
+            source_table = table
+            target_table = table
+            
+            field_mapping = {}
+            transforms = {}
+            
+            for target_field, source_info in mapping.items():
+                if isinstance(source_info, dict):
+                    # Handle nested JSON mappings
+                    field_mapping[target_field] = {}
+                    for nested_target, nested_source in source_info.items():
+                        if nested_source not in ("COMPUTED", "PARSED", "GENERATED"):
+                            field_mapping[target_field][nested_target] = nested_source
+                        else:
+                            # Add transformer for special fields
+                            transform_type = nested_source.lower()
+                            transforms[f"{target_field}.{nested_target}"] = {
+                                "type": transform_type,
+                                "parameters": {}
+                            }
+                else:
+                    # Handle direct field mappings
+                    field_mapping[target_field] = source_info
+            
+            mapping_config[source_table] = {
+                "target_table": target_table,
+                "fields": field_mapping,
+                "transforms": transforms
+            }
+        
+        return mapping_config
+
+
+class DatabasePerformanceMonitor:
+    """
+    Monitors database performance during synchronization operations
+    and provides metrics and optimization recommendations.
+    """
+    def __init__(self, source_connection: DatabaseConnection, target_connection: DatabaseConnection):
+        self.source_connection = source_connection
+        self.target_connection = target_connection
+        self.logger = logging.getLogger(self.__class__.__name__)
+        
+        # Performance metrics storage
+        self.metrics_history = {
+            "source": [],
+            "target": []
+        }
+        
+        # Current sync metrics
+        self.current_metrics = {
+            "source": {},
+            "target": {}
+        }
+        
+        # Sampling configuration
+        self.sampling_interval = 5  # seconds
+        self.max_history_size = 100  # samples
+        
+    def start_monitoring(self) -> None:
+        """Start monitoring database performance"""
+        self.logger.info("Starting database performance monitoring")
+        
+        # Reset current metrics
+        self.current_metrics = {
+            "source": {
+                "start_time": datetime.datetime.now().isoformat(),
+                "queries_executed": 0,
+                "rows_processed": 0,
+                "execution_time_ms": 0,
+                "avg_query_time_ms": 0,
+                "max_query_time_ms": 0,
+                "cpu_utilization": 0,
+                "memory_utilization": 0,
+                "io_operations": 0,
+                "connections": 1
+            },
+            "target": {
+                "start_time": datetime.datetime.now().isoformat(),
+                "queries_executed": 0,
+                "rows_processed": 0,
+                "execution_time_ms": 0,
+                "avg_query_time_ms": 0,
+                "max_query_time_ms": 0,
+                "cpu_utilization": 0,
+                "memory_utilization": 0,
+                "io_operations": 0,
+                "connections": 1
+            }
+        }
+    
+    def stop_monitoring(self) -> Dict[str, Any]:
+        """
+        Stop monitoring and finalize metrics
+        
+        Returns:
+            Dictionary with performance summary
+        """
+        # Set end time 
+        end_time = datetime.datetime.now().isoformat()
+        
+        # Finalize metrics
+        for db in ["source", "target"]:
+            self.current_metrics[db]["end_time"] = end_time
+            if self.current_metrics[db]["queries_executed"] > 0:
+                self.current_metrics[db]["avg_query_time_ms"] = (
+                    self.current_metrics[db]["execution_time_ms"] / 
+                    self.current_metrics[db]["queries_executed"]
+                )
+            
+            # Add to history
+            self.metrics_history[db].append(self.current_metrics[db].copy())
+            
+            # Trim history if needed
+            if len(self.metrics_history[db]) > self.max_history_size:
+                self.metrics_history[db] = self.metrics_history[db][-self.max_history_size:]
+        
+        self.logger.info("Database performance monitoring stopped")
+        return self.get_performance_summary()
+    
+    def record_query_metrics(self, db_type: str, query_time_ms: float, rows_affected: int) -> None:
+        """
+        Record metrics for a single query
+        
+        Args:
+            db_type: "source" or "target"
+            query_time_ms: Execution time in milliseconds
+            rows_affected: Number of rows affected/returned
+        """
+        if db_type not in self.current_metrics:
+            return
+            
+        metrics = self.current_metrics[db_type]
+        metrics["queries_executed"] += 1
+        metrics["rows_processed"] += rows_affected
+        metrics["execution_time_ms"] += query_time_ms
+        
+        if query_time_ms > metrics["max_query_time_ms"]:
+            metrics["max_query_time_ms"] = query_time_ms
+    
+    def simulate_system_metrics(self, db_type: str) -> None:
+        """
+        Simulate system-level metrics for demo purposes
+        
+        Args:
+            db_type: "source" or "target"
+        """
+        if db_type not in self.current_metrics:
+            return
+            
+        metrics = self.current_metrics[db_type]
+        
+        # Simulate CPU, memory, and IO based on query activity
+        query_activity = min(100, metrics["queries_executed"] * 2)
+        
+        # Generate realistic metrics
+        metrics["cpu_utilization"] = min(90, 30 + query_activity / 3 + random.randint(-5, 5))
+        metrics["memory_utilization"] = min(90, 40 + query_activity / 4 + random.randint(-3, 3))
+        metrics["io_operations"] = metrics["queries_executed"] * 3 + metrics["rows_processed"] / 10
+    
+    def get_performance_summary(self) -> Dict[str, Any]:
+        """
+        Get a summary of performance metrics
+        
+        Returns:
+            Dictionary with performance summary
+        """
+        # Simulate metrics before generating summary
+        self.simulate_system_metrics("source")
+        self.simulate_system_metrics("target")
+        
+        return {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "metrics": self.current_metrics,
+            "recommendations": self._generate_recommendations(),
+            "historical_trends": self._analyze_historical_trends()
+        }
+    
+    def _generate_recommendations(self) -> List[Dict[str, Any]]:
+        """
+        Generate performance optimization recommendations
+        
+        Returns:
+            List of recommendation dictionaries
+        """
+        recommendations = []
+        
+        # Source database recommendations
+        source_metrics = self.current_metrics["source"]
+        if source_metrics.get("max_query_time_ms", 0) > 1000:
+            recommendations.append({
+                "database": "source",
+                "type": "query_optimization",
+                "severity": "high",
+                "description": "Long-running queries detected in source database",
+                "action": "Analyze slow queries and optimize with appropriate indexes"
+            })
+            
+        if source_metrics.get("cpu_utilization", 0) > 80:
+            recommendations.append({
+                "database": "source",
+                "type": "resource_allocation",
+                "severity": "high",
+                "description": "High CPU utilization in source database",
+                "action": "Increase CPU allocation or optimize query execution"
+            })
+            
+        # Target database recommendations  
+        target_metrics = self.current_metrics["target"]
+        if target_metrics.get("io_operations", 0) > 1000:
+            recommendations.append({
+                "database": "target",
+                "type": "io_optimization",
+                "severity": "medium",
+                "description": "High I/O operations detected in target database",
+                "action": "Consider batch operations and optimize write patterns"
+            })
+            
+        if source_metrics.get("avg_query_time_ms", 0) > 500:
+            recommendations.append({
+                "database": "source",
+                "type": "index_recommendation",
+                "severity": "medium",
+                "description": "Queries average execution time is high",
+                "action": "Add indexes on frequently queried columns"
+            })
+            
+        # General recommendations
+        if len(self.metrics_history["source"]) >= 3:
+            recommendations.append({
+                "database": "both",
+                "type": "sync_schedule",
+                "severity": "low",
+                "description": "Consider optimizing sync schedule based on database load",
+                "action": "Schedule syncs during low-activity periods"
+            })
+            
+        return recommendations
+    
+    def _analyze_historical_trends(self) -> Dict[str, Any]:
+        """
+        Analyze historical performance trends
+        
+        Returns:
+            Dictionary with trend analysis
+        """
+        trends = {
+            "source": {},
+            "target": {}
+        }
+        
+        for db_type in ["source", "target"]:
+            if len(self.metrics_history[db_type]) < 2:
+                continue
+                
+            # Analyze last 5 samples or all if less than 5
+            samples = self.metrics_history[db_type][-5:]
+            
+            # Extract metrics for trending
+            cpu_trend = [s.get("cpu_utilization", 0) for s in samples]
+            query_time_trend = [s.get("avg_query_time_ms", 0) for s in samples]
+            
+            # Calculate trends (positive = increasing, negative = decreasing)
+            if len(cpu_trend) >= 2:
+                trends[db_type]["cpu_trend"] = self._calculate_trend(cpu_trend)
+            
+            if len(query_time_trend) >= 2:
+                trends[db_type]["query_time_trend"] = self._calculate_trend(query_time_trend)
+                
+            # Add qualitative assessment
+            trends[db_type]["performance_trend"] = "stable"
+            if db_type in trends and "query_time_trend" in trends[db_type]:
+                if trends[db_type]["query_time_trend"] > 0.1:
+                    trends[db_type]["performance_trend"] = "degrading"
+                elif trends[db_type]["query_time_trend"] < -0.1:
+                    trends[db_type]["performance_trend"] = "improving"
+        
+        return trends
+    
+    def _calculate_trend(self, values: List[float]) -> float:
+        """
+        Calculate trend factor from a series of values
+        
+        Args:
+            values: List of numeric values 
+            
+        Returns:
+            Trend factor (positive = increasing, negative = decreasing)
+        """
+        if len(values) < 2:
+            return 0
+            
+        # Simple linear regression slope
+        n = len(values)
+        x = list(range(n))
+        mean_x = sum(x) / n
+        mean_y = sum(values) / n
+        
+        # Calculate slope
+        numerator = sum((x[i] - mean_x) * (values[i] - mean_y) for i in range(n))
+        denominator = sum((x[i] - mean_x) ** 2 for i in range(n))
+        
+        # Avoid division by zero
+        if denominator == 0:
+            return 0
+            
+        slope = numerator / denominator
+        
+        # Normalize by the mean value to get relative trend
+        if mean_y == 0:
+            return 0
+            
+        return slope / mean_y
+
+
 class SyncService:
     """
     Main service class that provides the API for the SyncService.
@@ -989,6 +2036,18 @@ class SyncService:
         
         self.source_connection = DatabaseConnection(pacs_connection_string, "PACS")
         self.target_connection = DatabaseConnection(cama_connection_string, "CAMA")
+        
+        # Initialize the schema comparison tool
+        self.schema_comparison_tool = SchemaComparisonTool(
+            source_connection=self.source_connection,
+            target_connection=self.target_connection
+        )
+        
+        # Initialize the database performance monitor
+        self.performance_monitor = DatabasePerformanceMonitor(
+            source_connection=self.source_connection,
+            target_connection=self.target_connection
+        )
         
         # Initialize the orchestrator
         self.orchestrator = SyncOrchestrator(
@@ -1068,3 +2127,159 @@ class SyncService:
             "active": True,
             "version": "1.0.0"
         }
+        
+    def compare_schemas(self) -> Dict[str, Any]:
+        """
+        Compare schemas between source and target databases.
+        
+        Returns:
+            Dictionary with schema comparison results
+        """
+        self.logger.info("Comparing database schemas")
+        
+        try:
+            comparison_results = self.schema_comparison_tool.compare_schemas()
+            
+            # Include summary information for quick reference
+            table_counts = {
+                "common_tables": len(comparison_results["tables"]["common"]),
+                "source_only_tables": len(comparison_results["tables"]["source_only"]),
+                "target_only_tables": len(comparison_results["tables"]["target_only"])
+            }
+            
+            # Count data type conversions by complexity
+            conversion_complexity = {
+                "simple": 0,
+                "moderate": 0,
+                "complex": 0
+            }
+            
+            for conversion in comparison_results["data_type_conversions"]:
+                complexity = conversion["conversion_complexity"]
+                conversion_complexity[complexity] += 1
+                
+            return {
+                "comparison_results": comparison_results,
+                "table_counts": table_counts,
+                "conversion_complexity": conversion_complexity,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error comparing schemas: {str(e)}")
+            return {
+                "error": f"Schema comparison failed: {str(e)}",
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+    def generate_mapping_config(self) -> Dict[str, Any]:
+        """
+        Generate a mapping configuration based on schema comparison.
+        
+        Returns:
+            Dictionary with mapping configuration
+        """
+        self.logger.info("Generating mapping configuration")
+        
+        try:
+            mapping_config = self.schema_comparison_tool.generate_mapping_config()
+            
+            return {
+                "mapping_config": mapping_config,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error generating mapping config: {str(e)}")
+            return {
+                "error": f"Mapping configuration generation failed: {str(e)}",
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        """
+        Get database performance metrics and recommendations.
+        
+        Returns:
+            Dictionary with performance metrics and recommendations
+        """
+        self.logger.info("Getting database performance metrics")
+        
+        try:
+            performance_summary = self.performance_monitor.get_performance_summary()
+            
+            # Add additional context for easier interpretation
+            performance_summary["interpretation"] = {
+                "source_db_health": self._interpret_db_health(
+                    performance_summary["metrics"]["source"]
+                ),
+                "target_db_health": self._interpret_db_health(
+                    performance_summary["metrics"]["target"]
+                ),
+                "risk_factors": self._identify_risk_factors(performance_summary),
+                "optimization_priority": self._determine_optimization_priority(
+                    performance_summary["recommendations"]
+                )
+            }
+            
+            return performance_summary
+            
+        except Exception as e:
+            self.logger.error(f"Error getting performance metrics: {str(e)}")
+            return {
+                "error": f"Performance metrics retrieval failed: {str(e)}",
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def _interpret_db_health(self, metrics: Dict[str, Any]) -> str:
+        """Interpret database health based on metrics"""
+        if metrics.get("cpu_utilization", 0) > 80 or metrics.get("memory_utilization", 0) > 85:
+            return "critical"
+        elif metrics.get("cpu_utilization", 0) > 70 or metrics.get("memory_utilization", 0) > 75:
+            return "warning"
+        elif metrics.get("cpu_utilization", 0) > 60 or metrics.get("memory_utilization", 0) > 65:
+            return "moderate"
+        else:
+            return "healthy"
+    
+    def _identify_risk_factors(self, performance_summary: Dict[str, Any]) -> List[str]:
+        """Identify risk factors from performance metrics"""
+        risk_factors = []
+        source_metrics = performance_summary["metrics"]["source"]
+        target_metrics = performance_summary["metrics"]["target"]
+        
+        if source_metrics.get("max_query_time_ms", 0) > 5000:
+            risk_factors.append("Very slow queries in source database")
+            
+        if target_metrics.get("max_query_time_ms", 0) > 5000:
+            risk_factors.append("Very slow queries in target database")
+            
+        if source_metrics.get("cpu_utilization", 0) > 85:
+            risk_factors.append("Source database CPU near capacity")
+            
+        if source_metrics.get("memory_utilization", 0) > 90:
+            risk_factors.append("Source database memory near capacity")
+            
+        if target_metrics.get("cpu_utilization", 0) > 85:
+            risk_factors.append("Target database CPU near capacity")
+            
+        if target_metrics.get("memory_utilization", 0) > 90:
+            risk_factors.append("Target database memory near capacity")
+            
+        trends = performance_summary.get("historical_trends", {})
+        for db_type, trend_data in trends.items():
+            if trend_data.get("performance_trend") == "degrading":
+                risk_factors.append(f"Performance degradation trend in {db_type} database")
+                
+        return risk_factors
+    
+    def _determine_optimization_priority(self, recommendations: List[Dict[str, Any]]) -> str:
+        """Determine the overall optimization priority"""
+        if any(r.get("severity") == "high" for r in recommendations):
+            return "high"
+        elif any(r.get("severity") == "medium" for r in recommendations):
+            return "medium"
+        elif any(r.get("severity") == "low" for r in recommendations):
+            return "low"
+        else:
+            return "none"
