@@ -1250,6 +1250,111 @@ class CodePatternRecognizer:
                 'examples': pooling_candidates[:5]  # First 5 examples
             })
         
+        # Algorithmic complexity patterns
+        nested_loop_candidates = []
+        for sample in self.code_samples:
+            if sample['type'] == 'function':
+                code = sample['source_code'].lower()
+                
+                # Look for nested loops (O(n²) or worse)
+                has_nested_loops = False
+                if ('for ' in code or 'while ' in code) and \
+                   ('for ' in code.split('for ', 1)[1] or 'while ' in code.split('for ', 1)[1]):
+                    has_nested_loops = True
+                
+                if has_nested_loops:
+                    nested_loop_candidates.append(sample)
+        
+        if len(nested_loop_candidates) >= min_occurrences:
+            performance_patterns.append({
+                'name': 'Nested Loops',
+                'type': 'performance_pattern',
+                'category': 'algorithm',
+                'severity': 'medium',
+                'description': 'Nested loops can lead to O(n²) or worse time complexity',
+                'occurrences': len(nested_loop_candidates),
+                'examples': nested_loop_candidates[:5]  # First 5 examples
+            })
+        
+        # Inefficient string manipulation
+        string_concat_candidates = []
+        for sample in self.code_samples:
+            if sample['type'] == 'function':
+                code = sample['source_code'].lower()
+                
+                # Check for inefficient string concatenation
+                if '+= ' in code and ('str' in code or '"' in code and '+= "' in code):
+                    string_concat_candidates.append(sample)
+        
+        if len(string_concat_candidates) >= min_occurrences:
+            performance_patterns.append({
+                'name': 'Inefficient String Concatenation',
+                'type': 'performance_pattern',
+                'category': 'memory',
+                'severity': 'low',
+                'description': 'Using join() instead of += for string concatenation is more efficient',
+                'occurrences': len(string_concat_candidates),
+                'examples': string_concat_candidates[:5]
+            })
+        
+        # Expensive operations in loops
+        exp_loop_candidates = []
+        for sample in self.code_samples:
+            if sample['type'] == 'function':
+                code = sample['source_code'].lower()
+                
+                # Check for CPU-intensive operations in loops
+                if ('for ' in code or 'while ' in code) and \
+                   ('sort(' in code or 'deepcopy(' in code or 'json.loads(' in code):
+                    exp_loop_candidates.append(sample)
+        
+        if len(exp_loop_candidates) >= min_occurrences:
+            performance_patterns.append({
+                'name': 'Expensive Operations in Loop',
+                'type': 'performance_pattern',
+                'category': 'algorithm',
+                'severity': 'high',
+                'description': 'Expensive operations inside loops can severely impact performance',
+                'occurrences': len(exp_loop_candidates),
+                'examples': exp_loop_candidates[:5]
+            })
+        
+        # Asynchronous processing pattern
+        async_candidates = []
+        for sample in self.code_samples:
+            code = sample['source_code'].lower()
+            if 'async ' in code or 'await ' in code or 'asyncio' in code:
+                async_candidates.append(sample)
+        
+        if len(async_candidates) >= min_occurrences:
+            performance_patterns.append({
+                'name': 'Asynchronous Processing',
+                'type': 'performance_pattern',
+                'category': 'concurrency',
+                'severity': 'positive',
+                'description': 'Code using asynchronous processing for improved performance',
+                'occurrences': len(async_candidates),
+                'examples': async_candidates[:5]
+            })
+        
+        # Thread/worker pool pattern
+        thread_candidates = []
+        for sample in self.code_samples:
+            code = sample['source_code'].lower()
+            if 'thread' in code or 'threading' in code or 'concurrent.futures' in code:
+                thread_candidates.append(sample)
+        
+        if len(thread_candidates) >= min_occurrences:
+            performance_patterns.append({
+                'name': 'Multi-threading/Worker Pool',
+                'type': 'performance_pattern',
+                'category': 'concurrency',
+                'severity': 'positive',
+                'description': 'Code using multi-threading or worker pools for parallel processing',
+                'occurrences': len(thread_candidates),
+                'examples': thread_candidates[:5]
+            })
+        
         return performance_patterns
     
     def _identify_security_patterns(self, min_occurrences: int = 2) -> List[Dict[str, Any]]:
