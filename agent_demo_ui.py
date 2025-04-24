@@ -202,6 +202,24 @@ def get_agent_info(agent_key: str) -> Dict[str, Any]:
                 "Optimize prompt",
                 "Implement failover"
             ]
+        },
+        "sync_service_agent": {
+            "name": "SyncService Agent",
+            "description": "Manages data synchronization between legacy PACS and modern CAMA systems.",
+            "capabilities": [
+                "Detect changes in source systems",
+                "Transform data between formats",
+                "Validate data consistency",
+                "Perform synchronization operations",
+                "Monitor sync processes"
+            ],
+            "demo_tasks": [
+                "Detect changes",
+                "Transform data",
+                "Validate data",
+                "Perform sync",
+                "Monitor sync status"
+            ]
         }
     }
     
