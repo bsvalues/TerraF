@@ -4,6 +4,8 @@ Intelligent Workflow Mapper UI Component
 This module provides the UI components for visualizing project dependencies
 and identifying potential bottlenecks in the codebase using the workflow_mapper.py
 functionality.
+
+Enhanced with advanced interactive visualizations from workflow_visualization.py.
 """
 import streamlit as st
 import os
@@ -29,9 +31,10 @@ try:
         analyze_all_dependencies
     )
     from workflow_optimizer import WorkflowOptimizer
+    import workflow_visualization as wv
     WORKFLOW_MAPPER_AVAILABLE = True
-except ImportError:
-    logger.error("Workflow mapper functionality not available.")
+except ImportError as e:
+    logger.error(f"Workflow mapper functionality not available: {str(e)}")
     WORKFLOW_MAPPER_AVAILABLE = False
 
 def initialize_workflow_mapper_state():
@@ -165,26 +168,56 @@ def display_dependency_analysis_results():
     # Display the dependency graph
     try:
         graph_data = st.session_state.dependency_graph_data
+        optimizer_results = st.session_state.get('optimizer_results')
         
         if graph_data:
-            # Show tabs for different visualization types
-            viz_tabs = st.tabs(["Module Dependencies", "Bottleneck Analysis", "Critical Paths", "Microservice Architecture", "Optimization Recommendations"])
+            # Show tabs for different visualization types with enhanced options
+            viz_tabs = st.tabs(["Module Dependencies", "Bottleneck Analysis", "Critical Paths", 
+                              "Advanced Visualizations", "Optimization Recommendations"])
             
             with viz_tabs[0]:  # Module Dependencies
-                # Main dependency graph
+                # Main dependency graph with enhanced visualization
                 st.markdown("### Module Dependency Graph")
                 
-                fig = visualize_dependency_graph(
-                    graph_data, 
-                    highlight_bottlenecks=st.session_state.highlight_bottlenecks
-                )
+                # Visualization options
+                viz_col1, viz_col2 = st.columns([3, 1])
                 
-                st.plotly_chart(fig, use_container_width=True)
+                with viz_col2:
+                    # Layout options for the graph
+                    layout_option = st.selectbox(
+                        "Layout Type",
+                        ["Force-Directed", "Circular", "Spring", "Kamada-Kawai", "Spectral"],
+                        help="Select the layout algorithm for the dependency graph"
+                    )
+                    
+                    # Convert to internal layout name
+                    layout = layout_option.lower().replace("-", "_").replace("force_directed", "force")
+                    
+                    st.markdown("---")
+                    st.markdown("#### Visualization Settings")
+                    highlight_bottlenecks = st.checkbox(
+                        "Highlight Bottlenecks", 
+                        value=st.session_state.highlight_bottlenecks,
+                        help="Highlight bottleneck modules in the visualization"
+                    )
+                    
+                    # Update session state
+                    st.session_state.highlight_bottlenecks = highlight_bottlenecks
+                
+                with viz_col1:
+                    # Create enhanced network visualization
+                    enhanced_fig = wv.create_dependency_network(
+                        graph_data, 
+                        layout=layout
+                    )
+                    
+                    st.plotly_chart(enhanced_fig, use_container_width=True)
                 
                 # Display metrics
+                st.markdown("### Project Dependency Metrics")
                 metrics = graph_data.get('metrics', {})
                 if metrics:
-                    col1, col2, col3 = st.columns(3)
+                    col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
                         st.metric("Modules", metrics.get('node_count', 0))
@@ -194,6 +227,13 @@ def display_dependency_analysis_results():
                     
                     with col3:
                         st.metric("Avg. Dependencies", round(metrics.get('average_degree', 0), 2))
+                    
+                    with col4:
+                        # Calculate complexity score
+                        complexity = 0
+                        if metrics.get('node_count', 0) > 0:
+                            complexity = metrics.get('edge_count', 0) / metrics.get('node_count', 1)
+                        st.metric("Complexity Score", round(complexity, 2))
             
             with viz_tabs[1]:  # Bottleneck Analysis
                 # Display bottlenecks if any
@@ -202,9 +242,19 @@ def display_dependency_analysis_results():
                     st.markdown("### Bottleneck Analysis")
                     st.markdown(f"Found **{len(bottlenecks)}** potential bottlenecks in the codebase.")
                     
-                    # Bottleneck visualization
-                    bottleneck_fig = visualize_bottlenecks(graph_data)
-                    st.plotly_chart(bottleneck_fig, use_container_width=True)
+                    # Enhanced bottleneck visualization
+                    col1, col2 = st.columns([2, 1])
+                    
+                    with col1:
+                        # Primary bottleneck visualization
+                        bottleneck_fig = visualize_bottlenecks(graph_data)
+                        st.plotly_chart(bottleneck_fig, use_container_width=True)
+                    
+                    with col2:
+                        # Enhanced heatmap visualization
+                        st.markdown("### Bottleneck Metrics Heatmap")
+                        heatmap_fig = wv.create_bottleneck_heatmap(graph_data)
+                        st.plotly_chart(heatmap_fig, use_container_width=True)
                     
                     # Display detailed bottleneck information
                     with st.expander("Detailed Bottleneck Information", expanded=False):
@@ -229,6 +279,29 @@ def display_dependency_analysis_results():
                             
                             if i < len(bottlenecks) - 1:
                                 st.markdown("---")
+                    
+                    # Show recommendations for fixing bottlenecks
+                    if optimizer_results and optimizer_results.get('recommendations'):
+                        bottleneck_recs = [
+                            r for r in optimizer_results.get('recommendations', [])
+                            if r.get('category') == 'bottleneck'
+                        ]
+                        
+                        if bottleneck_recs:
+                            with st.expander("Bottleneck Resolution Recommendations", expanded=True):
+                                st.markdown("#### How to Resolve Bottlenecks")
+                                
+                                for i, rec in enumerate(bottleneck_recs):
+                                    st.markdown(f"**{i+1}. {os.path.basename(rec.get('component', ''))}**")
+                                    st.markdown(f"{rec.get('description', '')}")
+                                    
+                                    if 'actions' in rec:
+                                        st.markdown("**Recommended Actions:**")
+                                        for action in rec.get('actions', []):
+                                            st.markdown(f"- {action}")
+                                    
+                                    if i < len(bottleneck_recs) - 1:
+                                        st.markdown("---")
                 else:
                     st.info("No bottlenecks detected in the codebase.")
             
@@ -248,9 +321,18 @@ def display_dependency_analysis_results():
                     if long_paths:
                         st.markdown(f"Found **{len(long_paths)}** long dependency chains.")
                     
-                    # Critical paths visualization
-                    critical_path_fig = visualize_critical_paths(graph_data)
-                    st.plotly_chart(critical_path_fig, use_container_width=True)
+                    # Enhanced visualization with multiple visualizations
+                    col1, col2 = st.columns([1, 1])
+                    
+                    with col1:
+                        # Original critical paths visualization
+                        critical_path_fig = visualize_critical_paths(graph_data)
+                        st.plotly_chart(critical_path_fig, use_container_width=True)
+                    
+                    with col2:
+                        # Enhanced sunburst visualization for paths
+                        sunburst_fig = wv.create_critical_path_sunburst(graph_data)
+                        st.plotly_chart(sunburst_fig, use_container_width=True)
                     
                     # Display detailed critical path information
                     with st.expander("Detailed Critical Path Information", expanded=False):
@@ -275,8 +357,137 @@ def display_dependency_analysis_results():
                                 
                                 if i < len(long_paths) - 1:
                                     st.markdown("---")
+                    
+                    # Add recommendations for fixing circular dependencies
+                    if optimizer_results and optimizer_results.get('recommendations'):
+                        cycle_recs = [
+                            r for r in optimizer_results.get('recommendations', [])
+                            if r.get('category') == 'circular_dependency'
+                        ]
+                        
+                        if cycle_recs:
+                            with st.expander("Circular Dependency Resolution", expanded=True):
+                                st.markdown("#### How to Resolve Circular Dependencies")
+                                
+                                for i, rec in enumerate(cycle_recs):
+                                    st.markdown(f"**{i+1}. {os.path.basename(rec.get('component', ''))}**")
+                                    st.markdown(f"{rec.get('description', '')}")
+                                    
+                                    if 'actions' in rec:
+                                        st.markdown("**Recommended Actions:**")
+                                        for action in rec.get('actions', []):
+                                            st.markdown(f"- {action}")
+                                    
+                                    if i < len(cycle_recs) - 1:
+                                        st.markdown("---")
                 else:
                     st.info("No critical paths detected in the codebase.")
+            
+            with viz_tabs[3]:  # Advanced Visualizations
+                st.markdown("### Advanced Dependency Visualizations")
+                st.markdown("""
+                These visualizations provide alternative ways to understand the module dependencies 
+                and structure of your codebase.
+                """)
+                
+                # Visualization selector
+                viz_type = st.radio(
+                    "Visualization Type",
+                    ["Dependency Sankey Diagram", "3D Dependency Network", "Dependency Matrix"],
+                    horizontal=True
+                )
+                
+                if viz_type == "Dependency Sankey Diagram":
+                    # Create Sankey diagram
+                    st.markdown("### Module Dependency Flow (Sankey Diagram)")
+                    st.markdown("""
+                    This visualization shows the flow of dependencies between modules. 
+                    The width of the connections represents the strength of the dependency relationship.
+                    """)
+                    
+                    # Options for Sankey
+                    max_nodes = st.slider(
+                        "Maximum number of nodes to display",
+                        min_value=10,
+                        max_value=50,
+                        value=20,
+                        help="Limit the number of nodes shown for better readability"
+                    )
+                    
+                    sankey_fig = wv.create_dependency_sankey(graph_data, max_nodes=max_nodes)
+                    st.plotly_chart(sankey_fig, use_container_width=True)
+                
+                elif viz_type == "3D Dependency Network":
+                    # Create 3D network visualization
+                    st.markdown("### 3D Module Dependency Network")
+                    st.markdown("""
+                    This 3D visualization provides a spatial view of module dependencies.
+                    You can rotate and zoom to explore the dependency structure from different angles.
+                    """)
+                    
+                    graph_3d_fig = wv.create_3d_dependency_graph(graph_data)
+                    st.plotly_chart(graph_3d_fig, use_container_width=True)
+                
+                elif viz_type == "Dependency Matrix":
+                    # Create dependency matrix visualization
+                    st.markdown("### Module Dependency Matrix")
+                    st.markdown("""
+                    This matrix visualization shows which modules depend on each other.
+                    Cells are colored based on the strength of the dependency.
+                    """)
+                    
+                    # Extract data for adjacency matrix
+                    nodes = graph_data.get('graph', {}).get('nodes', [])
+                    edges = graph_data.get('graph', {}).get('edges', [])
+                    
+                    if nodes and edges:
+                        # Create node lookup
+                        node_ids = [os.path.basename(node['id']) for node in nodes[:15]]  # Limit to 15 nodes for readability
+                        node_lookup = {node['id']: os.path.basename(node['id']) for node in nodes}
+                        
+                        # Build adjacency matrix
+                        import numpy as np
+                        matrix = np.zeros((len(node_ids), len(node_ids)))
+                        
+                        # Create index lookup
+                        index_lookup = {name: i for i, name in enumerate(node_ids)}
+                        
+                        # Fill matrix
+                        for edge in edges:
+                            source = edge['source']
+                            target = edge['target']
+                            
+                            if source in node_lookup and target in node_lookup:
+                                source_name = node_lookup[source]
+                                target_name = node_lookup[target]
+                                
+                                if source_name in index_lookup and target_name in index_lookup:
+                                    i = index_lookup[source_name]
+                                    j = index_lookup[target_name]
+                                    matrix[i][j] = edge.get('weight', 1)
+                        
+                        # Create heatmap
+                        import plotly.graph_objects as go
+                        matrix_fig = go.Figure(data=go.Heatmap(
+                            z=matrix,
+                            x=node_ids,
+                            y=node_ids,
+                            colorscale='Blues',
+                            hoverinfo='text',
+                            text=[[f"{node_ids[i]} → {node_ids[j]}" if matrix[i][j] > 0 else "" for j in range(len(node_ids))] for i in range(len(node_ids))]
+                        ))
+                        
+                        matrix_fig.update_layout(
+                            title="Module Dependency Matrix",
+                            xaxis_title="Depends on",
+                            yaxis_title="Dependent by",
+                            width=700,
+                            height=700
+                        )
+                        
+                        st.plotly_chart(matrix_fig, use_container_width=True)
+                    else:
+                        st.info("Not enough dependency data to create a matrix visualization.")
             
             with viz_tabs[3]:  # Microservice Architecture
                 # Display microservice architecture analysis
