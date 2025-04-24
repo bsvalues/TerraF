@@ -2357,6 +2357,39 @@ def register_all_agents():
     except ImportError:
         logger.warning("Database Migration Agent not available")
         has_db_migration_agent = False
+        
+    # Integration and Testing Agents
+    try:
+        # Import the integration test agent
+        from integration_test_agent import IntegrationTestAgent
+        integration_test_agent = IntegrationTestAgent()
+        integration_test_agent.start()
+        has_integration_test_agent = True
+    except ImportError:
+        logger.warning("Integration Test Agent not available")
+        has_integration_test_agent = False
+    
+    # Documentation Agents
+    try:
+        # Import the documentation agent
+        from documentation_agent import TechnicalDocumentationAgent
+        tech_doc_agent = TechnicalDocumentationAgent()
+        tech_doc_agent.start()
+        has_tech_doc_agent = True
+    except ImportError:
+        logger.warning("Technical Documentation Agent not available")
+        has_tech_doc_agent = False
+        
+    # AI Integration Agents
+    try:
+        # Import the AI integration agent
+        from ai_integration_agent import AIIntegrationAgent
+        ai_integration_agent = AIIntegrationAgent()
+        ai_integration_agent.start()
+        has_ai_integration_agent = True
+    except ImportError:
+        logger.warning("AI Integration Agent not available")
+        has_ai_integration_agent = False
     
     # In a full implementation, we would register all specialized agents here
     
@@ -2373,6 +2406,18 @@ def register_all_agents():
     # Add database agents if available
     if has_db_migration_agent:
         agents["db_migration_agent"] = db_migration_agent
+        
+    # Add integration and testing agents if available
+    if has_integration_test_agent:
+        agents["integration_test_agent"] = integration_test_agent
+        
+    # Add documentation agents if available
+    if has_tech_doc_agent:
+        agents["tech_doc_agent"] = tech_doc_agent
+        
+    # Add AI integration agents if available
+    if has_ai_integration_agent:
+        agents["ai_integration_agent"] = ai_integration_agent
     
     return agents
 
