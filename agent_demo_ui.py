@@ -37,11 +37,13 @@ except ImportError:
 
 # Import pattern recognition UI module
 try:
-    from pattern_recognition_ui import render_pattern_recognition_tab, add_pattern_recognition_tab
+    from pattern_recognition_ui import render_pattern_recognition_tab, add_pattern_recognition_tab, add_integrated_analysis_tab, render_integrated_analysis_tab
     PATTERN_RECOGNITION_AVAILABLE = True
+    INTEGRATED_ANALYSIS_AVAILABLE = True
 except ImportError as e:
     logger.error(f"Pattern recognition UI not available: {str(e)}")
     PATTERN_RECOGNITION_AVAILABLE = False
+    INTEGRATED_ANALYSIS_AVAILABLE = False
 
 # Set page configuration
 st.set_page_config(
@@ -1968,7 +1970,7 @@ def main():
     st.sidebar.title("Agent Demo UI")
     
     # Add sidebar navigation
-    sidebar_options = ["Agent Dashboard", "Task History", "Workflow Optimizer", "Domain Knowledge", "Pattern Recognition"]
+    sidebar_options = ["Agent Dashboard", "Task History", "Workflow Optimizer", "Domain Knowledge", "Pattern Recognition", "Integrated Analysis"]
     selected_view = st.sidebar.radio("Navigation", sidebar_options)
     
     # Display main content
@@ -1999,6 +2001,14 @@ def main():
             render_pattern_recognition_tab()
         else:
             st.error("Pattern Recognition functionality is not available. Please check the installation.")
+    elif selected_view == "Integrated Analysis":
+        if INTEGRATED_ANALYSIS_AVAILABLE:
+            # Set the repo path to the current directory for the integrated analysis
+            if 'repo_path' not in st.session_state:
+                st.session_state.repo_path = os.getcwd()
+            render_integrated_analysis_tab()
+        else:
+            st.error("Integrated Analysis functionality is not available. Please check the installation.")
 
 if __name__ == "__main__":
     main()

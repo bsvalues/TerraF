@@ -654,3 +654,238 @@ def display_code_anomalies():
 def add_pattern_recognition_tab():
     """Add the pattern recognition tab to the main UI"""
     return render_pattern_recognition_tab
+
+def add_integrated_analysis_tab():
+    """Add the integrated analysis tab to the main UI"""
+    return render_integrated_analysis_tab
+
+def render_integrated_analysis_tab():
+    """Render the integrated analysis tab with workflow and pattern integration"""
+    # Import integrated analysis module
+    try:
+        from workflow_pattern_integration import (
+            WorkflowPatternIntegration, 
+            get_integrated_analysis,
+            get_enhanced_workflow_recommendations,
+            analyze_critical_paths_with_patterns
+        )
+        INTEGRATION_AVAILABLE = True
+    except ImportError as e:
+        logger.error(f"Workflow pattern integration not available: {str(e)}")
+        INTEGRATION_AVAILABLE = False
+    
+    st.header("🔄 Integrated Pattern & Workflow Analysis")
+    st.markdown("""
+    This advanced analysis integrates machine learning pattern recognition with workflow mapping
+    to provide deeper insights and more targeted optimization recommendations.
+    """)
+    
+    # Check if repository is available
+    if not st.session_state.get('repo_path'):
+        st.info("Please analyze a repository first to use the Integrated Analysis tool.")
+        return
+    
+    # Check if integration module is available
+    if not INTEGRATION_AVAILABLE:
+        st.error("Workflow-Pattern Integration module is not available. Please check the installation.")
+        return
+    
+    # Initialize session state for integrated analysis
+    if 'integrated_analysis_results' not in st.session_state:
+        st.session_state.integrated_analysis_results = None
+    
+    if 'enhanced_workflow_recommendations' not in st.session_state:
+        st.session_state.enhanced_workflow_recommendations = None
+    
+    if 'critical_paths_analysis' not in st.session_state:
+        st.session_state.critical_paths_analysis = None
+    
+    # Repository path
+    repo_path = st.session_state.repo_path
+    
+    # Analysis options
+    st.subheader("Integrated Analysis Options")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("Run Integrated Analysis", type="primary"):
+            with st.spinner("Running integrated pattern and workflow analysis..."):
+                try:
+                    results = get_integrated_analysis(repo_path)
+                    st.session_state.integrated_analysis_results = results
+                    st.success("Integrated analysis completed")
+                except Exception as e:
+                    st.error(f"Error running integrated analysis: {str(e)}")
+                    logger.error(f"Integrated analysis error: {str(e)}")
+    
+    with col2:
+        if st.button("Generate Enhanced Recommendations"):
+            with st.spinner("Generating enhanced recommendations..."):
+                try:
+                    recommendations = get_enhanced_workflow_recommendations(repo_path)
+                    st.session_state.enhanced_workflow_recommendations = recommendations
+                    st.success("Recommendations generated")
+                except Exception as e:
+                    st.error(f"Error generating recommendations: {str(e)}")
+                    logger.error(f"Recommendations error: {str(e)}")
+    
+    with col3:
+        if st.button("Analyze Critical Paths"):
+            with st.spinner("Analyzing critical paths with pattern correlation..."):
+                try:
+                    critical_paths = analyze_critical_paths_with_patterns(repo_path)
+                    st.session_state.critical_paths_analysis = critical_paths
+                    st.success("Critical path analysis completed")
+                except Exception as e:
+                    st.error(f"Error analyzing critical paths: {str(e)}")
+                    logger.error(f"Critical path analysis error: {str(e)}")
+    
+    # Display results if available
+    if st.session_state.integrated_analysis_results:
+        display_integrated_analysis_results()
+    
+    if st.session_state.enhanced_workflow_recommendations:
+        display_enhanced_recommendations()
+    
+    if st.session_state.critical_paths_analysis:
+        display_critical_paths_analysis()
+
+def display_integrated_analysis_results():
+    """Display the results of the integrated analysis"""
+    st.subheader("Integrated Analysis Results")
+    
+    results = st.session_state.integrated_analysis_results
+    
+    # Show integrated recommendations
+    recommendations = results.get('integrated_recommendations', [])
+    if recommendations:
+        st.markdown("### 🔍 Key Optimization Opportunities")
+        
+        for i, recommendation in enumerate(recommendations):
+            with st.expander(f"Recommendation {i+1}: {recommendation.get('workflow_component', 'Component')}"):
+                st.markdown(f"**Recommendation:** {recommendation.get('recommendation', '')}")
+                
+                st.markdown("**File:** " + recommendation.get('file', 'N/A'))
+                st.markdown("**Function:** " + recommendation.get('function', 'N/A'))
+                st.markdown("**Performance Impact:** " + recommendation.get('performance_impact', 'Medium'))
+                
+                st.markdown("#### Related Patterns:")
+                for pattern in recommendation.get('related_patterns', []):
+                    severity_color = "orange"
+                    if pattern.get('severity') == 'high':
+                        severity_color = "red"
+                    elif pattern.get('severity') == 'low':
+                        severity_color = "blue"
+                    elif pattern.get('severity') == 'positive':
+                        severity_color = "green"
+                    
+                    st.markdown(f"<span style='color:{severity_color}'>●</span> **{pattern.get('pattern_name')}**: {pattern.get('pattern_description')}", unsafe_allow_html=True)
+    else:
+        st.info("No integrated recommendations found. This could be because there are no significant correlations between workflow bottlenecks and code patterns.")
+    
+    # Show refactoring opportunities
+    refactoring = [r for r in recommendations if r.get('type') == 'refactoring']
+    if refactoring:
+        st.markdown("### 🔄 Refactoring Opportunities")
+        
+        for i, recommendation in enumerate(refactoring):
+            with st.expander(f"Refactoring {i+1}: Cluster {recommendation.get('cluster_id', '')}"):
+                st.markdown(f"**Recommendation:** {recommendation.get('recommendation', '')}")
+                
+                st.markdown(f"**File Count:** {recommendation.get('file_count', 0)}")
+                
+                st.markdown("**Sample Files:**")
+                for file in recommendation.get('files', []):
+                    st.markdown(f"- `{file}`")
+
+def display_enhanced_recommendations():
+    """Display enhanced workflow recommendations"""
+    st.subheader("Enhanced Workflow Recommendations")
+    
+    recommendations = st.session_state.enhanced_workflow_recommendations
+    
+    if not recommendations:
+        st.info("No enhanced workflow recommendations available.")
+        return
+    
+    for i, recommendation in enumerate(recommendations):
+        with st.expander(f"Recommendation {i+1}: {recommendation.get('name', 'Optimization')}"):
+            st.markdown(f"**Description:** {recommendation.get('description', '')}")
+            
+            st.markdown("**Details:**")
+            st.markdown(f"- **File:** {recommendation.get('file', 'N/A')}")
+            st.markdown(f"- **Priority:** {recommendation.get('priority', 'Medium')}")
+            st.markdown(f"- **Effort:** {recommendation.get('effort', 'Medium')}")
+            
+            # Show related patterns if available
+            related_patterns = recommendation.get('related_patterns', [])
+            if related_patterns:
+                st.markdown("#### Related Code Patterns:")
+                for pattern in related_patterns:
+                    st.markdown(f"- **{pattern.get('pattern_name')}** ({pattern.get('pattern_type')}): {pattern.get('pattern_description')}")
+
+def display_critical_paths_analysis():
+    """Display critical paths analysis with pattern correlation"""
+    st.subheader("Critical Paths with Pattern Analysis")
+    
+    analysis = st.session_state.critical_paths_analysis
+    
+    if not analysis or 'error' in analysis:
+        st.info("No critical path analysis available or an error occurred.")
+        if 'error' in analysis:
+            st.error(f"Error: {analysis['error']}")
+        return
+    
+    critical_paths = analysis.get('critical_paths', [])
+    if not critical_paths:
+        st.info("No critical paths identified in the workflow.")
+        return
+    
+    st.markdown("### 🛑 Critical Path Analysis")
+    st.markdown("""
+    Critical paths represent the workflow sequences that determine the overall execution time.
+    Optimizing these paths will have the most significant impact on performance.
+    """)
+    
+    for i, path in enumerate(critical_paths):
+        with st.expander(f"Critical Path {i+1}: {path.get('name', f'Path {i+1}')}"):
+            st.markdown(f"**Path Length:** {len(path.get('nodes', []))} nodes")
+            
+            # Draw a simple visualization of the path
+            dot_color = "red"
+            path_html = ""
+            
+            for j, node in enumerate(path.get('nodes', [])):
+                node_name = node.get('name', f'Node {j+1}')
+                
+                # Check if node has pattern issues
+                has_issues = 'pattern_issues' in node and node['pattern_issues']
+                node_color = "red" if has_issues else "gray"
+                
+                # Add node to path
+                path_html += f'<span style="color:{node_color};">●</span> {node_name}'
+                
+                # Add connector if not the last node
+                if j < len(path.get('nodes', [])) - 1:
+                    path_html += ' <span style="color:gray;">→</span> '
+            
+            st.markdown(f"<div style='background-color:#f0f0f0; padding:10px; border-radius:5px;'>{path_html}</div>", unsafe_allow_html=True)
+            
+            # Show nodes with pattern issues
+            nodes_with_issues = [n for n in path.get('nodes', []) if 'pattern_issues' in n and n['pattern_issues']]
+            
+            if nodes_with_issues:
+                st.markdown("#### Nodes with Performance Issues:")
+                
+                for node in nodes_with_issues:
+                    st.markdown(f"**{node.get('name', 'Node')}** ({node.get('file', 'Unknown file')})")
+                    
+                    for issue in node.get('pattern_issues', []):
+                        severity_color = "orange"
+                        if issue.get('severity') == 'high':
+                            severity_color = "red"
+                        elif issue.get('severity') == 'low':
+                            severity_color = "blue"
+                        
+                        st.markdown(f"<span style='color:{severity_color}'>●</span> {issue.get('pattern_name')}: {issue.get('pattern_description')}", unsafe_allow_html=True)
