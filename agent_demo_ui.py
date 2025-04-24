@@ -9,6 +9,7 @@ import streamlit as st
 import json
 import os
 import time
+import datetime
 import random
 from typing import Dict, List, Any, Optional
 
@@ -1695,6 +1696,214 @@ def display_task_result(agent_key: str, task: str, result: Dict[str, Any]):
                 st.subheader("Additional Parameters")
                 for param, value in display_result["additional_parameters"].items():
                     st.markdown(f"- `{param}`: {value}")
+    
+    elif agent_key == "sync_service_agent":
+        if task == "Detect changes":
+            st.subheader("Detected Changes")
+            
+            # Show summary counts
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total Changes", display_result.get("total_changes", 0))
+            
+            change_counts = display_result.get("change_counts", {})
+            col2.metric("Inserts", change_counts.get("insert", 0))
+            col3.metric("Updates", change_counts.get("update", 0))
+            col4.metric("Deletes", change_counts.get("delete", 0))
+            
+            # Show details of changes
+            if "detected_changes" in display_result:
+                st.subheader("Change Details")
+                for change in display_result["detected_changes"]:
+                    with st.expander(f"{change.get('change_type', 'unknown').upper()} - {change.get('source_table', 'unknown')} (ID: {change.get('record_id', 'unknown')})"):
+                        st.write(f"**Record ID:** {change.get('record_id', 'unknown')}")
+                        st.write(f"**Source Table:** {change.get('source_table', 'unknown')}")
+                        st.write(f"**Change Type:** {change.get('change_type', 'unknown')}")
+                        st.write(f"**Timestamp:** {change.get('timestamp', 'unknown')}")
+                        
+                        if "fields_changed" in change:
+                            st.write("**Fields Changed:**")
+                            for field in change["fields_changed"]:
+                                st.markdown(f"- {field}")
+                                
+        elif task == "Transform data":
+            st.subheader("Transformation Results")
+            
+            # Show transformation summary
+            if "transformation_result" in display_result:
+                result = display_result["transformation_result"]
+                st.metric("Records Transformed", result.get("records_transformed", 0))
+                
+                # Show mapping rules
+                if "transformation_map" in result:
+                    st.subheader("Transformation Mapping")
+                    mapping_data = [[src, "→", tgt] for src, tgt in result["transformation_map"].items()]
+                    st.table({"Source Field": [m[0] for m in mapping_data], 
+                             "": [m[1] for m in mapping_data],
+                             "Target Field": [m[2] for m in mapping_data]})
+                
+                # Show enrichments
+                if "enrichments_applied" in result:
+                    st.subheader("Enrichments Applied")
+                    for enrichment in result["enrichments_applied"]:
+                        st.markdown(f"- {enrichment}")
+            
+            # Show sample transformation
+            if "sample_transformed_record" in display_result:
+                sample = display_result["sample_transformed_record"]
+                
+                st.subheader("Sample Transformation")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("**Original Record**")
+                    st.json(sample.get("original", {}))
+                
+                with col2:
+                    st.markdown("**Transformed Record**")
+                    st.json(sample.get("transformed", {}))
+                    
+        elif task == "Validate data":
+            st.subheader("Validation Results")
+            
+            # Show validation summary
+            if "validation_result" in display_result:
+                result = display_result["validation_result"]
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Records Validated", result.get("records_validated", 0))
+                col2.metric("Valid Records", result.get("records_valid", 0))
+                col3.metric("Invalid Records", result.get("records_invalid", 0))
+                
+                if "data_quality_score" in display_result:
+                    score = display_result["data_quality_score"]
+                    st.metric("Data Quality Score", f"{score:.2f}" if isinstance(score, (int, float)) else score)
+                
+                # Show validation rules
+                if "validation_rules" in result:
+                    st.subheader("Validation Rules Applied")
+                    for rule in result["validation_rules"]:
+                        st.markdown(f"- {rule}")
+            
+            # Show validation issues
+            if "validation_issues" in display_result:
+                st.subheader("Validation Issues")
+                for issue in display_result["validation_issues"]:
+                    with st.expander(f"{issue.get('severity', 'unknown').upper()}: {issue.get('issue', 'Unknown issue')}"):
+                        st.write(f"**Record ID:** {issue.get('record_id', 'unknown')}")
+                        st.write(f"**Field:** {issue.get('field', 'unknown')}")
+                        st.write(f"**Issue:** {issue.get('issue', 'unknown')}")
+                        st.write(f"**Severity:** {issue.get('severity', 'unknown')}")
+                        
+                        if "recommended_fix" in issue:
+                            st.write(f"**Recommended Fix:** {issue['recommended_fix']}")
+                            
+        elif task == "Perform sync":
+            st.subheader("Sync Results")
+            
+            # Show sync summary
+            if "sync_result" in display_result:
+                result = display_result["sync_result"]
+                
+                # Display sync type and success status
+                st.write(f"**Sync Type:** {result.get('sync_type', 'unknown')}")
+                
+                if result.get("success", False):
+                    st.success("Sync completed successfully")
+                else:
+                    st.error("Sync failed")
+                
+                # Display metrics
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Records Processed", result.get("records_processed", 0))
+                col2.metric("Records Succeeded", result.get("records_succeeded", 0))
+                col3.metric("Records Failed", result.get("records_failed", 0))
+                
+                # Display timing information
+                st.subheader("Timing")
+                st.write(f"**Start Time:** {result.get('start_time', 'unknown')}")
+                st.write(f"**End Time:** {result.get('end_time', 'unknown')}")
+                st.write(f"**Duration:** {result.get('duration_seconds', 0)} seconds")
+                
+                # Display affected tables
+                if "tables_affected" in result:
+                    st.subheader("Tables Affected")
+                    for table in result["tables_affected"]:
+                        st.markdown(f"- {table}")
+            
+            # Show sync details
+            if "sync_details" in display_result:
+                details = display_result["sync_details"]
+                
+                st.subheader("Sync Details")
+                
+                # Display operation counts
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Inserts", details.get("inserts", 0))
+                col2.metric("Updates", details.get("updates", 0))
+                col3.metric("Deletes", details.get("deletes", 0))
+                
+                # Display system metrics
+                if "system_metrics" in details:
+                    st.subheader("System Metrics")
+                    metrics = details["system_metrics"]
+                    for name, value in metrics.items():
+                        st.metric(name.replace("_", " ").title(), value)
+                        
+        elif task == "Monitor sync status":
+            st.subheader("Sync Status Monitor")
+            
+            # Overall status
+            status = display_result.get("overall_status", "unknown")
+            if status.lower() == "healthy":
+                st.success(f"Overall Status: {status}")
+            elif status.lower() in ["warning", "degraded"]:
+                st.warning(f"Overall Status: {status}")
+            else:
+                st.error(f"Overall Status: {status}")
+            
+            # System health details
+            if "system_health" in display_result:
+                health = display_result["system_health"]
+                
+                st.subheader("System Health")
+                col1, col2 = st.columns(2)
+                
+                col1.write(f"**PACS Connection:** {health.get('pacs_connection', 'unknown')}")
+                col1.write(f"**CAMA Connection:** {health.get('cama_connection', 'unknown')}")
+                
+                col2.write(f"**Processor Status:** {health.get('processor_status', 'unknown')}")
+                col2.write(f"**Queue Depth:** {health.get('queue_depth', 'unknown')}")
+            
+            # Next scheduled sync
+            if "next_scheduled_sync" in display_result:
+                st.subheader("Schedule")
+                st.write(f"**Next Scheduled Sync:** {display_result['next_scheduled_sync']}")
+            
+            # Sync history
+            if "sync_history" in display_result:
+                st.subheader("Sync History")
+                
+                # Create a table for sync history
+                history_data = []
+                for sync in display_result["sync_history"]:
+                    history_data.append({
+                        "Sync ID": sync.get("sync_id", "unknown"),
+                        "Type": sync.get("sync_type", "unknown"),
+                        "Start Time": sync.get("start_time", "unknown"),
+                        "Duration (s)": sync.get("duration_seconds", "unknown"),
+                        "Records": sync.get("records_processed", 0),
+                        "Status": "✅" if sync.get("success", False) else "❌"
+                    })
+                
+                # Construct a markdown table
+                if history_data:
+                    table_md = "| Sync ID | Type | Start Time | Duration (s) | Records | Status |\n"
+                    table_md += "|---------|------|------------|-------------|---------|--------|\n"
+                    
+                    for entry in history_data:
+                        table_md += f"| {entry['Sync ID']} | {entry['Type']} | {entry['Start Time']} | {entry['Duration (s)']} | {entry['Records']} | {entry['Status']} |\n"
+                    
+                    st.markdown(table_md)
     
     else:
         # Generic JSON display for other results
