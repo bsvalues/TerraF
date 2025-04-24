@@ -901,7 +901,7 @@ def render_domain_expert_tab():
     }
     
     # Model selection
-    st.markdown("### Select AI Model (Optional)")
+    st.markdown("### Select AI Model(s)")
     
     # Get available models
     available_models = []
@@ -920,26 +920,55 @@ def render_domain_expert_tab():
         "Google": [m for m in available_models if "gemini" in m.lower()]
     }
     
-    # Create model selection UI
-    col1, col2 = st.columns(2)
+    # Add mode selection (single model or comparison)
+    model_mode = st.radio(
+        "Model Selection Mode",
+        ["Single Model", "Compare Models"],
+        help="Select a single model or compare multiple models"
+    )
     
-    with col1:
-        model_provider = st.selectbox(
-            "Model Provider", 
-            ["Auto-select (Recommended)"] + list(model_groups.keys()),
-            help="Select a model provider or let the system choose the best model for your domain"
-        )
-    
-    with col2:
-        if model_provider == "Auto-select (Recommended)":
-            selected_model = None
-        else:
-            provider_models = model_groups.get(model_provider, [])
-            if provider_models:
-                selected_model = st.selectbox("Specific Model", provider_models)
-            else:
-                st.info(f"No {model_provider} models available. Using default.")
+    if model_mode == "Single Model":
+        # Create model selection UI for single model
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            model_provider = st.selectbox(
+                "Model Provider", 
+                ["Auto-select (Recommended)"] + list(model_groups.keys()),
+                help="Select a model provider or let the system choose the best model for your domain"
+            )
+        
+        with col2:
+            if model_provider == "Auto-select (Recommended)":
                 selected_model = None
+            else:
+                provider_models = model_groups.get(model_provider, [])
+                if provider_models:
+                    selected_model = st.selectbox("Specific Model", provider_models)
+                else:
+                    st.info(f"No {model_provider} models available. Using default.")
+                    selected_model = None
+        
+        # Set comparison models to None
+        comparison_models = None
+    else:
+        # Create UI for model comparison
+        st.write("Select models to compare:")
+        
+        # Get one representative model from each available provider
+        comparison_models = []
+        
+        # Create checkboxes for each provider's recommended model
+        cols = st.columns(len(model_groups))
+        for i, (provider, models) in enumerate(model_groups.items()):
+            if models:  # Only show providers with available models
+                with cols[i % len(cols)]:
+                    # Get the first/best model for this provider
+                    provider_model = models[0]
+                    if st.checkbox(f"{provider}", value=(i < 2), key=f"compare_{provider}"):
+                        comparison_models.append(provider_model)
+        
+        selected_model = None  # Not used in comparison mode
     
     # Question input
     st.markdown("### Ask a Question")
@@ -1016,12 +1045,17 @@ def render_domain_expert_tab():
                 "type": "query_domain_knowledge",
                 "query": question,
                 "domain": domain_map[selected_domain],
-                "model": selected_model,
                 "context": {
                     "user_expertise": "novice",
                     "query_type": "informational"
                 }
             }
+            
+            # Add model selection based on the mode
+            if model_mode == "Single Model":
+                task["model"] = selected_model
+            else:
+                task["comparison_models"] = comparison_models
             
             result = st.session_state.domain_agent._execute_task(task)
             
@@ -1034,22 +1068,88 @@ def render_domain_expert_tab():
     if st.session_state.expert_response:
         result = st.session_state.expert_response
         
-        st.markdown("### Expert Response")
-        
-        # Create a clean, card-like container for the response
-        st.markdown(f"""
-        <div style="background-color: #F8F8F8; padding: 20px; border-radius: 10px; margin: 20px 0;">
-            <h4 style="margin: 0 0 15px 0; color: #2C6E9B;">Response to your question:</h4>
-            <p style="margin: 0; white-space: pre-line;">{result['response']}</p>
-            <p style="margin: 10px 0 0 0; font-style: italic; font-size: 0.8em; color: #666;">
-                Source: {result.get('source', 'Domain Knowledge Model')} 
-                ({result.get('provider', 'AI')})
-            </p>
-            <p style="margin: 5px 0 0 0; font-style: italic; font-size: 0.7em; color: #888;">
-                Response time: {result.get('latency', 0):.2f}s | Generated: {result.get('timestamp', '')}
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+        # Check if this is a model comparison result
+        if result.get('model_comparison'):
+            st.markdown("### Model Comparison Results")
+            
+            comparison_results = result.get('comparison_results', {})
+            if comparison_results:
+                # Create tabs for each model
+                model_names = list(comparison_results.keys())
+                model_tabs = st.tabs(model_names)
+                
+                # Show results for each model in a tab
+                for i, model_name in enumerate(model_names):
+                    with model_tabs[i]:
+                        model_result = comparison_results[model_name]
+                        
+                        # Get model provider for display
+                        provider = "AI"
+                        if "gpt" in model_name.lower():
+                            provider = "OpenAI"
+                        elif "claude" in model_name.lower():
+                            provider = "Anthropic"
+                        elif "gemini" in model_name.lower():
+                            provider = "Google"
+                        elif "perplexity" in model_name.lower():
+                            provider = "Perplexity"
+                        elif "deepseek" in model_name.lower():
+                            provider = "DeepSeek"
+                        
+                        st.markdown(f"""
+                        <div style="background-color: #F8F8F8; padding: 20px; border-radius: 10px; margin: 20px 0;">
+                            <h4 style="margin: 0 0 15px 0; color: #2C6E9B;">{model_name} ({provider})</h4>
+                            <p style="margin: 0; white-space: pre-line;">{model_result.get('text', 'No response generated')}</p>
+                            <p style="margin: 5px 0 0 0; font-style: italic; font-size: 0.7em; color: #888;">
+                                Response time: {model_result.get('latency', 0):.2f}s
+                            </p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                
+                # Add model comparison analysis
+                st.markdown("### Model Response Analysis")
+                st.info("""
+                Compare the model responses to see differences in:
+                - Answer depth and specificity
+                - Technical accuracy
+                - Explanation clarity
+                - Response style
+                """)
+                
+                # Provide metrics if available
+                metrics_cols = st.columns(len(model_names))
+                for i, model_name in enumerate(model_names):
+                    with metrics_cols[i]:
+                        model_result = comparison_results[model_name]
+                        latency = model_result.get('latency', 0)
+                        token_count = model_result.get('token_count', 0)
+                        st.metric(
+                            label=f"{model_name}", 
+                            value=f"{latency:.2f}s",
+                            delta=f"{token_count} tokens" if token_count else None,
+                            delta_color="off"
+                        )
+                
+            else:
+                st.warning("No comparison results available")
+        else:
+            # Standard single model response
+            st.markdown("### Expert Response")
+            
+            # Create a clean, card-like container for the response
+            st.markdown(f"""
+            <div style="background-color: #F8F8F8; padding: 20px; border-radius: 10px; margin: 20px 0;">
+                <h4 style="margin: 0 0 15px 0; color: #2C6E9B;">Response to your question:</h4>
+                <p style="margin: 0; white-space: pre-line;">{result['response']}</p>
+                <p style="margin: 10px 0 0 0; font-style: italic; font-size: 0.8em; color: #666;">
+                    Source: {result.get('source', 'Domain Knowledge Model')} 
+                    ({result.get('provider', 'AI')})
+                </p>
+                <p style="margin: 5px 0 0 0; font-style: italic; font-size: 0.7em; color: #888;">
+                    Response time: {result.get('latency', 0):.2f}s | Generated: {result.get('timestamp', '')}
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
         
         # Add model comparison option
         if 'domain_agent' in st.session_state and hasattr(st.session_state.domain_agent, 'model_interface'):

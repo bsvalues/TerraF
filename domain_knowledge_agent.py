@@ -594,6 +594,8 @@ class DomainKnowledgeAgent(Agent):
         domain = task.get("domain", "general")
         context = task.get("context", {})
         model_preference = task.get("model", None)
+        # Check if we're comparing models
+        comparison_models = task.get("comparison_models", None)
         
         try:
             # Use the multi-model interface to get specialized knowledge
@@ -604,45 +606,67 @@ class DomainKnowledgeAgent(Agent):
                         context["domain_knowledge"] = {}
                     context["domain_knowledge"] = self.knowledge_bases[domain]
                 
-                # Select the best model for the domain if not specified
-                model_to_use = model_preference
-                if not model_to_use:
-                    # Choose appropriate model based on domain
-                    if domain in ["tax_assessment", "appraisal"]:
-                        model_candidates = ["claude-3-5-sonnet-20241022", "gpt-4o", "gemini-pro"]
-                    elif domain in ["gis", "database"]:
-                        model_candidates = ["gpt-4o", "deepseek-coder", "claude-3-5-sonnet-20241022"]
-                    elif domain in ["real_estate", "local_market"]:
-                        model_candidates = ["perplexity-online-llama-3", "claude-3-5-sonnet-20241022", "gpt-4o"]
-                    else:
-                        model_candidates = ["gpt-4o", "claude-3-5-sonnet-20241022"]
+                # Check if we're comparing models
+                if comparison_models:
+                    # Use multiple models comparison mode
+                    self.logger.info(f"Comparing models: {comparison_models}")
+                    comparison_results = self.model_interface.analyze_with_multiple_models(
+                        prompt=query,
+                        system_message=self._get_domain_system_message(domain),
+                        models=comparison_models,
+                        max_tokens=1000,
+                        temperature=0.3
+                    )
                     
-                    # Select first available model from candidates
-                    available_models = self.model_interface.get_available_models()
-                    for model in model_candidates:
-                        if model in available_models:
-                            model_to_use = model
-                            break
-                
-                # Get expert response
-                response_text, metadata = self.model_interface.get_domain_expert_response(
-                    query=query,
-                    domain=domain,
-                    context=context,
-                    model=model_to_use
-                )
-                
-                # Return the response with metadata
-                return {
-                    "status": "success",
-                    "query": query,
-                    "domain": domain,
-                    "response": response_text,
-                    "source": metadata.get("model", "enhanced_knowledge_model"),
-                    "provider": metadata.get("provider", "unknown"),
-                    "latency": metadata.get("latency", 0),
-                    "timestamp": metadata.get("timestamp", datetime.datetime.now().isoformat())
-                }
+                    return {
+                        "status": "success",
+                        "query": query,
+                        "domain": domain,
+                        "comparison_results": comparison_results,
+                        "model_comparison": True,
+                        "timestamp": datetime.datetime.now().isoformat()
+                    }
+                else:
+                    # Single model mode
+                    # Select the best model for the domain if not specified
+                    model_to_use = model_preference
+                    if not model_to_use:
+                        # Choose appropriate model based on domain
+                        if domain in ["tax_assessment", "appraisal"]:
+                            model_candidates = ["claude-3-5-sonnet-20241022", "gpt-4o", "gemini-pro"]
+                        elif domain in ["gis", "database"]:
+                            model_candidates = ["gpt-4o", "deepseek-coder", "claude-3-5-sonnet-20241022"]
+                        elif domain in ["real_estate", "local_market"]:
+                            model_candidates = ["claude-3-5-sonnet-20241022", "gpt-4o", "gemini-pro"]
+                        else:
+                            model_candidates = ["gpt-4o", "claude-3-5-sonnet-20241022"]
+                        
+                        # Select first available model from candidates
+                        available_models = self.model_interface.get_available_models()
+                        for model in model_candidates:
+                            if model in available_models:
+                                model_to_use = model
+                                break
+                    
+                    # Get expert response
+                    response_text, metadata = self.model_interface.get_domain_expert_response(
+                        query=query,
+                        domain=domain,
+                        context=context,
+                        model=model_to_use
+                    )
+                    
+                    # Return the response with metadata
+                    return {
+                        "status": "success",
+                        "query": query,
+                        "domain": domain,
+                        "response": response_text,
+                        "source": metadata.get("model", "enhanced_knowledge_model"),
+                        "provider": metadata.get("provider", "unknown"),
+                        "latency": metadata.get("latency", 0),
+                        "timestamp": metadata.get("timestamp", datetime.datetime.now().isoformat())
+                    }
             else:
                 # Fallback to basic knowledge base retrieval
                 if domain in self.knowledge_bases:
@@ -666,3 +690,36 @@ class DomainKnowledgeAgent(Agent):
                 "message": f"Domain knowledge query failed: {str(e)}",
                 "query": query
             }
+    
+    def _get_domain_system_message(self, domain: str) -> str:
+        """Get the domain-specific system message for prompting an AI model"""
+        if domain == "tax_assessment":
+            return """You are a professional property tax assessor with extensive knowledge of assessment methodologies, 
+            tax regulations, exemptions, and appeal processes. Your expertise includes market value, income, and cost approaches 
+            to value. Provide detailed, accurate responses that would help property owners understand their assessments."""
+        elif domain == "real_estate":
+            return """You are a real estate market expert with deep knowledge of property valuation, market trends, 
+            investment analysis, and market indicators. You understand both residential and commercial real estate dynamics, 
+            financing, and return metrics. Provide practical insights that would help investors and property owners make 
+            informed decisions."""
+        elif domain == "gis":
+            return """You are a Geographic Information Systems (GIS) specialist with expertise in spatial analysis, 
+            map layers, coordinate systems, and property-related GIS applications. You understand how location factors 
+            impact property values and how to analyze geographic data for real estate purposes. Provide technically 
+            accurate but accessible explanations."""
+        elif domain == "appraisal":
+            return """You are a licensed property appraiser with extensive experience in the sales comparison, 
+            income, and cost approaches to value. You understand adjustment factors, capitalization rates, depreciation, 
+            and valuation models. Provide professional insights that explain appraisal methodologies and considerations."""
+        elif domain == "local_market":
+            return """You are a local market analyst specializing in neighborhood-level factors that influence 
+            property values, including schools, crime, walkability, demographics, and economic indicators. You understand 
+            how these factors interact and their relative impact on different property types. Provide nuanced analysis 
+            of local market dynamics."""
+        elif domain == "database":
+            return """You are a database architect specializing in real estate and property assessment databases. 
+            You understand data modeling for property records, GIS integration, optimization techniques, and query patterns 
+            for property data. Provide expert guidance on database design, performance, and best practices."""
+        else:
+            return f"""You are a domain expert in {domain}. Provide accurate, helpful information 
+            based on your specialized knowledge. Be specific, practical, and focus on actionable insights."""
