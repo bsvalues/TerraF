@@ -499,7 +499,119 @@ def display_dependency_analysis_results():
                 # Check if we have optimization results
                 optimizer_results = st.session_state.get('optimizer_results')
                 if optimizer_results:
-                    # Display summary metrics
+                    # Add enhanced visualization options
+                    viz_options = st.radio(
+                        "Visualization Style",
+                        ["Interactive Dashboard", "Tree Map", "Detailed List"],
+                        horizontal=True,
+                        help="Select how to visualize the optimization recommendations"
+                    )
+                    
+                    if viz_options == "Tree Map":
+                        # Create enhanced treemap visualization
+                        st.markdown("### Optimization Recommendation Overview")
+                        st.markdown("""
+                        This treemap visualization shows recommendations grouped by impact level and category.
+                        The size of each cell represents the relative importance of the recommendation.
+                        """)
+                        
+                        try:
+                            # Generate treemap
+                            treemap_fig = wv.create_optimization_treemap(optimizer_results)
+                            st.plotly_chart(treemap_fig, use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Error generating treemap: {str(e)}")
+                        
+                    elif viz_options == "Interactive Dashboard":
+                        # Display a more comprehensive dashboard
+                        st.markdown("### Optimization Dashboard")
+                        
+                        # Show complexity metrics with enhanced visualization
+                        col1, col2 = st.columns([2, 1])
+                        
+                        with col1:
+                            try:
+                                # Complexity radar chart
+                                st.markdown("#### Module Complexity Comparison")
+                                radar_fig = wv.create_complexity_radar(optimizer_results)
+                                st.plotly_chart(radar_fig, use_container_width=True)
+                            except Exception as e:
+                                st.error(f"Error generating radar chart: {str(e)}")
+                        
+                        with col2:
+                            # Complexity metrics
+                            st.markdown("#### Complexity Metrics")
+                            complexity_metrics = optimizer_results.get('performance_metrics', {}).get('complexity', {})
+                            if complexity_metrics:
+                                st.metric("Average Complexity", f"{complexity_metrics.get('average_complexity', 0):.1f}")
+                                st.metric("Cyclomatic Complexity", complexity_metrics.get('cyclomatic_complexity', 0))
+                                st.metric("Connected Components", complexity_metrics.get('strongly_connected_components', 0))
+                                st.metric("Code Tangling", f"{complexity_metrics.get('average_tangling', 0):.2f}")
+                        
+                        # Recommendation distribution by type
+                        st.markdown("#### Recommendation Distribution")
+                        recommendations = optimizer_results.get('recommendations', [])
+                        
+                        if recommendations:
+                            # Count by category and impact
+                            try:
+                                import pandas as pd
+                                import plotly.express as px
+                                
+                                # Convert to dataframe for visualization
+                                rec_data = []
+                                for rec in recommendations:
+                                    rec_type = rec.get('type', 'unknown').replace('_', ' ').title()
+                                    impact = rec.get('impact', 'medium').lower()
+                                    rec_data.append({'Type': rec_type, 'Impact': impact.title()})
+                                
+                                rec_df = pd.DataFrame(rec_data)
+                                
+                                if not rec_df.empty:
+                                    category_col, impact_col = st.columns(2)
+                                    
+                                    with category_col:
+                                        # Category distribution
+                                        type_counts = rec_df['Type'].value_counts().reset_index()
+                                        type_counts.columns = ['Type', 'Count']
+                                        
+                                        # Create a bar chart
+                                        type_fig = px.bar(
+                                            type_counts, 
+                                            x='Type', 
+                                            y='Count',
+                                            title="Recommendations by Type",
+                                            color='Type'
+                                        )
+                                        type_fig.update_layout(xaxis_title="Type", yaxis_title="Count")
+                                        st.plotly_chart(type_fig, use_container_width=True)
+                                    
+                                    with impact_col:
+                                        # Impact distribution
+                                        impact_counts = rec_df['Impact'].value_counts().reset_index()
+                                        impact_counts.columns = ['Impact', 'Count']
+                                        
+                                        # Define custom color map for impact
+                                        impact_colors = {
+                                            'High': '#FF6347',     # Tomato
+                                            'Medium': '#FFA500',   # Orange
+                                            'Low': '#FFD700'       # Gold
+                                        }
+                                        
+                                        # Create a pie chart
+                                        impact_fig = px.pie(
+                                            impact_counts, 
+                                            values='Count', 
+                                            names='Impact',
+                                            title="Recommendations by Impact",
+                                            color='Impact',
+                                            color_discrete_map=impact_colors
+                                        )
+                                        st.plotly_chart(impact_fig, use_container_width=True)
+                            except Exception as e:
+                                st.error(f"Error generating recommendation distribution charts: {str(e)}")
+                    
+                    # Display summary metrics (always shown)
                     st.markdown("#### Workflow Complexity Overview")
                     
                     complexity_metrics = optimizer_results.get('performance_metrics', {}).get('complexity', {})
@@ -577,27 +689,62 @@ def display_dependency_analysis_results():
                                 title = f"{impact_icon} {type_icon} **{rec.get('description', 'Optimization Recommendation')}**"
                                 
                                 with st.expander(title, expanded=i==0):
-                                    st.markdown(f"**Type:** {rec.get('type', '').replace('_', ' ').title()}")
-                                    st.markdown(f"**Impact:** {rec.get('impact', 'Unknown').title()}")
-                                    st.markdown(f"**Urgency:** {rec.get('urgency', 'Unknown').title()}")
+                                    # Two-column layout for recommendation details
+                                    detail_col1, detail_col2 = st.columns([3, 1])
                                     
-                                    if 'details' in rec:
-                                        st.markdown(f"**Details:** {rec['details']}")
+                                    with detail_col1:
+                                        st.markdown(f"**Type:** {rec.get('type', '').replace('_', ' ').title()}")
+                                        st.markdown(f"**Impact:** {rec.get('impact', 'Unknown').title()}")
+                                        st.markdown(f"**Urgency:** {rec.get('urgency', 'Unknown').title()}")
+                                        
+                                        if 'details' in rec:
+                                            st.markdown(f"**Details:** {rec['details']}")
+                                        
+                                        if 'component' in rec and rec['component'] != 'all':
+                                            st.markdown(f"**Component:** `{rec['component']}`")
+                                        
+                                        if 'components' in rec:
+                                            components = rec['components']
+                                            if isinstance(components, list) and components:
+                                                st.markdown("**Affected Components:**")
+                                                for comp in components:
+                                                    st.markdown(f"- `{comp}`")
+                                        
+                                        if 'suggestions' in rec:
+                                            st.markdown("**Suggested Actions:**")
+                                            for suggestion in rec['suggestions']:
+                                                st.markdown(f"- {suggestion}")
                                     
-                                    if 'component' in rec and rec['component'] != 'all':
-                                        st.markdown(f"**Component:** `{rec['component']}`")
-                                    
-                                    if 'components' in rec:
-                                        components = rec['components']
-                                        if isinstance(components, list) and components:
-                                            st.markdown("**Affected Components:**")
-                                            for comp in components:
-                                                st.markdown(f"- `{comp}`")
-                                    
-                                    if 'suggestions' in rec:
-                                        st.markdown("**Suggested Actions:**")
-                                        for suggestion in rec['suggestions']:
-                                            st.markdown(f"- {suggestion}")
+                                    with detail_col2:
+                                        # Visual representation of impact
+                                        impact_level = rec.get('impact', 'medium').lower()
+                                        impact_color = {
+                                            'high': 'red',
+                                            'medium': 'orange',
+                                            'low': 'yellow'
+                                        }.get(impact_level, 'gray')
+                                        
+                                        st.markdown(f"""
+                                        <div style="
+                                            height: 100px;
+                                            background: linear-gradient(to top, {impact_color}, white);
+                                            border-radius: 5px;
+                                            text-align: center;
+                                            padding-top: 10px;
+                                            margin-bottom: 15px;
+                                        ">
+                                            <h3 style="color: black;">Impact</h3>
+                                            <h2>{impact_level.upper()}</h2>
+                                        </div>
+                                        """, unsafe_allow_html=True)
+                                        
+                                        # Estimated completion time if available
+                                        if 'estimated_time' in rec:
+                                            st.markdown(f"**Est. Time:** {rec['estimated_time']}")
+                                        
+                                        # Difficulty if available
+                                        if 'difficulty' in rec:
+                                            st.markdown(f"**Difficulty:** {rec['difficulty'].title()}")
                                     
                                     # Add a button to get detailed optimization plan
                                     if 'component' in rec and rec['component'] != 'all':
