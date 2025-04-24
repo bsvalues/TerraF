@@ -18,6 +18,7 @@ try:
     from integration_test_agent import IntegrationTestAgent
     from documentation_agent import TechnicalDocumentationAgent
     from ai_integration_agent import AIIntegrationAgent
+    from sync_service_agent import SyncServiceAgent
     SPECIALIZED_AGENTS_AVAILABLE = True
 except ImportError:
     SPECIALIZED_AGENTS_AVAILABLE = False
@@ -444,6 +445,10 @@ def register_all_agents() -> Dict[str, Any]:
     # Register AI integration agent
     ai_integration_agent = AIIntegrationAgent()
     agents["ai_integration_agent"] = ai_integration_agent
+    
+    # Register Sync Service agent
+    sync_service_agent = SyncServiceAgent()
+    agents["sync_service_agent"] = sync_service_agent
     
     logger.info(f"Registered {len(agents)} specialized agents")
     
