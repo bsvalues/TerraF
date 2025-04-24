@@ -550,6 +550,63 @@ class ChangeDetector:
         self.logger.info(f"Detected {len(detected_changes)} changes")
         return detected_changes
     
+    def detect_changes_for_table(self, table_name: str, filter_condition: Optional[str] = None) -> List[DetectedChange]:
+        """
+        Detect changes for a specific table with optional filtering.
+        
+        Args:
+            table_name: Name of the table to detect changes for
+            filter_condition: Optional SQL WHERE clause to filter records (without 'WHERE')
+            
+        Returns:
+            List of detected changes for the specified table
+        """
+        self.logger.info(f"Detecting changes for table: {table_name}")
+        
+        # Determine the optimal query approach for this table
+        tracking_config = self.etl_optimizer.get_tracking_config(table_name)
+        
+        # Build the base query
+        base_query = f"SELECT * FROM {table_name}"
+        
+        # Add filter condition if provided
+        if filter_condition:
+            where_clause = f" WHERE {filter_condition}"
+            self.logger.info(f"Applying filter: {filter_condition}")
+        else:
+            where_clause = ""
+            
+        # Complete the query
+        query = f"{base_query}{where_clause}"
+        
+        # Execute the query to get all matching records
+        records = self.source_connection.execute_query(query, {})
+        
+        # Transform the records into DetectedChange objects
+        detected_changes = []
+        for record in records:
+            # For selective sync we default to INSERT operation
+            # In a real implementation, we would determine the actual operation type
+            change_type = ChangeType.INSERT
+            
+            # Get the record ID field (could be customized by table in a real implementation)
+            record_id_field = "property_id" if table_name == "properties" else f"{table_name[:-1]}_id"
+            
+            # Create a DetectedChange object
+            detected_change = DetectedChange(
+                record_id=str(record.get(record_id_field, "")),
+                source_table=table_name,
+                change_type=change_type,
+                new_data=record,
+                timestamp=datetime.datetime.now().isoformat()
+            )
+            
+            detected_changes.append(detected_change)
+                
+        self.logger.info(f"Detected {len(detected_changes)} changes for table {table_name}")
+        
+        return detected_changes
+    
     def _map_operation_to_change_type(self, operation: str) -> ChangeType:
         """Map database operation to ChangeType enum"""
         op_map = {
@@ -2254,6 +2311,70 @@ class SyncOrchestrator:
             return SyncResult(
                 success=False,
                 error_details=[{"error": str(e), "type": "Exception"}],
+                start_time=start_time,
+                end_time=datetime.datetime.now().isoformat()
+            )
+    
+    def selective_sync(self, tables: List[str], filter_conditions: Dict[str, str] = None) -> SyncResult:
+        """
+        Perform a selective synchronization of specific tables with optional filtering.
+        
+        Args:
+            tables: List of table names to synchronize
+            filter_conditions: Optional dictionary mapping table names to filter conditions
+            
+        Returns:
+            SyncResult with details of the operation
+        """
+        self.logger.info(f"Starting selective sync for tables: {tables}")
+        start_time = datetime.datetime.now().isoformat()
+        tables_processed = {}
+        
+        try:
+            # Initialize an empty list to collect all changes
+            all_changes = []
+            
+            # Process each table
+            for table in tables:
+                self.logger.info(f"Processing table: {table}")
+                
+                # Get filter condition for this table if specified
+                filter_condition = filter_conditions.get(table) if filter_conditions else None
+                
+                # Detect changes for this table with optional filtering
+                table_changes = self.change_detector.detect_changes_for_table(
+                    table, filter_condition=filter_condition
+                )
+                
+                # Keep track of records processed per table
+                tables_processed[table] = len(table_changes)
+                
+                # Add to collection of all changes
+                all_changes.extend(table_changes)
+                
+            # Transform the data
+            transformed_records = self.transformer.transform(all_changes)
+            
+            # Validate the transformed data
+            validation_results = self.validator.validate(transformed_records)
+            
+            # Write valid records to target
+            sync_result = self._write_to_target(validation_results)
+            
+            # Set start time on result
+            sync_result.start_time = start_time
+            
+            # Add table-specific information
+            sync_result.tables_processed = tables_processed
+            
+            self.logger.info(f"Selective sync completed successfully, processed {len(all_changes)} records")
+            return sync_result
+            
+        except Exception as e:
+            self.logger.error(f"Selective sync failed: {str(e)}")
+            return SyncResult(
+                success=False,
+                error_details=[{"error": str(e), "type": "Exception", "tables": tables}],
                 start_time=start_time,
                 end_time=datetime.datetime.now().isoformat()
             )
@@ -4287,6 +4408,79 @@ class SyncService:
         
         return result.to_dict()
     
+    def selective_sync(self, tables: List[str], filter_conditions: Dict[str, str] = None) -> Dict[str, Any]:
+        """
+        Perform a selective sync for specific tables with optional filtering.
+        
+        Args:
+            tables: List of table names to synchronize
+            filter_conditions: Optional dictionary mapping table names to filter conditions
+            
+        Returns:
+            Dictionary with sync results
+        """
+        self.logger.info(f"Selective sync requested for tables: {tables}")
+        
+        if not tables:
+            self.logger.warning("No tables specified for selective sync")
+            return {
+                "success": False,
+                "records_processed": 0,
+                "records_succeeded": 0,
+                "records_failed": 0,
+                "error_details": [{"error": "No tables specified for selective sync"}],
+                "warnings": [],
+                "start_time": datetime.datetime.now().isoformat(),
+                "end_time": datetime.datetime.now().isoformat(),
+                "duration_seconds": 0
+            }
+        
+        filter_conditions = filter_conditions or {}
+        
+        try:
+            # In a real implementation, we would pass the filter conditions to the orchestrator
+            result = self.orchestrator.selective_sync(tables, filter_conditions)
+            
+            # Store sync information
+            if result.success:
+                self.last_sync_time = result.end_time
+                
+            self.sync_history.append({
+                "type": "selective",
+                "tables": tables,
+                "timestamp": result.end_time,
+                "success": result.success,
+                "records_processed": result.records_processed,
+                "records_succeeded": result.records_succeeded
+            })
+            
+            return result.to_dict()
+            
+        except Exception as e:
+            self.logger.error(f"Selective sync failed: {str(e)}")
+            error_dict = {
+                "success": False,
+                "records_processed": 0,
+                "records_succeeded": 0,
+                "records_failed": 0,
+                "error_details": [{"error": str(e)}],
+                "warnings": [],
+                "start_time": datetime.datetime.now().isoformat(),
+                "end_time": datetime.datetime.now().isoformat(),
+                "duration_seconds": 0
+            }
+            
+            self.sync_history.append({
+                "type": "selective",
+                "tables": tables,
+                "timestamp": datetime.datetime.now().isoformat(),
+                "success": False,
+                "records_processed": 0,
+                "records_succeeded": 0
+            })
+            
+            return error_dict
+    
     def get_sync_status(self) -> Dict[str, Any]:
         """
         Get the current sync status and history.
@@ -4294,11 +4488,15 @@ class SyncService:
         Returns:
             Dictionary with sync status information
         """
+        # Get any scheduled syncs (in a real implementation)
+        scheduled_syncs = []
+        
         return {
             "last_sync_time": self.last_sync_time,
             "sync_history": self.sync_history[-5:],  # Last 5 sync operations
             "active": True,
-            "version": "1.0.0"
+            "version": "2.0.0",
+            "scheduled_syncs": scheduled_syncs
         }
         
     def compare_schemas(self) -> Dict[str, Any]:
