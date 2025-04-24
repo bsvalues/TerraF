@@ -1218,6 +1218,167 @@ class AIServiceFailover:
                 """,
                 "message": "Failover configuration generated successfully for openai with 2 backup services"
             }
+            
+    elif agent_key == "sync_service_agent":
+        if task == "Detect changes":
+            return {
+                "detected_changes": [
+                    {
+                        "record_id": "101",
+                        "source_table": "properties",
+                        "change_type": "update",
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "fields_changed": ["assessment_value", "last_sale_date", "zoning_code"]
+                    },
+                    {
+                        "record_id": "204",
+                        "source_table": "valuations",
+                        "change_type": "insert",
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "fields_changed": ["all"]
+                    },
+                    {
+                        "record_id": "153",
+                        "source_table": "owners",
+                        "change_type": "update",
+                        "timestamp": datetime.datetime.now().isoformat(),
+                        "fields_changed": ["mailing_address", "phone_number"]
+                    }
+                ],
+                "change_counts": {
+                    "insert": 1,
+                    "update": 2,
+                    "delete": 0,
+                    "no_change": 0
+                },
+                "total_changes": 3,
+                "source_system": "PACS"
+            }
+        elif task == "Transform data":
+            return {
+                "transformation_result": {
+                    "records_transformed": 3,
+                    "transformation_map": {
+                        "pacs_property_id": "cama_parcel_id",
+                        "pacs_valuation": "cama_assessed_value",
+                        "pacs_owner_name": "cama_primary_owner",
+                        "pacs_sale_date": "cama_last_transfer_date"
+                    },
+                    "enrichments_applied": [
+                        "Geocoding for addresses",
+                        "Owner name standardization",
+                        "Valuation normalization"
+                    ],
+                    "validation_rules_applied": 12
+                },
+                "sample_transformed_record": {
+                    "original": {
+                        "property_id": "PA-10045",
+                        "address": "123 Main St",
+                        "owner_name": "SMITH, JOHN & JANE",
+                        "valuation": 450000,
+                        "sale_date": "2024-02-15"
+                    },
+                    "transformed": {
+                        "parcel_id": "10045",
+                        "site_address": "123 Main St",
+                        "geocode": {"lat": 40.7128, "lng": -74.0060},
+                        "primary_owner": "John Smith",
+                        "additional_owners": ["Jane Smith"],
+                        "assessed_value": 450000,
+                        "last_transfer_date": "2024-02-15",
+                        "last_transfer_type": "WARRANTY DEED"
+                    }
+                }
+            }
+        elif task == "Validate data":
+            return {
+                "validation_result": {
+                    "records_validated": 3,
+                    "records_valid": 2,
+                    "records_invalid": 1,
+                    "validation_rules": [
+                        "Required fields present",
+                        "Data type validation",
+                        "Value range validation",
+                        "Referential integrity"
+                    ]
+                },
+                "validation_issues": [
+                    {
+                        "record_id": "204",
+                        "field": "assessed_value",
+                        "issue": "Value cannot be negative",
+                        "severity": "error",
+                        "recommended_fix": "Set value to zero or correct input"
+                    }
+                ],
+                "data_quality_score": 0.85
+            }
+        elif task == "Perform sync":
+            return {
+                "sync_result": {
+                    "success": True,
+                    "sync_type": "incremental",
+                    "start_time": (datetime.datetime.now() - datetime.timedelta(minutes=2)).isoformat(),
+                    "end_time": datetime.datetime.now().isoformat(),
+                    "duration_seconds": 120.5,
+                    "records_processed": 3,
+                    "records_succeeded": 3,
+                    "records_failed": 0,
+                    "tables_affected": ["properties", "valuations", "owners"]
+                },
+                "sync_details": {
+                    "inserts": 1,
+                    "updates": 2,
+                    "deletes": 0,
+                    "system_metrics": {
+                        "cpu_usage": "45%",
+                        "memory_usage": "320MB",
+                        "network_io": "12MB"
+                    }
+                }
+            }
+        elif task == "Monitor sync status":
+            return {
+                "overall_status": "healthy",
+                "sync_history": [
+                    {
+                        "sync_id": "sync-1123",
+                        "sync_type": "full",
+                        "start_time": (datetime.datetime.now() - datetime.timedelta(days=7)).isoformat(),
+                        "end_time": (datetime.datetime.now() - datetime.timedelta(days=7) + datetime.timedelta(hours=2)).isoformat(),
+                        "duration_seconds": 7200,
+                        "records_processed": 25000,
+                        "success": True
+                    },
+                    {
+                        "sync_id": "sync-1130",
+                        "sync_type": "incremental",
+                        "start_time": (datetime.datetime.now() - datetime.timedelta(days=1)).isoformat(),
+                        "end_time": (datetime.datetime.now() - datetime.timedelta(days=1) + datetime.timedelta(minutes=15)).isoformat(),
+                        "duration_seconds": 900,
+                        "records_processed": 45,
+                        "success": True
+                    },
+                    {
+                        "sync_id": "sync-1131",
+                        "sync_type": "incremental",
+                        "start_time": (datetime.datetime.now() - datetime.timedelta(minutes=5)).isoformat(),
+                        "end_time": datetime.datetime.now().isoformat(),
+                        "duration_seconds": 300,
+                        "records_processed": 3,
+                        "success": True
+                    }
+                ],
+                "system_health": {
+                    "pacs_connection": "connected",
+                    "cama_connection": "connected",
+                    "processor_status": "active",
+                    "queue_depth": 0
+                },
+                "next_scheduled_sync": (datetime.datetime.now() + datetime.timedelta(hours=6)).isoformat()
+            }
     
     # Default fallback response
     return {
@@ -1350,6 +1511,70 @@ async def get_user(id: int):
             "language": "python",
             "format": "markdown"
         }
+    
+    elif agent_key == "sync_service_agent":
+        if task == "Detect changes":
+            return {
+                "source_system": "PACS",
+                "tables": ["properties", "valuations", "owners"],
+                "last_sync_time": (datetime.datetime.now() - datetime.timedelta(days=1)).isoformat()
+            }
+        elif task == "Transform data":
+            return {
+                "records": [
+                    {
+                        "property_id": "PA-10045",
+                        "address": "123 Main St",
+                        "owner_name": "SMITH, JOHN & JANE",
+                        "valuation": 450000,
+                        "sale_date": "2024-02-15"
+                    }
+                ],
+                "mapping_rules": {
+                    "pacs_property_id": "cama_parcel_id",
+                    "pacs_valuation": "cama_assessed_value",
+                    "pacs_owner_name": "cama_primary_owner",
+                    "pacs_sale_date": "cama_last_transfer_date"
+                },
+                "validation_rules": {
+                    "assessed_value": "must be positive"
+                }
+            }
+        elif task == "Validate data":
+            return {
+                "records": [
+                    {
+                        "parcel_id": "10045",
+                        "site_address": "123 Main St",
+                        "primary_owner": "John Smith",
+                        "assessed_value": 450000
+                    },
+                    {
+                        "parcel_id": "20078",
+                        "site_address": "456 Oak Ave",
+                        "primary_owner": "Sarah Johnson",
+                        "assessed_value": -1000
+                    }
+                ],
+                "validation_rules": [
+                    "required_fields:parcel_id,site_address,primary_owner,assessed_value",
+                    "assessed_value:positive_number",
+                    "site_address:valid_address_format"
+                ]
+            }
+        elif task == "Perform sync":
+            return {
+                "sync_type": "incremental",
+                "source_system": "PACS",
+                "target_system": "CAMA",
+                "records_to_sync": 3,
+                "tables": ["properties", "valuations", "owners"]
+            }
+        elif task == "Monitor sync status":
+            return {
+                "sync_history_days": 7,
+                "system_health": True
+            }
     
     # Default fallback data
     return {
