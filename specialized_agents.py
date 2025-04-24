@@ -19,6 +19,7 @@ try:
     from documentation_agent import TechnicalDocumentationAgent
     from ai_integration_agent import AIIntegrationAgent
     from sync_service_agent import SyncServiceAgent
+    from domain_knowledge_agent import DomainKnowledgeAgent
     SPECIALIZED_AGENTS_AVAILABLE = True
 except ImportError:
     SPECIALIZED_AGENTS_AVAILABLE = False
