@@ -25,6 +25,7 @@ class AgentCategory:
     INTEGRATION_TEST = "integration_test"
     DOCUMENTATION = "documentation"
     AI_INTEGRATION = "ai_integration"
+    DATA_INTEGRATION = "data_integration"
 
 class Agent(ABC):
     """
