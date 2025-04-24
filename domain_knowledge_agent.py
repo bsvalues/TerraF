@@ -16,7 +16,11 @@ from typing import Dict, List, Any, Optional, Union
 import datetime
 
 # Ensure we have the correct imports for domain knowledge
-import anthropic
+try:
+    import anthropic
+except ImportError:
+    # Not critical for basic functionality
+    pass
 
 # Import the simplified agent base
 from simple_agent_base import Agent, AgentCategory
