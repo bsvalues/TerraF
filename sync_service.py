@@ -15,7 +15,7 @@ import time
 import random
 import logging
 import datetime
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Union, Tuple
 from enum import Enum
 
 # For demo purposes, we'll simulate database connections
@@ -558,6 +558,541 @@ class ChangeDetector:
             "DELETE": ChangeType.DELETE
         }
         return op_map.get(operation.upper(), ChangeType.NO_CHANGE)
+
+
+class DataQualityProfiler:
+    """
+    Analyzes data quality across databases, providing metrics, anomaly detection,
+    and data quality scoring to ensure data integrity during synchronization.
+    """
+    def __init__(self, connection: DatabaseConnection):
+        self.connection = connection
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.profiles = {}  # Cache for table profiles
+        self.quality_scores = {}  # Cache for quality scores
+        
+    def profile_table(self, table_name: str, sample_size: int = 1000) -> Dict[str, Any]:
+        """
+        Generate a data quality profile for a table
+        
+        Args:
+            table_name: Name of the table to profile
+            sample_size: Maximum number of rows to analyze
+            
+        Returns:
+            Dictionary with table profile information
+        """
+        self.logger.info(f"Profiling table {table_name} (sample size: {sample_size})")
+        
+        try:
+            # Query to get column information
+            columns_query = f"""
+            SELECT column_name, data_type 
+            FROM information_schema.columns
+            WHERE table_name = :table_name
+            """
+            
+            # In a real implementation, this would get actual column metadata
+            # For the simulation, we'll use mock data based on table name
+            columns = self._get_mock_columns(table_name)
+            
+            # Sample data from the table
+            sample_query = f"""
+            SELECT * FROM {table_name}
+            LIMIT :sample_size
+            """
+            
+            # In a real implementation, this would be actual sample data
+            # For the simulation, we'll use mock data
+            sample_data = self.connection.execute_query(sample_query, {"sample_size": sample_size})
+            
+            # Generate profile
+            profile = {
+                "table_name": table_name,
+                "timestamp": datetime.datetime.now().isoformat(),
+                "row_count": self._estimate_row_count(table_name),
+                "columns": {},
+                "correlation": {},
+                "overall_quality_score": 0.0
+            }
+            
+            # Process each column
+            for column in columns:
+                column_name = column["column_name"]
+                data_type = column["data_type"]
+                
+                # Extract values for this column from sample data
+                values = [row.get(column_name) for row in sample_data if column_name in row]
+                
+                # Generate column statistics
+                column_profile = self._analyze_column(column_name, data_type, values)
+                profile["columns"][column_name] = column_profile
+            
+            # Calculate correlations between numeric columns
+            # In a real implementation, this would use actual correlation calculation
+            # For the simulation, we'll generate mock correlation data
+            profile["correlation"] = self._generate_mock_correlations(profile["columns"])
+            
+            # Calculate overall quality score
+            profile["overall_quality_score"] = self._calculate_quality_score(profile)
+            
+            # Cache the profile
+            self.profiles[table_name] = profile
+            self.quality_scores[table_name] = profile["overall_quality_score"]
+            
+            return profile
+            
+        except Exception as e:
+            self.logger.error(f"Error profiling table {table_name}: {str(e)}")
+            return {
+                "error": str(e),
+                "table_name": table_name,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def detect_anomalies(self, table_name: str, threshold: float = 0.8) -> Dict[str, Any]:
+        """
+        Detect anomalies in table data based on the profile
+        
+        Args:
+            table_name: Name of the table to analyze
+            threshold: Threshold for anomaly detection (0-1)
+            
+        Returns:
+            Dictionary with anomaly information
+        """
+        self.logger.info(f"Detecting anomalies in {table_name} (threshold: {threshold})")
+        
+        try:
+            # Get the profile or generate if not exists
+            profile = self.profiles.get(table_name)
+            if not profile:
+                profile = self.profile_table(table_name)
+                
+            # Find anomalies
+            anomalies = {
+                "table_name": table_name,
+                "timestamp": datetime.datetime.now().isoformat(),
+                "threshold": threshold,
+                "columns": {},
+                "records": []
+            }
+            
+            # Check each column for anomalies
+            for column_name, column_profile in profile["columns"].items():
+                column_anomalies = []
+                
+                # Check for NULL percentage anomalies
+                if column_profile.get("null_percentage", 0) > (1 - threshold) * 100:
+                    column_anomalies.append({
+                        "type": "high_null_percentage",
+                        "value": column_profile["null_percentage"],
+                        "description": f"High percentage of NULL values: {column_profile['null_percentage']:.2f}%"
+                    })
+                
+                # Check for unique values anomalies
+                if column_profile.get("unique_percentage", 0) < threshold * 100 and column_profile.get("cardinality", 0) < 10:
+                    column_anomalies.append({
+                        "type": "low_cardinality",
+                        "value": column_profile["cardinality"],
+                        "description": f"Low cardinality (few unique values): {column_profile['cardinality']}"
+                    })
+                
+                # For numeric columns, check for statistical anomalies
+                if column_profile.get("type") == "numeric":
+                    # Check for skewness
+                    if abs(column_profile.get("skewness", 0)) > 3:
+                        column_anomalies.append({
+                            "type": "high_skewness",
+                            "value": column_profile["skewness"],
+                            "description": f"Highly skewed distribution: {column_profile['skewness']:.2f}"
+                        })
+                    
+                    # Check for outliers
+                    if column_profile.get("outlier_percentage", 0) > (1 - threshold) * 100:
+                        column_anomalies.append({
+                            "type": "high_outliers",
+                            "value": column_profile["outlier_percentage"],
+                            "description": f"High percentage of outliers: {column_profile['outlier_percentage']:.2f}%"
+                        })
+                
+                if column_anomalies:
+                    anomalies["columns"][column_name] = column_anomalies
+            
+            # Record-level anomalies - in a real implementation, these would
+            # be actual records that have anomalous values
+            # For the simulation, we'll generate mock anomalous records
+            anomalies["records"] = self._generate_mock_anomalous_records(table_name, profile)
+            
+            return anomalies
+            
+        except Exception as e:
+            self.logger.error(f"Error detecting anomalies in {table_name}: {str(e)}")
+            return {
+                "error": str(e),
+                "table_name": table_name,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def get_quality_score(self, table_name: str) -> Dict[str, Any]:
+        """
+        Get the quality score for a table
+        
+        Args:
+            table_name: Name of the table
+            
+        Returns:
+            Dictionary with quality score information
+        """
+        self.logger.info(f"Getting quality score for {table_name}")
+        
+        try:
+            # Get the score from cache or calculate
+            if table_name in self.quality_scores:
+                score = self.quality_scores[table_name]
+            else:
+                profile = self.profile_table(table_name)
+                score = profile["overall_quality_score"]
+            
+            return {
+                "table_name": table_name,
+                "quality_score": score,
+                "timestamp": datetime.datetime.now().isoformat(),
+                "score_interpretation": self._interpret_quality_score(score)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting quality score for {table_name}: {str(e)}")
+            return {
+                "error": str(e),
+                "table_name": table_name,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def compare_quality(self, source_table: str, target_table: str) -> Dict[str, Any]:
+        """
+        Compare data quality between source and target tables
+        
+        Args:
+            source_table: Name of the source table
+            target_table: Name of the target table
+            
+        Returns:
+            Dictionary with quality comparison information
+        """
+        self.logger.info(f"Comparing quality between {source_table} and {target_table}")
+        
+        try:
+            # Get profiles for both tables
+            source_profile = self.profiles.get(source_table)
+            if not source_profile:
+                source_profile = self.profile_table(source_table)
+                
+            target_profile = self.profiles.get(target_table)
+            if not target_profile:
+                target_profile = self.profile_table(target_table)
+            
+            # Compare quality metrics
+            comparison = {
+                "source_table": source_table,
+                "target_table": target_table,
+                "timestamp": datetime.datetime.now().isoformat(),
+                "quality_diff": source_profile["overall_quality_score"] - target_profile["overall_quality_score"],
+                "column_metrics": {},
+                "summary": {}
+            }
+            
+            # Compare common columns
+            source_columns = set(source_profile["columns"].keys())
+            target_columns = set(target_profile["columns"].keys())
+            common_columns = source_columns.intersection(target_columns)
+            
+            for column in common_columns:
+                source_col = source_profile["columns"][column]
+                target_col = target_profile["columns"][column]
+                
+                # Calculate metric differences
+                column_diff = {
+                    "null_percentage_diff": source_col.get("null_percentage", 0) - target_col.get("null_percentage", 0),
+                    "unique_percentage_diff": source_col.get("unique_percentage", 0) - target_col.get("unique_percentage", 0),
+                    "quality_score_diff": source_col.get("quality_score", 0) - target_col.get("quality_score", 0)
+                }
+                
+                # Add type-specific comparisons
+                if source_col.get("type") == "numeric" and target_col.get("type") == "numeric":
+                    column_diff.update({
+                        "min_diff": source_col.get("min", 0) - target_col.get("min", 0),
+                        "max_diff": source_col.get("max", 0) - target_col.get("max", 0),
+                        "mean_diff": source_col.get("mean", 0) - target_col.get("mean", 0),
+                        "std_dev_diff": source_col.get("std_dev", 0) - target_col.get("std_dev", 0)
+                    })
+                
+                comparison["column_metrics"][column] = column_diff
+            
+            # Generate summary statistics
+            column_count = len(common_columns)
+            improved_columns = sum(1 for col, diff in comparison["column_metrics"].items() 
+                               if diff["quality_score_diff"] > 0)
+            degraded_columns = sum(1 for col, diff in comparison["column_metrics"].items() 
+                               if diff["quality_score_diff"] < 0)
+            
+            comparison["summary"] = {
+                "common_columns": column_count,
+                "source_only_columns": len(source_columns - target_columns),
+                "target_only_columns": len(target_columns - source_columns),
+                "improved_columns": improved_columns,
+                "degraded_columns": degraded_columns,
+                "unchanged_columns": column_count - improved_columns - degraded_columns
+            }
+            
+            return comparison
+            
+        except Exception as e:
+            self.logger.error(f"Error comparing quality: {str(e)}")
+            return {
+                "error": str(e),
+                "source_table": source_table,
+                "target_table": target_table,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def _estimate_row_count(self, table_name: str) -> int:
+        """Estimate row count for a table"""
+        # In a real implementation, this would use database statistics
+        # For the simulation, we'll generate a random count
+        return random.randint(1000, 100000)
+    
+    def _get_mock_columns(self, table_name: str) -> List[Dict[str, str]]:
+        """Get mock column information for a table"""
+        if table_name == "properties":
+            return [
+                {"column_name": "property_id", "data_type": "INTEGER"},
+                {"column_name": "parcel_number", "data_type": "VARCHAR"},
+                {"column_name": "owner_name", "data_type": "VARCHAR"},
+                {"column_name": "address", "data_type": "VARCHAR"},
+                {"column_name": "land_value", "data_type": "DECIMAL"},
+                {"column_name": "improvement_value", "data_type": "DECIMAL"},
+                {"column_name": "total_value", "data_type": "DECIMAL"},
+                {"column_name": "last_updated", "data_type": "DATETIME"}
+            ]
+        elif table_name == "valuations":
+            return [
+                {"column_name": "valuation_id", "data_type": "INTEGER"},
+                {"column_name": "property_id", "data_type": "INTEGER"},
+                {"column_name": "valuation_date", "data_type": "DATE"},
+                {"column_name": "value_amount", "data_type": "DECIMAL"},
+                {"column_name": "value_type", "data_type": "VARCHAR"},
+                {"column_name": "assessor_id", "data_type": "INTEGER"}
+            ]
+        else:
+            # Generic columns for other tables
+            return [
+                {"column_name": "id", "data_type": "INTEGER"},
+                {"column_name": "name", "data_type": "VARCHAR"},
+                {"column_name": "description", "data_type": "VARCHAR"},
+                {"column_name": "created_at", "data_type": "DATETIME"},
+                {"column_name": "updated_at", "data_type": "DATETIME"}
+            ]
+    
+    def _analyze_column(self, column_name: str, data_type: str, values: List[Any]) -> Dict[str, Any]:
+        """Analyze a column from sample data"""
+        column_profile = {
+            "name": column_name,
+            "data_type": data_type,
+            "sample_size": len(values)
+        }
+        
+        # Count NULL values
+        null_count = sum(1 for v in values if v is None)
+        column_profile["null_count"] = null_count
+        column_profile["null_percentage"] = (null_count / len(values) * 100) if values else 0
+        
+        # Count unique values
+        non_null_values = [v for v in values if v is not None]
+        unique_values = set(non_null_values)
+        column_profile["cardinality"] = len(unique_values)
+        column_profile["unique_percentage"] = (len(unique_values) / len(non_null_values) * 100) if non_null_values else 0
+        
+        # Type-specific analysis
+        if data_type.upper() in ("INTEGER", "DECIMAL", "FLOAT", "NUMERIC"):
+            column_profile["type"] = "numeric"
+            numeric_values = [float(v) for v in non_null_values if str(v).replace(".", "", 1).isdigit()]
+            
+            if numeric_values:
+                column_profile["min"] = min(numeric_values)
+                column_profile["max"] = max(numeric_values)
+                column_profile["mean"] = sum(numeric_values) / len(numeric_values)
+                column_profile["median"] = self._calculate_median(numeric_values)
+                
+                # Standard deviation
+                if len(numeric_values) > 1:
+                    variance = sum((x - column_profile["mean"]) ** 2 for x in numeric_values) / len(numeric_values)
+                    column_profile["std_dev"] = variance ** 0.5
+                else:
+                    column_profile["std_dev"] = 0
+                
+                # Calculate skewness
+                if len(numeric_values) > 2 and column_profile["std_dev"] > 0:
+                    skewness = sum((x - column_profile["mean"]) ** 3 for x in numeric_values)
+                    skewness /= len(numeric_values) * (column_profile["std_dev"] ** 3)
+                    column_profile["skewness"] = skewness
+                else:
+                    column_profile["skewness"] = 0
+                
+                # Identify outliers using IQR method
+                q1, q3 = self._calculate_quartiles(numeric_values)
+                iqr = q3 - q1
+                lower_bound = q1 - 1.5 * iqr
+                upper_bound = q3 + 1.5 * iqr
+                
+                outliers = [x for x in numeric_values if x < lower_bound or x > upper_bound]
+                column_profile["outlier_count"] = len(outliers)
+                column_profile["outlier_percentage"] = (len(outliers) / len(numeric_values) * 100) if numeric_values else 0
+                
+        elif data_type.upper() in ("VARCHAR", "CHAR", "TEXT"):
+            column_profile["type"] = "text"
+            text_values = [str(v) for v in non_null_values if v is not None]
+            
+            if text_values:
+                column_profile["min_length"] = min(len(str(v)) for v in text_values)
+                column_profile["max_length"] = max(len(str(v)) for v in text_values)
+                column_profile["avg_length"] = sum(len(str(v)) for v in text_values) / len(text_values)
+                
+                # Check for email pattern
+                email_pattern = r"[^@]+@[^@]+\.[^@]+"
+                email_count = sum(1 for v in text_values if re.match(email_pattern, str(v)))
+                column_profile["email_count"] = email_count
+                column_profile["email_percentage"] = (email_count / len(text_values) * 100) if text_values else 0
+                
+        elif data_type.upper() in ("DATE", "DATETIME", "TIMESTAMP"):
+            column_profile["type"] = "datetime"
+            # In a real implementation, this would parse and analyze dates
+            # For the simulation, we'll just set some basic metrics
+            column_profile["has_future_dates"] = False
+            column_profile["has_very_old_dates"] = False
+            
+        # Calculate column quality score
+        column_profile["quality_score"] = self._calculate_column_quality_score(column_profile)
+        
+        return column_profile
+    
+    def _calculate_median(self, values: List[float]) -> float:
+        """Calculate the median of a list of values"""
+        sorted_values = sorted(values)
+        n = len(sorted_values)
+        if n % 2 == 0:
+            return (sorted_values[n//2 - 1] + sorted_values[n//2]) / 2
+        else:
+            return sorted_values[n//2]
+    
+    def _calculate_quartiles(self, values: List[float]) -> Tuple[float, float]:
+        """Calculate the first and third quartiles"""
+        sorted_values = sorted(values)
+        n = len(sorted_values)
+        
+        if n < 4:
+            # Not enough values for meaningful quartiles
+            return sorted_values[0], sorted_values[-1]
+            
+        q1_idx = n // 4
+        q3_idx = (3 * n) // 4
+        
+        return sorted_values[q1_idx], sorted_values[q3_idx]
+    
+    def _calculate_column_quality_score(self, column_profile: Dict[str, Any]) -> float:
+        """Calculate a quality score for a column (0-1)"""
+        # Start with a perfect score and subtract penalties
+        score = 1.0
+        
+        # Penalize for NULL values
+        null_penalty = min(column_profile.get("null_percentage", 0) / 100, 0.5)
+        score -= null_penalty
+        
+        # Type-specific penalties
+        if column_profile.get("type") == "numeric":
+            # Penalize for outliers
+            outlier_penalty = min(column_profile.get("outlier_percentage", 0) / 200, 0.25)
+            score -= outlier_penalty
+            
+            # Penalize for extreme skewness
+            skewness = abs(column_profile.get("skewness", 0))
+            skewness_penalty = min(skewness / 20, 0.25)
+            score -= skewness_penalty
+            
+        elif column_profile.get("type") == "text":
+            # Penalize for very short values if there are many
+            if column_profile.get("min_length", 0) < 2 and column_profile.get("cardinality", 0) > 10:
+                score -= 0.1
+                
+        # Ensure score is between 0 and 1
+        return max(0, min(score, 1))
+    
+    def _calculate_quality_score(self, profile: Dict[str, Any]) -> float:
+        """Calculate overall quality score for a table"""
+        column_scores = [col.get("quality_score", 0) for col in profile["columns"].values()]
+        
+        if not column_scores:
+            return 0.0
+            
+        # Weight important columns more heavily
+        # In a real implementation, this would use domain knowledge
+        # For the simulation, we'll just use the average
+        return sum(column_scores) / len(column_scores)
+    
+    def _interpret_quality_score(self, score: float) -> str:
+        """Interpret a quality score as a descriptive category"""
+        if score >= 0.9:
+            return "excellent"
+        elif score >= 0.8:
+            return "good"
+        elif score >= 0.6:
+            return "adequate"
+        elif score >= 0.4:
+            return "poor"
+        else:
+            return "critical"
+    
+    def _generate_mock_correlations(self, columns: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, float]]:
+        """Generate mock correlation data"""
+        numeric_columns = [col for col, profile in columns.items() if profile.get("type") == "numeric"]
+        correlations = {}
+        
+        for col in numeric_columns:
+            correlations[col] = {}
+            
+        # Generate random correlations between columns
+        for i, col1 in enumerate(numeric_columns):
+            for col2 in numeric_columns[i+1:]:
+                # Random correlation between -1 and 1
+                correlation = random.uniform(-0.9, 0.9)
+                correlations[col1][col2] = correlation
+                correlations[col2][col1] = correlation
+                
+        return correlations
+    
+    def _generate_mock_anomalous_records(self, table_name: str, profile: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Generate mock anomalous records"""
+        # In a real implementation, this would find actual anomalous records
+        # For the simulation, we'll generate random anomalies
+        anomalous_records = []
+        
+        # Generate a few anomalous records
+        for i in range(3):
+            record = {"id": random.randint(1000, 9999)}
+            
+            # Add anomalies for specific columns
+            for column, col_profile in profile["columns"].items():
+                if col_profile.get("type") == "numeric" and random.random() < 0.3:
+                    # Generate outlier value
+                    if "max" in col_profile:
+                        record[column] = col_profile["max"] * (2 + random.random())
+                elif col_profile.get("type") == "text" and random.random() < 0.3:
+                    # Generate invalid text
+                    record[column] = "###INVALID###" + str(random.randint(1, 100))
+                        
+            anomalous_records.append(record)
+            
+        return anomalous_records
 
 
 class DataTypeConverter:
@@ -2085,6 +2620,983 @@ class SchemaComparisonTool:
         return mapping_config
 
 
+class IndexOptimizer:
+    """
+    Analyzes query patterns and table statistics to recommend optimal indexes,
+    improving database performance for common sync operations.
+    """
+    def __init__(self, connection: DatabaseConnection):
+        self.connection = connection
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.index_stats = {}  # Cache for index statistics
+        self.query_log = []  # Store recent query log for analysis
+        self.recommendations_cache = {}  # Cache for recommendations
+        
+    def log_query(self, query: str, execution_time: float) -> None:
+        """
+        Log a query for analysis
+        
+        Args:
+            query: SQL query executed
+            execution_time: Time in milliseconds to execute
+        """
+        # Keep only the last 100 queries for analysis
+        if len(self.query_log) >= 100:
+            self.query_log.pop(0)
+            
+        query_entry = {
+            "query": query,
+            "execution_time": execution_time,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+        self.query_log.append(query_entry)
+        
+        # Clear recommendations cache when new queries are logged
+        self.recommendations_cache = {}
+        
+    def get_table_indexes(self, table_name: str) -> Dict[str, Any]:
+        """
+        Get current indexes for a table
+        
+        Args:
+            table_name: Name of the table
+            
+        Returns:
+            Dictionary with index information
+        """
+        self.logger.info(f"Getting indexes for table {table_name}")
+        
+        try:
+            # In a real implementation, this would execute a query to fetch indexes
+            # For the simulation, we'll return mock index information
+            indexes = self._get_mock_indexes(table_name)
+            
+            # Cache the results
+            self.index_stats[table_name] = {
+                "indexes": indexes,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+            return {
+                "table_name": table_name,
+                "indexes": indexes,
+                "count": len(indexes),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting indexes for {table_name}: {str(e)}")
+            return {
+                "table_name": table_name,
+                "error": str(e),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def analyze_query_patterns(self) -> Dict[str, Any]:
+        """
+        Analyze query patterns from the query log
+        
+        Returns:
+            Dictionary with query pattern analysis
+        """
+        self.logger.info("Analyzing query patterns")
+        
+        if not self.query_log:
+            return {
+                "status": "empty",
+                "message": "No queries in the log to analyze",
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+        try:
+            # Extract tables from queries
+            table_pattern = r"FROM\s+([a-zA-Z0-9_]+)"
+            tables_accessed = []
+            
+            for entry in self.query_log:
+                tables = re.findall(table_pattern, entry["query"], re.IGNORECASE)
+                tables_accessed.extend(tables)
+            
+            # Count occurrences of each table
+            table_counts = {}
+            for table in tables_accessed:
+                if table not in table_counts:
+                    table_counts[table] = 0
+                table_counts[table] += 1
+            
+            # Extract WHERE clauses to find commonly filtered columns
+            where_pattern = r"WHERE\s+(.+?)(?:\s+ORDER\s+BY|\s+GROUP\s+BY|\s+LIMIT|\s*;|\s*$)"
+            where_clauses = []
+            
+            for entry in self.query_log:
+                clauses = re.findall(where_pattern, entry["query"], re.IGNORECASE)
+                where_clauses.extend(clauses)
+            
+            # Analyze columns in WHERE clauses
+            column_pattern = r"([a-zA-Z0-9_]+)\s*[=<>]"
+            filtered_columns = []
+            
+            for clause in where_clauses:
+                columns = re.findall(column_pattern, clause)
+                filtered_columns.extend(columns)
+            
+            # Count occurrences of each column
+            column_counts = {}
+            for column in filtered_columns:
+                if column not in column_counts:
+                    column_counts[column] = 0
+                column_counts[column] += 1
+            
+            # Identify slow queries
+            slow_threshold = 100  # ms
+            slow_queries = [
+                entry for entry in self.query_log 
+                if entry["execution_time"] > slow_threshold
+            ]
+            
+            # Calculate average execution time
+            avg_execution_time = sum(entry["execution_time"] for entry in self.query_log) / len(self.query_log)
+            
+            return {
+                "status": "success",
+                "query_count": len(self.query_log),
+                "avg_execution_time": avg_execution_time,
+                "slow_query_count": len(slow_queries),
+                "most_accessed_tables": sorted(table_counts.items(), key=lambda x: x[1], reverse=True)[:5],
+                "most_filtered_columns": sorted(column_counts.items(), key=lambda x: x[1], reverse=True)[:10],
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing query patterns: {str(e)}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def generate_index_recommendations(self, table_name: str) -> Dict[str, Any]:
+        """
+        Generate index recommendations for a table
+        
+        Args:
+            table_name: Name of the table
+            
+        Returns:
+            Dictionary with index recommendations
+        """
+        # Check cache first
+        if table_name in self.recommendations_cache:
+            self.logger.info(f"Using cached index recommendations for {table_name}")
+            return self.recommendations_cache[table_name]
+            
+        self.logger.info(f"Generating index recommendations for {table_name}")
+        
+        try:
+            # Get current indexes
+            current_indexes = self.get_table_indexes(table_name)
+            
+            if "error" in current_indexes:
+                return {
+                    "table_name": table_name,
+                    "status": "error",
+                    "error": current_indexes["error"],
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                
+            # Analyze query patterns
+            query_patterns = self.analyze_query_patterns()
+            
+            if query_patterns["status"] != "success":
+                return {
+                    "table_name": table_name,
+                    "status": "insufficient_data",
+                    "message": "Not enough query data to generate recommendations",
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                
+            # Find relevant query information for this table
+            is_accessed = False
+            for table, count in query_patterns.get("most_accessed_tables", []):
+                if table.lower() == table_name.lower():
+                    is_accessed = True
+                    break
+                    
+            if not is_accessed:
+                return {
+                    "table_name": table_name,
+                    "status": "no_queries",
+                    "message": f"No queries accessing {table_name} found in the log",
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                
+            # Get relevant columns for this table
+            # In a real implementation, this would check if the columns belong to this table
+            # For the simulation, we'll make a simplifying assumption
+            relevant_columns = []
+            for column, count in query_patterns.get("most_filtered_columns", []):
+                # Skip columns that already have indexes
+                if not any(index["column"] == column for index in current_indexes.get("indexes", [])):
+                    relevant_columns.append({"column": column, "query_count": count})
+            
+            # Generate recommendations
+            recommendations = []
+            for column_info in relevant_columns[:3]:  # Top 3 most promising columns
+                column = column_info["column"]
+                query_count = column_info["query_count"]
+                
+                # Calculate a priority score (1-10)
+                priority = min(10, 1 + int(query_count / 2))
+                
+                # Estimate performance impact (percentage improvement)
+                impact = random.randint(5, 50)
+                
+                recommendations.append({
+                    "type": "index",
+                    "column": column,
+                    "index_type": self._recommend_index_type(column),
+                    "priority": priority,
+                    "estimated_impact": f"{impact}% query speedup",
+                    "rationale": f"Column appears in {query_count} queries in the log"
+                })
+            
+            # Add compound index recommendations if beneficial
+            if len(relevant_columns) >= 2:
+                # Recommend a compound index for top 2 columns
+                col1 = relevant_columns[0]["column"]
+                col2 = relevant_columns[1]["column"]
+                
+                # Calculate a priority score (1-10)
+                priority = min(10, 1 + int((relevant_columns[0]["query_count"] + 
+                                         relevant_columns[1]["query_count"]) / 4))
+                
+                # Estimate performance impact (percentage improvement)
+                impact = random.randint(10, 60)
+                
+                recommendations.append({
+                    "type": "compound_index",
+                    "columns": [col1, col2],
+                    "index_type": "btree",
+                    "priority": priority,
+                    "estimated_impact": f"{impact}% query speedup",
+                    "rationale": f"Columns frequently appear together in queries"
+                })
+            
+            # Add recommendations for dropping unused indexes
+            unused_indexes = []
+            for index in current_indexes.get("indexes", []):
+                # In a real implementation, this would analyze index usage stats
+                # For the simulation, we'll randomly mark some indexes as unused
+                if random.random() < 0.3:
+                    unused_indexes.append(index)
+            
+            for index in unused_indexes:
+                recommendations.append({
+                    "type": "drop_index",
+                    "index_name": index["name"],
+                    "priority": random.randint(1, 5),
+                    "estimated_impact": "Reduced storage and faster writes",
+                    "rationale": "Index appears to be unused in current query patterns"
+                })
+            
+            # Generate DDL statements
+            ddl_statements = self._generate_ddl_statements(table_name, recommendations)
+            
+            result = {
+                "table_name": table_name,
+                "status": "success",
+                "recommendations": recommendations,
+                "ddl_statements": ddl_statements,
+                "current_indexes": current_indexes.get("indexes", []),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+            # Cache the results
+            self.recommendations_cache[table_name] = result
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error generating index recommendations: {str(e)}")
+            return {
+                "table_name": table_name,
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def apply_index_recommendation(self, table_name: str, recommendation_id: int) -> Dict[str, Any]:
+        """
+        Apply a specific index recommendation
+        
+        Args:
+            table_name: Name of the table
+            recommendation_id: ID of the recommendation to apply
+            
+        Returns:
+            Dictionary with the application result
+        """
+        self.logger.info(f"Applying index recommendation {recommendation_id} for {table_name}")
+        
+        try:
+            # Get recommendations
+            recommendations = self.generate_index_recommendations(table_name)
+            
+            if recommendations.get("status") != "success":
+                return {
+                    "status": "error",
+                    "message": "Failed to get recommendations",
+                    "error": recommendations.get("error", "Unknown error"),
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                
+            # Check if the recommendation ID is valid
+            if recommendation_id < 0 or recommendation_id >= len(recommendations.get("recommendations", [])):
+                return {
+                    "status": "error",
+                    "message": f"Invalid recommendation ID: {recommendation_id}",
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                
+            # Get the recommendation
+            recommendation = recommendations["recommendations"][recommendation_id]
+            
+            # Get the DDL statement
+            ddl_statement = recommendations["ddl_statements"][recommendation_id]
+            
+            # In a real implementation, this would execute the DDL statement
+            # For the simulation, we'll just pretend it was successful
+            success = True
+            error = None
+            
+            if success:
+                # Clear cache to force refreshing recommendations and index stats
+                if table_name in self.index_stats:
+                    del self.index_stats[table_name]
+                    
+                if table_name in self.recommendations_cache:
+                    del self.recommendations_cache[table_name]
+                    
+                # For demonstration purposes, let's pretend we update the table's indexes
+                if recommendation["type"] == "index" or recommendation["type"] == "compound_index":
+                    # Would add a new index in real implementation
+                    pass
+                elif recommendation["type"] == "drop_index":
+                    # Would remove an index in real implementation
+                    pass
+                
+                return {
+                    "status": "success",
+                    "table_name": table_name,
+                    "recommendation_applied": recommendation,
+                    "ddl_executed": ddl_statement,
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": "Failed to apply recommendation",
+                    "error": error,
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                
+        except Exception as e:
+            self.logger.error(f"Error applying index recommendation: {str(e)}")
+            return {
+                "status": "error",
+                "message": f"Error applying index recommendation: {str(e)}",
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def _get_mock_indexes(self, table_name: str) -> List[Dict[str, Any]]:
+        """Get mock index information for a table"""
+        if table_name == "properties":
+            return [
+                {
+                    "name": "properties_pkey",
+                    "column": "property_id",
+                    "type": "btree",
+                    "unique": True,
+                    "primary": True,
+                    "size_kb": 128
+                },
+                {
+                    "name": "idx_properties_parcel_number",
+                    "column": "parcel_number",
+                    "type": "btree",
+                    "unique": True,
+                    "primary": False,
+                    "size_kb": 112
+                }
+            ]
+        elif table_name == "valuations":
+            return [
+                {
+                    "name": "valuations_pkey",
+                    "column": "valuation_id",
+                    "type": "btree",
+                    "unique": True,
+                    "primary": True,
+                    "size_kb": 96
+                },
+                {
+                    "name": "idx_valuations_property_id",
+                    "column": "property_id",
+                    "type": "btree",
+                    "unique": False,
+                    "primary": False,
+                    "size_kb": 88
+                }
+            ]
+        else:
+            # Generic indexes for other tables
+            return [
+                {
+                    "name": f"{table_name}_pkey",
+                    "column": "id",
+                    "type": "btree",
+                    "unique": True,
+                    "primary": True,
+                    "size_kb": 64
+                }
+            ]
+    
+    def _recommend_index_type(self, column: str) -> str:
+        """Recommend an index type based on column name and data characteristics"""
+        # In a real implementation, this would analyze data distribution and column type
+        # For the simulation, we'll use a simple heuristic based on column name
+        
+        if "id" in column.lower() or "key" in column.lower() or "code" in column.lower():
+            return "btree"  # Good for equality and range queries
+        elif "name" in column.lower() or "description" in column.lower():
+            return "hash"  # Good for equality queries
+        elif "date" in column.lower() or "time" in column.lower():
+            return "btree"  # Good for range queries
+        elif "text" in column.lower() or "comment" in column.lower():
+            return "gin"  # Good for full-text search
+        else:
+            return "btree"  # Default to btree
+    
+    def _generate_ddl_statements(self, table_name: str, recommendations: List[Dict[str, Any]]) -> List[str]:
+        """Generate DDL statements for the recommendations"""
+        ddl_statements = []
+        
+        for rec in recommendations:
+            if rec["type"] == "index":
+                ddl = f"CREATE INDEX idx_{table_name}_{rec['column']} ON {table_name} USING {rec['index_type']} ({rec['column']});"
+                ddl_statements.append(ddl)
+            elif rec["type"] == "compound_index":
+                columns = ", ".join(rec["columns"])
+                column_names = "_".join(rec["columns"])
+                ddl = f"CREATE INDEX idx_{table_name}_{column_names} ON {table_name} USING {rec['index_type']} ({columns});"
+                ddl_statements.append(ddl)
+            elif rec["type"] == "drop_index":
+                ddl = f"DROP INDEX {rec['index_name']};"
+                ddl_statements.append(ddl)
+                
+        return ddl_statements
+
+
+class HistoricalTrendAnalyzer:
+    """
+    Analyzes historical trends in database metrics to predict future performance,
+    identify recurring patterns, and optimize sync scheduling based on historical load.
+    """
+    def __init__(self, connection: DatabaseConnection):
+        self.connection = connection
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.metrics_history = {}  # Store historical metrics by date
+        self.analysis_cache = {}  # Cache for trend analysis results
+        
+    def record_metrics(self, metrics: Dict[str, Any]) -> None:
+        """
+        Record current metrics for historical tracking
+        
+        Args:
+            metrics: Current performance metrics
+        """
+        timestamp = datetime.datetime.now().isoformat()
+        date_key = timestamp.split("T")[0]
+        
+        if date_key not in self.metrics_history:
+            self.metrics_history[date_key] = []
+            
+        metrics_record = {
+            "timestamp": timestamp,
+            **metrics
+        }
+        
+        self.metrics_history[date_key].append(metrics_record)
+        self.logger.info(f"Recorded metrics for {date_key}")
+        
+        # Clear cache since we have new data
+        self.analysis_cache = {}
+        
+    def get_historical_data(self, days: int = 30, metric_name: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get historical data for analysis
+        
+        Args:
+            days: Number of days of history to retrieve
+            metric_name: Optional specific metric to retrieve
+            
+        Returns:
+            Dictionary with historical data
+        """
+        self.logger.info(f"Retrieving {days} days of historical data")
+        
+        try:
+            # Calculate the cutoff date
+            today = datetime.datetime.now().date()
+            cutoff_date = today - datetime.timedelta(days=days)
+            cutoff_str = cutoff_date.isoformat()
+            
+            # Filter data by date
+            filtered_data = {}
+            for date_key, metrics_list in self.metrics_history.items():
+                if date_key >= cutoff_str:
+                    filtered_data[date_key] = metrics_list
+            
+            # If a specific metric was requested, extract just that metric
+            if metric_name:
+                metric_data = {}
+                for date_key, metrics_list in filtered_data.items():
+                    metric_data[date_key] = []
+                    for metrics in metrics_list:
+                        if metric_name in metrics:
+                            metric_data[date_key].append({
+                                "timestamp": metrics["timestamp"],
+                                metric_name: metrics[metric_name]
+                            })
+                return {
+                    "metric": metric_name,
+                    "days": days,
+                    "data": metric_data
+                }
+            
+            return {
+                "days": days,
+                "data": filtered_data
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error retrieving historical data: {str(e)}")
+            return {
+                "days": days,
+                "error": str(e)
+            }
+    
+    def analyze_trends(self, metric_name: str, days: int = 30) -> Dict[str, Any]:
+        """
+        Analyze trends for a specific metric
+        
+        Args:
+            metric_name: Name of the metric to analyze
+            days: Number of days of history to analyze
+            
+        Returns:
+            Dictionary with trend analysis results
+        """
+        # Check cache first
+        cache_key = f"{metric_name}_{days}"
+        if cache_key in self.analysis_cache:
+            return self.analysis_cache[cache_key]
+            
+        self.logger.info(f"Analyzing trends for {metric_name} over {days} days")
+        
+        try:
+            # Get historical data for this metric
+            history = self.get_historical_data(days, metric_name)
+            
+            if "error" in history:
+                return {
+                    "metric": metric_name,
+                    "days": days,
+                    "error": history["error"]
+                }
+                
+            # Extract data points for analysis
+            data_points = []
+            timestamps = []
+            
+            for date_key, metrics_list in history["data"].items():
+                for metric in metrics_list:
+                    if metric_name in metric:
+                        data_points.append(float(metric[metric_name]))
+                        timestamps.append(metric["timestamp"])
+            
+            # Can't analyze without data
+            if not data_points:
+                return {
+                    "metric": metric_name,
+                    "days": days,
+                    "trend": "insufficient_data",
+                    "message": f"No data available for {metric_name}"
+                }
+                
+            # Calculate basic statistics
+            avg = sum(data_points) / len(data_points)
+            min_val = min(data_points)
+            max_val = max(data_points)
+            
+            # Detect trend
+            trend = self._detect_trend(data_points)
+            
+            # Look for patterns
+            patterns = self._detect_patterns(data_points, timestamps)
+            
+            # Predict future values
+            prediction = self._predict_future_values(data_points, 7)  # Predict 7 days ahead
+            
+            result = {
+                "metric": metric_name,
+                "days_analyzed": days,
+                "trend": trend,
+                "statistics": {
+                    "count": len(data_points),
+                    "min": min_val,
+                    "max": max_val,
+                    "avg": avg,
+                    "current": data_points[-1] if data_points else None,
+                    "percent_change": ((data_points[-1] - data_points[0]) / data_points[0] * 100) 
+                                     if data_points and data_points[0] != 0 else 0
+                },
+                "patterns": patterns,
+                "prediction": prediction
+            }
+            
+            # Cache the result
+            self.analysis_cache[cache_key] = result
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing trends: {str(e)}")
+            return {
+                "metric": metric_name,
+                "days": days,
+                "trend": "error",
+                "error": str(e)
+            }
+    
+    def get_optimization_schedule(self) -> Dict[str, Any]:
+        """
+        Generate an optimized schedule for sync operations based on historical load
+        
+        Returns:
+            Dictionary with scheduling recommendations
+        """
+        self.logger.info("Generating optimization schedule")
+        
+        try:
+            # Analyze CPU trends to find low-usage times
+            cpu_trends = self.analyze_trends("cpu_utilization", 14)
+            
+            if "error" in cpu_trends:
+                return {
+                    "error": cpu_trends["error"],
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                
+            # Analyze query volume trends
+            query_trends = self.analyze_trends("query_volume", 14)
+            
+            # Generate hourly load profile
+            load_profile = self._generate_hourly_load_profile(14)
+            
+            # Find optimal times for different operations
+            recommended_times = {}
+            
+            # Find optimal time for full sync (lowest overall load)
+            if load_profile and "hourly_load" in load_profile:
+                min_load_hour = min(load_profile["hourly_load"].items(), key=lambda x: x[1])
+                recommended_times["full_sync"] = {
+                    "hour": min_load_hour[0],
+                    "load_factor": min_load_hour[1],
+                    "confidence": "high" if load_profile["consistency_score"] > 0.7 else "medium"
+                }
+                
+                # Find good times for incremental syncs (moderate load times)
+                sorted_hours = sorted(load_profile["hourly_load"].items(), key=lambda x: x[1])
+                incremental_hours = [
+                    {"hour": h[0], "load_factor": h[1]} 
+                    for h in sorted_hours[:3]  # Best 3 hours
+                ]
+                recommended_times["incremental_sync"] = incremental_hours
+            
+            return {
+                "schedule_recommendations": recommended_times,
+                "load_profile": load_profile,
+                "cpu_trends": cpu_trends,
+                "query_trends": query_trends,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error generating optimization schedule: {str(e)}")
+            return {
+                "error": str(e),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def _detect_trend(self, data_points: List[float]) -> str:
+        """Detect the overall trend in a series of data points"""
+        if len(data_points) < 3:
+            return "insufficient_data"
+            
+        # Simple linear regression to determine trend
+        n = len(data_points)
+        x = list(range(n))
+        
+        # Calculate slope of best-fit line
+        x_mean = sum(x) / n
+        y_mean = sum(data_points) / n
+        
+        numerator = sum((x[i] - x_mean) * (data_points[i] - y_mean) for i in range(n))
+        denominator = sum((x[i] - x_mean) ** 2 for i in range(n))
+        
+        if denominator == 0:
+            return "stable"
+            
+        slope = numerator / denominator
+        
+        # Determine trend based on slope
+        if abs(slope) < 0.01 * y_mean:
+            return "stable"
+        elif slope > 0:
+            if slope > 0.1 * y_mean:
+                return "rapidly_increasing"
+            else:
+                return "gradually_increasing"
+        else:
+            if abs(slope) > 0.1 * y_mean:
+                return "rapidly_decreasing"
+            else:
+                return "gradually_decreasing"
+    
+    def _detect_patterns(self, data_points: List[float], timestamps: List[str]) -> Dict[str, Any]:
+        """Detect patterns in the data series"""
+        if len(data_points) < 7:
+            return {"detected": False, "reason": "insufficient_data"}
+            
+        patterns = {}
+        
+        # Extract day of week from timestamps
+        days_of_week = []
+        for ts in timestamps:
+            try:
+                dt = datetime.datetime.fromisoformat(ts)
+                days_of_week.append(dt.weekday())
+            except ValueError:
+                pass
+        
+        # Check for day of week patterns
+        if days_of_week:
+            day_avg = {}
+            day_count = {}
+            
+            for i, day in enumerate(days_of_week):
+                if day not in day_avg:
+                    day_avg[day] = 0
+                    day_count[day] = 0
+                
+                day_avg[day] += data_points[i]
+                day_count[day] += 1
+            
+            # Calculate average by day
+            for day in day_avg:
+                if day_count[day] > 0:
+                    day_avg[day] /= day_count[day]
+            
+            # Check for significant differences between days
+            if day_avg and len(day_avg) > 1:
+                avg_values = list(day_avg.values())
+                overall_avg = sum(avg_values) / len(avg_values)
+                max_diff = max(abs(v - overall_avg) for v in avg_values)
+                
+                if max_diff > 0.2 * overall_avg:
+                    # There's a significant difference between days
+                    weekday_names = [
+                        "Monday", "Tuesday", "Wednesday", "Thursday", 
+                        "Friday", "Saturday", "Sunday"
+                    ]
+                    
+                    day_pattern = {weekday_names[day]: avg for day, avg in day_avg.items()}
+                    highest_day = max(day_avg.items(), key=lambda x: x[1])
+                    lowest_day = min(day_avg.items(), key=lambda x: x[1])
+                    
+                    patterns["weekday_pattern"] = {
+                        "detected": True,
+                        "day_averages": day_pattern,
+                        "highest_day": weekday_names[highest_day[0]],
+                        "lowest_day": weekday_names[lowest_day[0]]
+                    }
+        
+        # Check for cyclical patterns using autocorrelation
+        if len(data_points) >= 14:
+            max_lag = min(14, len(data_points) // 2)
+            autocorr = []
+            
+            for lag in range(1, max_lag + 1):
+                # Calculate autocorrelation for this lag
+                series1 = data_points[:-lag] if lag > 0 else data_points
+                series2 = data_points[lag:] if lag > 0 else data_points
+                
+                # Calculate correlation
+                mean1 = sum(series1) / len(series1)
+                mean2 = sum(series2) / len(series2)
+                
+                num = sum((series1[i] - mean1) * (series2[i] - mean2) for i in range(len(series1)))
+                den1 = sum((x - mean1) ** 2 for x in series1)
+                den2 = sum((x - mean2) ** 2 for x in series2)
+                
+                if den1 > 0 and den2 > 0:
+                    corr = num / ((den1 * den2) ** 0.5)
+                    autocorr.append((lag, corr))
+            
+            # Check for peaks in autocorrelation
+            if autocorr:
+                # Sort by correlation value
+                sorted_autocorr = sorted(autocorr, key=lambda x: x[1], reverse=True)
+                
+                # If we have a strong correlation at some lag, it suggests a cycle
+                if sorted_autocorr[0][1] > 0.6:
+                    patterns["cyclical_pattern"] = {
+                        "detected": True,
+                        "cycle_length": sorted_autocorr[0][0],
+                        "correlation": sorted_autocorr[0][1]
+                    }
+        
+        # If no patterns were detected
+        if not patterns:
+            return {"detected": False, "reason": "no_significant_patterns"}
+            
+        patterns["detected"] = True
+        return patterns
+    
+    def _predict_future_values(self, data_points: List[float], days_ahead: int) -> Dict[str, Any]:
+        """Predict future values based on historical trends"""
+        if len(data_points) < 7:
+            return {"status": "error", "reason": "insufficient_data"}
+            
+        try:
+            # Simple linear regression prediction
+            n = len(data_points)
+            x = list(range(n))
+            
+            # Calculate slope and intercept of best-fit line
+            x_mean = sum(x) / n
+            y_mean = sum(data_points) / n
+            
+            numerator = sum((x[i] - x_mean) * (data_points[i] - y_mean) for i in range(n))
+            denominator = sum((x[i] - x_mean) ** 2 for i in range(n))
+            
+            if denominator == 0:
+                slope = 0
+            else:
+                slope = numerator / denominator
+                
+            intercept = y_mean - slope * x_mean
+            
+            # Generate predictions
+            predictions = []
+            for i in range(1, days_ahead + 1):
+                predicted_value = slope * (n + i - 1) + intercept
+                predictions.append(round(predicted_value, 2))
+            
+            # Calculate a confidence score based on how well the model fits historical data
+            # (simplified version of R-squared)
+            y_predicted = [slope * i + intercept for i in x]
+            ss_total = sum((y - y_mean) ** 2 for y in data_points)
+            ss_residual = sum((data_points[i] - y_predicted[i]) ** 2 for i in range(n))
+            
+            if ss_total == 0:
+                confidence = 0
+            else:
+                confidence = 1 - (ss_residual / ss_total)
+            
+            return {
+                "status": "success",
+                "days_ahead": days_ahead,
+                "predictions": predictions,
+                "confidence": confidence
+            }
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "reason": str(e)
+            }
+    
+    def _generate_hourly_load_profile(self, days: int = 14) -> Dict[str, Any]:
+        """Generate an hourly load profile based on historical data"""
+        try:
+            # Get relevant metrics for hourly analysis
+            cpu_history = self.get_historical_data(days, "cpu_utilization")
+            query_history = self.get_historical_data(days, "query_volume")
+            
+            if "error" in cpu_history or "error" in query_history:
+                return {
+                    "error": cpu_history.get("error") or query_history.get("error")
+                }
+                
+            # Initialize hourly load factors
+            hourly_load = {str(hour): 0.0 for hour in range(24)}
+            hourly_samples = {str(hour): 0 for hour in range(24)}
+            
+            # Process CPU data
+            for date_key, metrics_list in cpu_history["data"].items():
+                for metric in metrics_list:
+                    if "cpu_utilization" in metric and "timestamp" in metric:
+                        try:
+                            dt = datetime.datetime.fromisoformat(metric["timestamp"])
+                            hour = str(dt.hour)
+                            hourly_load[hour] += float(metric["cpu_utilization"])
+                            hourly_samples[hour] += 1
+                        except (ValueError, KeyError):
+                            pass
+            
+            # Process query volume data
+            for date_key, metrics_list in query_history["data"].items():
+                for metric in metrics_list:
+                    if "query_volume" in metric and "timestamp" in metric:
+                        try:
+                            dt = datetime.datetime.fromisoformat(metric["timestamp"])
+                            hour = str(dt.hour)
+                            # Normalize query volume to same scale as CPU (0-100)
+                            norm_volume = min(100, float(metric["query_volume"]) / 10)
+                            hourly_load[hour] += norm_volume
+                            hourly_samples[hour] += 1
+                        except (ValueError, KeyError):
+                            pass
+            
+            # Calculate average load for each hour
+            for hour in hourly_load:
+                if hourly_samples[hour] > 0:
+                    hourly_load[hour] /= hourly_samples[hour]
+            
+            # Calculate consistency score (how consistent the pattern is day-to-day)
+            # In real implementation this would use day-to-day comparison
+            # For simulation, we'll use a placeholder
+            consistency_score = 0.85  # High consistency
+            
+            return {
+                "hourly_load": hourly_load,
+                "samples_per_hour": hourly_samples,
+                "days_analyzed": days,
+                "consistency_score": consistency_score,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error generating hourly load profile: {str(e)}")
+            return {
+                "error": str(e),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+
+
 class DatabasePerformanceMonitor:
     """
     Monitors database performance during synchronization operations
@@ -2367,6 +3879,302 @@ class DatabasePerformanceMonitor:
         return slope / mean_y
 
 
+class TransactionSafetyManager:
+    """
+    Ensures data integrity through transaction management and failover mechanisms.
+    Provides a robust transaction framework with commit/rollback capabilities,
+    savepoints, and error recovery.
+    """
+    def __init__(self, connection: DatabaseConnection):
+        self.connection = connection
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.active_transaction = False
+        self.savepoints = []
+        self.operation_log = []
+        self.error_handlers = {}
+        
+    def begin_transaction(self) -> Dict[str, Any]:
+        """Begin a new transaction"""
+        if self.active_transaction:
+            self.logger.warning("Transaction already active, cannot begin a new one")
+            return {
+                "success": False,
+                "message": "Transaction already active",
+                "transaction_id": None
+            }
+            
+        try:
+            # In a real implementation, this would execute BEGIN TRANSACTION
+            # For the simulation, we'll just set the flag
+            self.active_transaction = True
+            transaction_id = f"tx-{random.randint(100000, 999999)}"
+            
+            self.logger.info(f"Transaction {transaction_id} started")
+            self.operation_log.append({
+                "operation": "begin_transaction",
+                "timestamp": datetime.datetime.now().isoformat(),
+                "transaction_id": transaction_id
+            })
+            
+            return {
+                "success": True,
+                "message": "Transaction started successfully",
+                "transaction_id": transaction_id
+            }
+        except Exception as e:
+            self.logger.error(f"Failed to start transaction: {str(e)}")
+            return {
+                "success": False,
+                "message": f"Failed to start transaction: {str(e)}",
+                "transaction_id": None
+            }
+    
+    def commit_transaction(self) -> Dict[str, Any]:
+        """Commit the current transaction"""
+        if not self.active_transaction:
+            self.logger.warning("No active transaction to commit")
+            return {
+                "success": False,
+                "message": "No active transaction",
+                "operations_committed": 0
+            }
+            
+        try:
+            # In a real implementation, this would execute COMMIT
+            # For the simulation, we'll reset state
+            self.active_transaction = False
+            operations_count = len(self.operation_log)
+            
+            self.logger.info(f"Transaction committed with {operations_count} operations")
+            self.operation_log.append({
+                "operation": "commit",
+                "timestamp": datetime.datetime.now().isoformat(),
+                "operations_count": operations_count
+            })
+            
+            # Clear savepoints after successful commit
+            self.savepoints = []
+            
+            return {
+                "success": True,
+                "message": "Transaction committed successfully",
+                "operations_committed": operations_count
+            }
+        except Exception as e:
+            self.logger.error(f"Failed to commit transaction: {str(e)}")
+            return {
+                "success": False,
+                "message": f"Failed to commit transaction: {str(e)}",
+                "operations_committed": 0
+            }
+    
+    def rollback_transaction(self, to_savepoint: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Rollback the current transaction
+        
+        Args:
+            to_savepoint: Optional savepoint name to rollback to
+            
+        Returns:
+            Dictionary with rollback results
+        """
+        if not self.active_transaction:
+            self.logger.warning("No active transaction to rollback")
+            return {
+                "success": False,
+                "message": "No active transaction",
+                "operations_rolled_back": 0
+            }
+            
+        try:
+            operations_count = len(self.operation_log)
+            
+            if to_savepoint:
+                # Find the savepoint
+                savepoint_found = False
+                for sp in self.savepoints:
+                    if sp["name"] == to_savepoint:
+                        savepoint_found = True
+                        # In a real implementation, this would execute ROLLBACK TO SAVEPOINT
+                        # For the simulation, we'll just log it
+                        self.logger.info(f"Rolled back to savepoint {to_savepoint}")
+                        operations_rolled_back = operations_count - sp["operation_index"]
+                        break
+                
+                if not savepoint_found:
+                    self.logger.warning(f"Savepoint {to_savepoint} not found")
+                    return {
+                        "success": False,
+                        "message": f"Savepoint {to_savepoint} not found",
+                        "operations_rolled_back": 0
+                    }
+            else:
+                # Full rollback
+                # In a real implementation, this would execute ROLLBACK
+                self.active_transaction = False
+                self.savepoints = []
+                operations_rolled_back = operations_count
+                self.logger.info("Transaction fully rolled back")
+            
+            self.operation_log.append({
+                "operation": "rollback",
+                "timestamp": datetime.datetime.now().isoformat(),
+                "to_savepoint": to_savepoint,
+                "operations_rolled_back": operations_rolled_back
+            })
+            
+            return {
+                "success": True,
+                "message": f"Transaction rolled back {'' if not to_savepoint else f'to savepoint {to_savepoint}'} successfully",
+                "operations_rolled_back": operations_rolled_back
+            }
+        except Exception as e:
+            self.logger.error(f"Failed to rollback transaction: {str(e)}")
+            return {
+                "success": False,
+                "message": f"Failed to rollback transaction: {str(e)}",
+                "operations_rolled_back": 0
+            }
+    
+    def create_savepoint(self, name: str) -> Dict[str, Any]:
+        """
+        Create a savepoint in the current transaction
+        
+        Args:
+            name: Name of the savepoint
+            
+        Returns:
+            Dictionary with savepoint creation results
+        """
+        if not self.active_transaction:
+            self.logger.warning("No active transaction to create savepoint")
+            return {
+                "success": False,
+                "message": "No active transaction",
+                "savepoint": None
+            }
+            
+        try:
+            # In a real implementation, this would execute SAVEPOINT
+            # For the simulation, we'll just record it
+            savepoint = {
+                "name": name,
+                "timestamp": datetime.datetime.now().isoformat(),
+                "operation_index": len(self.operation_log)
+            }
+            
+            self.savepoints.append(savepoint)
+            
+            self.logger.info(f"Savepoint {name} created")
+            self.operation_log.append({
+                "operation": "create_savepoint",
+                "timestamp": datetime.datetime.now().isoformat(),
+                "savepoint": name
+            })
+            
+            return {
+                "success": True,
+                "message": f"Savepoint {name} created successfully",
+                "savepoint": savepoint
+            }
+        except Exception as e:
+            self.logger.error(f"Failed to create savepoint: {str(e)}")
+            return {
+                "success": False,
+                "message": f"Failed to create savepoint: {str(e)}",
+                "savepoint": None
+            }
+    
+    def execute_in_transaction(self, query: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Execute a query within the current transaction
+        
+        Args:
+            query: SQL query to execute
+            params: Query parameters
+            
+        Returns:
+            Dictionary with query execution results
+        """
+        if not self.active_transaction:
+            self.logger.warning("No active transaction for query execution")
+            return {
+                "success": False,
+                "message": "No active transaction",
+                "results": None
+            }
+            
+        try:
+            # Execute the query
+            results = self.connection.execute_query(query, params)
+            
+            self.logger.info(f"Query executed in transaction: {query[:50]}...")
+            self.operation_log.append({
+                "operation": "execute_query",
+                "timestamp": datetime.datetime.now().isoformat(),
+                "query": query,
+                "params": params
+            })
+            
+            return {
+                "success": True,
+                "message": "Query executed successfully in transaction",
+                "results": results
+            }
+        except Exception as e:
+            self.logger.error(f"Failed to execute query in transaction: {str(e)}")
+            
+            # Check if we have an error handler registered for this type of error
+            error_type = type(e).__name__
+            if error_type in self.error_handlers:
+                handler_result = self.error_handlers[error_type](e, query, params)
+                if handler_result.get("handled", False):
+                    return {
+                        "success": handler_result.get("success", False),
+                        "message": handler_result.get("message", str(e)),
+                        "results": handler_result.get("results", None),
+                        "error_handled": True
+                    }
+            
+            return {
+                "success": False,
+                "message": f"Failed to execute query in transaction: {str(e)}",
+                "results": None
+            }
+    
+    def register_error_handler(self, error_type: str, handler_function: callable) -> bool:
+        """
+        Register an error handler for a specific type of error
+        
+        Args:
+            error_type: Name of the error type (e.g., "ValueError")
+            handler_function: Function to call when this error occurs
+            
+        Returns:
+            True if handler registered successfully, False otherwise
+        """
+        try:
+            self.error_handlers[error_type] = handler_function
+            self.logger.info(f"Registered error handler for {error_type}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to register error handler: {str(e)}")
+            return False
+    
+    def get_transaction_status(self) -> Dict[str, Any]:
+        """Get the current status of the active transaction"""
+        return {
+            "active": self.active_transaction,
+            "savepoints": len(self.savepoints),
+            "operations": len(self.operation_log),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    
+    def get_operation_log(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Get the operation log for the current or last transaction"""
+        return self.operation_log[-limit:] if limit > 0 else self.operation_log
+
+
 class SyncService:
     """
     Main service class that provides the API for the SyncService.
@@ -2397,6 +4205,21 @@ class SyncService:
         self.performance_monitor = DatabasePerformanceMonitor(
             source_connection=self.source_connection,
             target_connection=self.target_connection
+        )
+        
+        # Initialize the transaction safety manager
+        self.transaction_manager = TransactionSafetyManager(
+            connection=self.target_connection
+        )
+        
+        # Initialize the data quality profiler
+        self.data_quality_profiler = DataQualityProfiler(
+            connection=self.source_connection
+        )
+        
+        # Initialize the historical trend analyzer
+        self.trend_analyzer = HistoricalTrendAnalyzer(
+            connection=self.source_connection
         )
         
         # Initialize the orchestrator
@@ -2728,6 +4551,264 @@ class SyncService:
         except Exception as e:
             self.logger.error(f"Error getting conflict history: {str(e)}")
             return {
+                "error": str(e),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def begin_transaction(self) -> Dict[str, Any]:
+        """
+        Begin a new database transaction
+        
+        Returns:
+            Dictionary with transaction status
+        """
+        self.logger.info("Beginning new transaction")
+        
+        try:
+            result = self.transaction_manager.begin_transaction()
+            result["timestamp"] = datetime.datetime.now().isoformat()
+            
+            return result
+        except Exception as e:
+            self.logger.error(f"Error starting transaction: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Failed to start transaction",
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def commit_transaction(self) -> Dict[str, Any]:
+        """
+        Commit the current transaction
+        
+        Returns:
+            Dictionary with commit status
+        """
+        self.logger.info("Committing transaction")
+        
+        try:
+            result = self.transaction_manager.commit_transaction()
+            result["timestamp"] = datetime.datetime.now().isoformat()
+            
+            return result
+        except Exception as e:
+            self.logger.error(f"Error committing transaction: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Failed to commit transaction",
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def rollback_transaction(self, to_savepoint: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Rollback the current transaction
+        
+        Args:
+            to_savepoint: Optional savepoint to roll back to
+            
+        Returns:
+            Dictionary with rollback status
+        """
+        if to_savepoint:
+            self.logger.info(f"Rolling back transaction to savepoint {to_savepoint}")
+        else:
+            self.logger.info("Rolling back transaction")
+        
+        try:
+            result = self.transaction_manager.rollback_transaction(to_savepoint)
+            result["timestamp"] = datetime.datetime.now().isoformat()
+            
+            return result
+        except Exception as e:
+            self.logger.error(f"Error rolling back transaction: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Failed to rollback transaction",
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def create_savepoint(self, name: str) -> Dict[str, Any]:
+        """
+        Create a savepoint in the current transaction
+        
+        Args:
+            name: Savepoint name
+            
+        Returns:
+            Dictionary with savepoint status
+        """
+        self.logger.info(f"Creating savepoint {name}")
+        
+        try:
+            result = self.transaction_manager.create_savepoint(name)
+            result["timestamp"] = datetime.datetime.now().isoformat()
+            
+            return result
+        except Exception as e:
+            self.logger.error(f"Error creating savepoint: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Failed to create savepoint",
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def execute_in_transaction(self, query: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Execute a query within the current transaction
+        
+        Args:
+            query: SQL query to execute
+            params: Query parameters
+            
+        Returns:
+            Dictionary with query execution results
+        """
+        self.logger.info(f"Executing query in transaction: {query[:50]}...")
+        
+        try:
+            result = self.transaction_manager.execute_in_transaction(query, params)
+            result["timestamp"] = datetime.datetime.now().isoformat()
+            
+            return result
+        except Exception as e:
+            self.logger.error(f"Error executing query in transaction: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": "Failed to execute query in transaction",
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def get_transaction_status(self) -> Dict[str, Any]:
+        """
+        Get the current transaction status
+        
+        Returns:
+            Dictionary with transaction status
+        """
+        self.logger.info("Getting transaction status")
+        
+        try:
+            status = self.transaction_manager.get_transaction_status()
+            
+            # Add operation log summary
+            operation_log = self.transaction_manager.get_operation_log(5)  # Last 5 operations
+            
+            return {
+                "status": status,
+                "recent_operations": operation_log,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting transaction status: {str(e)}")
+            return {
+                "error": str(e),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def analyze_performance_trends(self, metric_name: str = "query_time", days: int = 30) -> Dict[str, Any]:
+        """
+        Analyze historical trends for a specific performance metric
+        
+        Args:
+            metric_name: Name of the metric to analyze
+            days: Number of days of history to analyze
+            
+        Returns:
+            Dictionary with trend analysis results
+        """
+        self.logger.info(f"Analyzing performance trends for {metric_name} over {days} days")
+        
+        try:
+            # Get current metrics first to ensure we have recent data
+            current_metrics = self.performance_monitor.get_current_metrics()
+            
+            # Record current metrics for historical analysis
+            self.trend_analyzer.record_metrics(current_metrics)
+            
+            # Analyze the trends
+            trend_results = self.trend_analyzer.analyze_trends(metric_name, days)
+            
+            return {
+                **trend_results,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing performance trends: {str(e)}")
+            return {
+                "metric": metric_name,
+                "days": days,
+                "error": str(e),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def get_optimal_sync_schedule(self) -> Dict[str, Any]:
+        """
+        Get optimized scheduling recommendations for sync operations
+        
+        Returns:
+            Dictionary with scheduling recommendations
+        """
+        self.logger.info("Getting optimal sync schedule")
+        
+        try:
+            # Make sure we have current metrics first
+            current_metrics = self.performance_monitor.get_current_metrics()
+            self.trend_analyzer.record_metrics(current_metrics)
+            
+            # Get optimization schedule
+            schedule = self.trend_analyzer.get_optimization_schedule()
+            
+            return {
+                **schedule,
+                "generated_at": datetime.datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting optimal sync schedule: {str(e)}")
+            return {
+                "error": str(e),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+    
+    def analyze_data_quality(self, table_name: str) -> Dict[str, Any]:
+        """
+        Analyze data quality for a specific table
+        
+        Args:
+            table_name: Name of the table to analyze
+            
+        Returns:
+            Dictionary with data quality analysis results
+        """
+        self.logger.info(f"Analyzing data quality for table {table_name}")
+        
+        try:
+            profile = self.data_quality_profiler.profile_table(table_name)
+            
+            # Check for anomalies
+            anomalies = self.data_quality_profiler.detect_anomalies(table_name)
+            
+            # Get quality score
+            quality_score = self.data_quality_profiler.get_quality_score(table_name)
+            
+            return {
+                "table_name": table_name,
+                "profile": profile,
+                "anomalies": anomalies,
+                "quality_score": quality_score,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing data quality: {str(e)}")
+            return {
+                "table_name": table_name,
                 "error": str(e),
                 "timestamp": datetime.datetime.now().isoformat()
             }
