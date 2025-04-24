@@ -3717,6 +3717,100 @@ class DataValidator:
             
         return accessor
     
+    def validate_single(self, record: TransformedRecord) -> ValidationResult:
+        """
+        Validate a single transformed record with enhanced error reporting.
+        
+        Args:
+            record: A transformed record to validate
+            
+        Returns:
+            ValidationResult for the record
+        """
+        start_time = time.time()
+        accessor = self._get_accessor_function()
+        table_name = record.target_table
+        
+        # Skip validation if no rules exist for this table
+        if table_name not in self.rule_sets:
+            # Create a default passing validation result
+            result = ValidationResult(
+                record=record,
+                is_valid=True,
+                info=[f"No validation rules defined for table '{table_name}'"]
+            )
+            
+            # Update metrics
+            self.data_quality_metrics["total_records_validated"] += 1
+            self.data_quality_metrics["valid_records"] += 1
+            
+            return result
+        
+        # Get the rule set for this table
+        rule_set = self.rule_sets[table_name]
+        
+        # Validate against all rules in the rule set
+        validation_issues = rule_set.validate(record.data, accessor)
+        
+        # Process validation issues by severity
+        errors = []
+        warnings = []
+        infos = []
+        
+        for issue in validation_issues:
+            severity = issue.get("severity", "error")
+            message = issue.get("message", "Unknown validation error")
+            
+            if severity == ValidationSeverity.ERROR.value:
+                errors.append(message)
+                self.data_quality_metrics["severity_distribution"]["error"] += 1
+            elif severity == ValidationSeverity.WARNING.value:
+                warnings.append(message)
+                self.data_quality_metrics["severity_distribution"]["warning"] += 1
+            elif severity == ValidationSeverity.INFO.value:
+                infos.append(message)
+                self.data_quality_metrics["severity_distribution"]["info"] += 1
+            
+            # Track field error distribution
+            field = issue.get("field", "unknown")
+            if field not in self.data_quality_metrics["field_error_distribution"]:
+                self.data_quality_metrics["field_error_distribution"][field] = 0
+            self.data_quality_metrics["field_error_distribution"][field] += 1
+        
+        # Determine if record is valid (no errors)
+        is_valid = len(errors) == 0
+        
+        # Create validation metrics
+        metrics = {
+            "completion_percentage": self._calculate_completion_percentage(record.data),
+            "field_count": len(record.data) if isinstance(record.data, dict) else 0,
+            "validation_time_ms": int((time.time() - start_time) * 1000)
+        }
+        
+        # Create validation result
+        validation_result = ValidationResult(
+            record=record,
+            is_valid=is_valid,
+            errors=errors,
+            warnings=warnings,
+            info=infos,
+            metrics=metrics
+        )
+        
+        # Update metrics
+        self.data_quality_metrics["total_records_validated"] += 1
+        if is_valid:
+            self.data_quality_metrics["valid_records"] += 1
+        else:
+            self.data_quality_metrics["invalid_records"] += 1
+        self.data_quality_metrics["error_count"] += len(errors)
+        self.data_quality_metrics["warning_count"] += len(warnings)
+        self.data_quality_metrics["info_count"] += len(infos)
+        
+        self.data_quality_metrics["last_validation_timestamp"] = datetime.datetime.now().isoformat()
+        
+        return validation_result
+    
     def validate(self, records: List[TransformedRecord]) -> List[ValidationResult]:
         """
         Validate a list of transformed records.
@@ -3729,83 +3823,10 @@ class DataValidator:
         """
         start_time = time.time()
         results = []
-        accessor = self._get_accessor_function()
         
+        # Validate each record individually
         for record in records:
-            table_name = record.target_table
-            
-            # Skip validation if no rules exist for this table
-            if table_name not in self.rule_sets:
-                # Create a default passing validation result
-                results.append(ValidationResult(
-                    record=record,
-                    is_valid=True,
-                    info=[f"No validation rules defined for table '{table_name}'"]
-                ))
-                continue
-                
-            # Get the rule set for this table
-            rule_set = self.rule_sets[table_name]
-            
-            # Validate against all rules in the rule set
-            validation_issues = rule_set.validate(record.data, accessor)
-            
-            # Process validation issues by severity
-            errors = []
-            warnings = []
-            infos = []
-            
-            for issue in validation_issues:
-                severity = issue.get("severity", "error")
-                message = issue.get("message", "Unknown validation error")
-                
-                if severity == ValidationSeverity.ERROR.value:
-                    errors.append(message)
-                    self.data_quality_metrics["severity_distribution"]["error"] += 1
-                elif severity == ValidationSeverity.WARNING.value:
-                    warnings.append(message)
-                    self.data_quality_metrics["severity_distribution"]["warning"] += 1
-                elif severity == ValidationSeverity.INFO.value:
-                    infos.append(message)
-                    self.data_quality_metrics["severity_distribution"]["info"] += 1
-                
-                # Track field error distribution
-                field = issue.get("field", "unknown")
-                if field not in self.data_quality_metrics["field_error_distribution"]:
-                    self.data_quality_metrics["field_error_distribution"][field] = 0
-                self.data_quality_metrics["field_error_distribution"][field] += 1
-            
-            # Determine if record is valid (no errors)
-            is_valid = len(errors) == 0
-            
-            # Create validation metrics
-            metrics = {
-                "completion_percentage": self._calculate_completion_percentage(record.data),
-                "field_count": len(record.data) if isinstance(record.data, dict) else 0,
-                "validation_time_ms": int((time.time() - start_time) * 1000)
-            }
-            
-            # Create validation result
-            validation_result = ValidationResult(
-                record=record,
-                is_valid=is_valid,
-                errors=errors,
-                warnings=warnings,
-                info=infos,
-                metrics=metrics
-            )
-            
-            results.append(validation_result)
-            
-            # Update metrics
-            self.data_quality_metrics["total_records_validated"] += 1
-            if is_valid:
-                self.data_quality_metrics["valid_records"] += 1
-            else:
-                self.data_quality_metrics["invalid_records"] += 1
-            self.data_quality_metrics["error_count"] += len(errors)
-            self.data_quality_metrics["warning_count"] += len(warnings)
-            self.data_quality_metrics["info_count"] += len(infos)
+            results.append(self.validate_single(record))
         
         # Update validation rate
         elapsed_time = time.time() - start_time
@@ -4414,34 +4435,104 @@ class SyncOrchestrator:
     def full_sync(self) -> SyncResult:
         """
         Perform a full synchronization of all data from source to target.
+        Enhanced with batch processing and parallel execution for improved performance.
         
         Returns:
             SyncResult with details of the operation
         """
-        self.logger.info("Starting full sync")
+        self.logger.info("Starting full sync with performance optimization")
         start_time = datetime.datetime.now().isoformat()
         
         try:
+            # Check current resource usage and adjust parameters accordingly
+            resource_metrics = self.resource_monitor.get_current_metrics()
+            resource_recs = self.resource_monitor.recommend_resources("etl")
+            
+            # Log the resource recommendations
+            self.logger.info(
+                f"Resource recommendations: Threads={resource_recs['thread_count']}, "
+                f"Processes={resource_recs['process_count']}, "
+                f"Batch size={resource_recs['batch_size']}"
+            )
+            
+            # Adjust parallel processor based on recommendations
+            self.parallel_processor.thread_pool_size = resource_recs['thread_count']
+            self.parallel_processor.process_pool_size = resource_recs['process_count']
+            
+            # Adjust batch processor based on recommendations
+            self.batch_processor.config.batch_size = resource_recs['batch_size']
+            
+            # Record initial resource metrics
+            self.performance_metrics["resource_metrics"].append(resource_metrics)
+            
             # Detect all changes (full sync doesn't use last_sync_time)
+            self.logger.info("Detecting changes...")
             changes = self.change_detector.detect_changes()
+            self.logger.info(f"Detected {len(changes)} changes")
             
-            # Transform the data
-            transformed_records = self.transformer.transform(changes)
+            # Transform the data in batches with parallel processing
+            self.logger.info("Transforming records in optimized batches...")
             
-            # Validate the transformed data
-            validation_results = self.validator.validate(transformed_records)
+            # Create a function to transform a batch of changes
+            def transform_batch(batch):
+                return self.transformer.transform(batch)
+            
+            # Process changes in batches using parallel processing
+            transformed_records = self.batch_processor.process_in_batches(
+                changes, 
+                transform_batch,
+                table_key=lambda x: x.source_table
+            )
+            
+            # Store metrics from batch processing
+            batch_metrics = self.batch_processor.get_metrics()
+            self.performance_metrics["batch_metrics"]["transform"] = batch_metrics
+            self.logger.info(
+                f"Transformed {batch_metrics['records_processed']} records "
+                f"at {batch_metrics['processing_rate']:.2f} records/sec"
+            )
+            
+            # Validate the transformed data in parallel
+            self.logger.info("Validating records in parallel...")
+            
+            # Create a function to validate a single record
+            def validate_record(record):
+                return self.validator.validate_single(record)
+            
+            # Process validation in parallel
+            validation_results = self.parallel_processor.map(
+                validate_record, 
+                transformed_records,
+                show_progress=True
+            )
+            
+            # Store metrics from parallel processing
+            parallel_metrics = self.parallel_processor.get_metrics()
+            self.performance_metrics["parallel_metrics"]["validate"] = parallel_metrics
+            self.logger.info(
+                f"Validated {parallel_metrics['records_processed']} records "
+                f"at {parallel_metrics['processing_rate']:.2f} records/sec"
+            )
             
             # Write valid records to target
-            sync_result = self._write_to_target(validation_results)
+            sync_result = self._write_to_target_optimized(validation_results)
             
             # Set start time on result
             sync_result.start_time = start_time
+            
+            # Add performance metrics to sync result
+            sync_result.performance_metrics = self.performance_metrics
+            
+            # Log final resource metrics
+            final_resource_metrics = self.resource_monitor.get_current_metrics()
+            self.performance_metrics["resource_metrics"].append(final_resource_metrics)
             
             self.logger.info("Full sync completed successfully")
             return sync_result
             
         except Exception as e:
             self.logger.error(f"Full sync failed: {str(e)}")
+            # Stop resource monitoring in case of error
             return SyncResult(
                 success=False,
                 error_details=[{"error": str(e), "type": "Exception"}],
@@ -4612,6 +4703,316 @@ class SyncOrchestrator:
             warnings=warnings,
             end_time=datetime.datetime.now().isoformat()
         )
+    
+    def _write_to_target_optimized(self, validation_results: List[ValidationResult]) -> SyncResult:
+        """
+        Write valid records to the target system using optimized batch and parallel processing.
+        
+        Args:
+            validation_results: List of validation results to process
+            
+        Returns:
+            SyncResult with details of the operation
+        """
+        valid_results = [r for r in validation_results if r.is_valid]
+        invalid_results = [r for r in validation_results if not r.is_valid]
+        
+        self.logger.info(f"Writing {len(valid_results)} valid records to target with optimization")
+        
+        # Process warnings from validation
+        warnings = []
+        for result in validation_results:
+            if result.warnings:
+                warnings.extend([
+                    f"Record {result.record.source_id}: {warning}"
+                    for warning in result.warnings
+                ])
+        
+        # Add validation errors to error details
+        error_details = []
+        for result in invalid_results:
+            error_details.append({
+                "record_id": result.record.source_id,
+                "errors": result.errors,
+                "type": "Validation"
+            })
+            
+        # Group valid records by operation type and target table for batch processing
+        operation_groups = {}
+        for result in valid_results:
+            record = result.record
+            key = (record.operation, record.target_table)
+            if key not in operation_groups:
+                operation_groups[key] = []
+            operation_groups[key].append(record)
+            
+        self.logger.info(f"Grouped records into {len(operation_groups)} operation groups")
+        
+        # Use batch processor to handle each group
+        records_succeeded = 0
+        records_failed = 0
+        
+        # Get resource recommendations for database operations
+        resource_recs = self.resource_monitor.recommend_resources("database")
+        self.logger.info(
+            f"Database operation recommendations: Threads={resource_recs['thread_count']}, "
+            f"Batch size={resource_recs['batch_size']}"
+        )
+        
+        # Configure batch processor for database operations
+        self.batch_processor.config.batch_size = resource_recs['batch_size']
+        
+        for (operation, table), records in operation_groups.items():
+            self.logger.info(f"Processing {len(records)} {operation.value} operations for table {table}")
+            
+            # Create batch processing function based on operation type
+            if operation == ChangeType.INSERT:
+                batch_func = lambda batch: self._batch_insert(batch, table)
+            elif operation == ChangeType.UPDATE:
+                batch_func = lambda batch: self._batch_update(batch, table)
+            elif operation == ChangeType.DELETE:
+                batch_func = lambda batch: self._batch_delete(batch, table)
+            else:
+                self.logger.warning(f"Unknown operation type: {operation}")
+                continue
+                
+            try:
+                # Process this batch of records
+                batch_results = self.batch_processor.process_in_batches(
+                    records, batch_func
+                )
+                
+                # Count successes from batch results
+                success_count = sum(1 for result in batch_results if result.get("success", False))
+                records_succeeded += success_count
+                records_failed += len(records) - success_count
+                
+                # Add any batch errors to error details
+                for result in batch_results:
+                    if not result.get("success", False):
+                        error_details.append({
+                            "record_id": result.get("record_id", "unknown"),
+                            "error": result.get("error", "Unknown batch processing error"),
+                            "type": "Database"
+                        })
+                        
+            except Exception as e:
+                self.logger.error(f"Error in batch processing for {operation.value} on {table}: {str(e)}")
+                error_details.append({
+                    "operation": operation.value,
+                    "table": table,
+                    "error": str(e),
+                    "type": "BatchProcessing"
+                })
+                records_failed += len(records)
+                
+        # Store batch metrics
+        batch_metrics = self.batch_processor.get_metrics()
+        self.performance_metrics["batch_metrics"]["database"] = batch_metrics
+        
+        # After processing, create a SyncResult
+        return SyncResult(
+            success=len(error_details) == 0,
+            records_processed=len(validation_results),
+            records_succeeded=records_succeeded,
+            records_failed=records_failed + len(invalid_results),
+            error_details=error_details,
+            warnings=warnings,
+            end_time=datetime.datetime.now().isoformat()
+        )
+
+    def _batch_insert(self, records: List[TransformedRecord], table: str) -> List[Dict[str, Any]]:
+        """
+        Insert a batch of records into the target system
+        
+        Args:
+            records: List of records to insert
+            table: Target table name
+            
+        Returns:
+            List of result dictionaries
+        """
+        if not records:
+            return []
+            
+        results = []
+        
+        try:
+            # Build field list using the first record (assuming all records have the same structure)
+            fields = list(records[0].data.keys())
+            
+            # Build VALUES clause for multiple records
+            value_placeholder_rows = []
+            all_params = {}
+            
+            for i, record in enumerate(records):
+                # Create parameter names with index to avoid collision
+                placeholders = []
+                record_params = {}
+                
+                for field in fields:
+                    param_name = f"{field}_{i}"
+                    placeholders.append(f":{param_name}")
+                    record_params[param_name] = record.data.get(field)
+                    
+                value_placeholder_rows.append(f"({', '.join(placeholders)})")
+                all_params.update(record_params)
+                
+            # Build the full query
+            query = f"""
+            INSERT INTO {table} ({', '.join(fields)})
+            VALUES {', '.join(value_placeholder_rows)}
+            """
+            
+            # Execute the query
+            self.target_connection.execute_query(query, all_params)
+            
+            # Record success for each record
+            for record in records:
+                results.append({
+                    "success": True,
+                    "record_id": record.source_id,
+                    "operation": "insert"
+                })
+                
+        except Exception as e:
+            # If batch fails, add error for each record
+            error_msg = str(e)
+            self.logger.error(f"Batch insert error: {error_msg}")
+            
+            for record in records:
+                results.append({
+                    "success": False,
+                    "record_id": record.source_id,
+                    "operation": "insert",
+                    "error": error_msg
+                })
+                
+        return results
+    
+    def _batch_update(self, records: List[TransformedRecord], table: str) -> List[Dict[str, Any]]:
+        """
+        Update a batch of records in the target system
+        
+        Args:
+            records: List of records to update
+            table: Target table name
+            
+        Returns:
+            List of result dictionaries
+        """
+        results = []
+        
+        # For updates, we'll process records individually but in a transaction
+        try:
+            # Begin transaction
+            self.target_connection.execute_query("BEGIN TRANSACTION")
+            
+            for record in records:
+                try:
+                    # Build set clause for SQL
+                    set_clauses = [f"{field} = :{field}" for field in record.data.keys()]
+                    
+                    query = f"""
+                    UPDATE {table}
+                    SET {', '.join(set_clauses)}
+                    WHERE property_id = :target_id
+                    """
+                    
+                    # Execute the query with parameters including target_id
+                    params = {**record.data, "target_id": record.target_id}
+                    self.target_connection.execute_query(query, params)
+                    
+                    results.append({
+                        "success": True,
+                        "record_id": record.source_id,
+                        "operation": "update"
+                    })
+                    
+                except Exception as e:
+                    results.append({
+                        "success": False,
+                        "record_id": record.source_id,
+                        "operation": "update",
+                        "error": str(e)
+                    })
+                    
+            # Commit transaction
+            self.target_connection.execute_query("COMMIT")
+            
+        except Exception as e:
+            # If transaction fails, rollback and mark all as failed
+            self.logger.error(f"Transaction error in batch update: {str(e)}")
+            try:
+                self.target_connection.execute_query("ROLLBACK")
+            except Exception as rollback_e:
+                self.logger.error(f"Error rolling back transaction: {str(rollback_e)}")
+                
+            # Mark all records as failed
+            results = []
+            for record in records:
+                results.append({
+                    "success": False,
+                    "record_id": record.source_id,
+                    "operation": "update",
+                    "error": f"Transaction error: {str(e)}"
+                })
+                
+        return results
+    
+    def _batch_delete(self, records: List[TransformedRecord], table: str) -> List[Dict[str, Any]]:
+        """
+        Delete a batch of records from the target system
+        
+        Args:
+            records: List of records to delete
+            table: Target table name
+            
+        Returns:
+            List of result dictionaries
+        """
+        if not records:
+            return []
+            
+        results = []
+        
+        try:
+            # Build IN clause with all target IDs
+            target_ids = [record.target_id for record in records]
+            id_placeholders = [f":id_{i}" for i in range(len(target_ids))]
+            
+            params = {f"id_{i}": target_id for i, target_id in enumerate(target_ids)}
+            
+            query = f"""
+            DELETE FROM {table}
+            WHERE property_id IN ({', '.join(id_placeholders)})
+            """
+            
+            # Execute the query
+            self.target_connection.execute_query(query, params)
+            
+            # Record success for each record
+            for record in records:
+                results.append({
+                    "success": True,
+                    "record_id": record.source_id,
+                    "operation": "delete"
+                })
+                
+        except Exception as e:
+            # If batch fails, add error for each record
+            error_msg = str(e)
+            self.logger.error(f"Batch delete error: {error_msg}")
+            
+            for record in records:
+                results.append({
+                    "success": False,
+                    "record_id": record.source_id,
+                    "operation": "delete",
+                    "error": error_msg
+                })
+                
+        return results
     
     def _insert_record(self, record: TransformedRecord):
         """Insert a record into the target system"""
