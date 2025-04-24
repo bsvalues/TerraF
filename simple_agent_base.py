@@ -26,6 +26,7 @@ class AgentCategory:
     DOCUMENTATION = "documentation"
     AI_INTEGRATION = "ai_integration"
     DATA_INTEGRATION = "data_integration"
+    DOMAIN_EXPERT = "domain_expert"
 
 class Agent(ABC):
     """

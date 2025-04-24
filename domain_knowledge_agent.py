@@ -15,6 +15,9 @@ import logging
 from typing import Dict, List, Any, Optional, Union
 import datetime
 
+# Ensure we have the correct imports for domain knowledge
+import anthropic
+
 # Import the simplified agent base
 from simple_agent_base import Agent, AgentCategory
 
@@ -32,7 +35,7 @@ class DomainKnowledgeAgent(Agent):
     """
     
     def __init__(self, agent_id: str = "domain_knowledge_agent", 
-                capabilities: List[str] = None):
+                capabilities: Optional[List[str]] = None):
         """Initialize the Domain Knowledge Agent"""
         if capabilities is None:
             capabilities = [
@@ -61,10 +64,17 @@ class DomainKnowledgeAgent(Agent):
     def _initialize_model_interface(self):
         """Initialize interface for specialized AI models"""
         try:
-            # Import specialized models as needed
-            from agent_base import ModelInterface
-            self.model_interface = ModelInterface(model_id="claude-3-5-sonnet-20241022")
-            self.logger.info("Successfully initialized model interface with Anthropic Claude")
+            # Import our enhanced multi-model interface
+            from multi_model_interface import MultiModelInterface
+            self.model_interface = MultiModelInterface(preferred_model="claude-3-5-sonnet-20241022")
+            
+            # Log available models
+            available_models = self.model_interface.get_available_models()
+            available_providers = self.model_interface.get_available_providers()
+            
+            self.logger.info(f"Successfully initialized multi-model interface with {len(available_models)} models")
+            self.logger.info(f"Available providers: {', '.join(available_providers)}")
+            self.logger.info(f"Available models: {', '.join(available_models)}")
         except Exception as e:
             self.logger.error(f"Error initializing model interface: {str(e)}")
             self.model_interface = None
@@ -583,42 +593,55 @@ class DomainKnowledgeAgent(Agent):
         query = task.get("query", "")
         domain = task.get("domain", "general")
         context = task.get("context", {})
+        model_preference = task.get("model", None)
         
         try:
-            # Use the model interface to get specialized knowledge
+            # Use the multi-model interface to get specialized knowledge
             if self.model_interface:
-                # Construct prompt with domain-specific context
-                domain_context = ""
+                # Add domain knowledge to context
                 if domain in self.knowledge_bases:
-                    domain_context = f"Domain: {domain}\nContext: {json.dumps(self.knowledge_bases[domain], indent=2)}"
+                    if "domain_knowledge" not in context:
+                        context["domain_knowledge"] = {}
+                    context["domain_knowledge"] = self.knowledge_bases[domain]
                 
-                prompt = f"""
-                Domain Knowledge Query:
-                {query}
+                # Select the best model for the domain if not specified
+                model_to_use = model_preference
+                if not model_to_use:
+                    # Choose appropriate model based on domain
+                    if domain in ["tax_assessment", "appraisal"]:
+                        model_candidates = ["claude-3-5-sonnet-20241022", "gpt-4o", "gemini-pro"]
+                    elif domain in ["gis", "database"]:
+                        model_candidates = ["gpt-4o", "deepseek-coder", "claude-3-5-sonnet-20241022"]
+                    elif domain in ["real_estate", "local_market"]:
+                        model_candidates = ["perplexity-online-llama-3", "claude-3-5-sonnet-20241022", "gpt-4o"]
+                    else:
+                        model_candidates = ["gpt-4o", "claude-3-5-sonnet-20241022"]
+                    
+                    # Select first available model from candidates
+                    available_models = self.model_interface.get_available_models()
+                    for model in model_candidates:
+                        if model in available_models:
+                            model_to_use = model
+                            break
                 
-                {domain_context}
-                
-                Additional Context:
-                {json.dumps(context, indent=2)}
-                
-                Please provide a detailed, expert-level response to this query, incorporating
-                domain-specific knowledge and best practices. Include specific methodologies,
-                regulations, standards, or formulas where appropriate.
-                """
-                
-                # Query the model
-                response = self.model_interface.generate_text(
-                    prompt=prompt,
-                    system_message="You are an expert in property assessment, real estate, and GIS systems with deep knowledge of appraisal methodologies, tax regulations, and market analysis techniques.",
-                    max_tokens=1000
+                # Get expert response
+                response_text, metadata = self.model_interface.get_domain_expert_response(
+                    query=query,
+                    domain=domain,
+                    context=context,
+                    model=model_to_use
                 )
                 
+                # Return the response with metadata
                 return {
                     "status": "success",
                     "query": query,
                     "domain": domain,
-                    "response": response,
-                    "source": "enhanced_knowledge_model"
+                    "response": response_text,
+                    "source": metadata.get("model", "enhanced_knowledge_model"),
+                    "provider": metadata.get("provider", "unknown"),
+                    "latency": metadata.get("latency", 0),
+                    "timestamp": metadata.get("timestamp", datetime.datetime.now().isoformat())
                 }
             else:
                 # Fallback to basic knowledge base retrieval
