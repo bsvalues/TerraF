@@ -15,8 +15,8 @@ import time
 import random
 import logging
 import datetime
-from typing import Dict, List, Any, Optional, Union, Tuple
 from enum import Enum
+from typing import Dict, List, Any, Optional, Tuple, Union, Callable, TypedDict, TypeVar, Generic
 
 # For demo purposes, we'll simulate database connections
 class DatabaseConnection:
@@ -206,28 +206,49 @@ class TransformedRecord:
 
 
 class ValidationResult:
-    """Represents the result of validating a transformed record"""
+    """
+    Represents the result of validating a transformed record.
+    Enhanced with additional informational messages and validation metrics.
+    """
     def __init__(
         self,
         record: TransformedRecord,
         is_valid: bool,
         errors: List[str] = None,
-        warnings: List[str] = None
+        warnings: List[str] = None,
+        info: List[str] = None,
+        metrics: Dict[str, Any] = None
     ):
         self.record = record
         self.is_valid = is_valid
         self.errors = errors or []
         self.warnings = warnings or []
-        self.validation_timestamp = datetime.datetime.now().isoformat()
+        self.info = info or []  # Informational messages, not errors or warnings
+        self.metrics = metrics or {}  # Validation metrics like completion, accuracy
+        self.validation_time = datetime.datetime.now().isoformat()
+        
+    def get_summary(self) -> Dict[str, Any]:
+        """Get a summary of the validation result"""
+        return {
+            "is_valid": self.is_valid,
+            "error_count": len(self.errors),
+            "warning_count": len(self.warnings),
+            "info_count": len(self.info),
+            "record_id": self.record.source_id,
+            "table": self.record.target_table,
+            "validation_time": self.validation_time
+        }
         
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for serialization"""
+        """Convert validation result to a dictionary"""
         return {
             "record": self.record.to_dict(),
             "is_valid": self.is_valid,
             "errors": self.errors,
             "warnings": self.warnings,
-            "validation_timestamp": self.validation_timestamp
+            "info": self.info,
+            "metrics": self.metrics,
+            "validation_time": self.validation_time
         }
 
 
@@ -2184,111 +2205,837 @@ class DataTransformer:
         }
 
 
-class DataValidator:
-    """
-    Validates transformed data before it is written to the target system.
-    """
-    def __init__(self, validation_rules: Dict[str, Any] = None):
-        self.validation_rules = validation_rules or self._get_default_validation_rules()
-        self.logger = logging.getLogger(self.__class__.__name__)
+class ValidationSeverity(Enum):
+    """Defines severity levels for validation messages"""
+    ERROR = "error"        # Critical issue that prevents sync
+    WARNING = "warning"    # Potential issue but allows sync
+    INFO = "info"          # Informational message only
+
+
+class ValidationRule:
+    """Base class for all validation rules"""
+    def __init__(self, field_path: str, severity: ValidationSeverity = ValidationSeverity.ERROR,
+                 error_message: str = None):
+        self.field_path = field_path
+        self.severity = severity
+        self.error_message = error_message
         
-    def validate(self, records: List[TransformedRecord]) -> List[ValidationResult]:
+    def validate(self, data: Dict[str, Any], accessor: Callable) -> List[Dict[str, Any]]:
         """
-        Validate transformed records against defined rules.
+        Validate data against this rule
         
         Args:
-            records: List of transformed records
+            data: The record data to validate
+            accessor: Function to access nested fields
+            
+        Returns:
+            List of validation issues (empty if validation passes)
+        """
+        raise NotImplementedError("Subclasses must implement validate()")
+    
+    def get_message(self, value: Any = None) -> str:
+        """Get the error message for this rule"""
+        if self.error_message:
+            try:
+                return self.error_message.format(field=self.field_path, value=value)
+            except:
+                return self.error_message
+        return f"Validation failed for field '{self.field_path}'"
+    
+    def describe(self) -> str:
+        """Describe this rule"""
+        return "Base validation rule"
+
+
+class RequiredFieldRule(ValidationRule):
+    """Rule that requires a field to be present and non-None"""
+    def validate(self, data: Dict[str, Any], accessor: Callable) -> List[Dict[str, Any]]:
+        value = accessor(data, self.field_path)
+        
+        if value is None:
+            return [{
+                "field": self.field_path,
+                "severity": self.severity.value,
+                "message": self.get_message(),
+                "rule_type": "required"
+            }]
+        return []
+    
+    def get_message(self, value: Any = None) -> str:
+        if self.error_message:
+            return super().get_message(value)
+        return f"Required field '{self.field_path}' is missing"
+    
+    def describe(self) -> str:
+        return f"Field '{self.field_path}' is required"
+
+
+class TypeValidationRule(ValidationRule):
+    """Rule that validates the type of a field"""
+    def __init__(self, field_path: str, expected_type: str, 
+                 severity: ValidationSeverity = ValidationSeverity.ERROR,
+                 error_message: str = None):
+        super().__init__(field_path, severity, error_message)
+        self.expected_type = expected_type
+        
+    def validate(self, data: Dict[str, Any], accessor: Callable) -> List[Dict[str, Any]]:
+        value = accessor(data, self.field_path)
+        
+        # Skip validation if value is None
+        if value is None:
+            return []
+            
+        if not self._check_type(value, self.expected_type):
+            return [{
+                "field": self.field_path,
+                "severity": self.severity.value,
+                "message": self.get_message(value),
+                "rule_type": "type",
+                "expected_type": self.expected_type,
+                "actual_value": str(value)
+            }]
+        return []
+    
+    def _check_type(self, value: Any, expected_type: str) -> bool:
+        """Check if a value matches the expected type"""
+        if expected_type == 'string':
+            return isinstance(value, str)
+        elif expected_type == 'integer':
+            return isinstance(value, int)
+        elif expected_type == 'number':
+            return isinstance(value, (int, float))
+        elif expected_type == 'boolean':
+            return isinstance(value, bool)
+        elif expected_type == 'object':
+            return isinstance(value, dict)
+        elif expected_type == 'array':
+            return isinstance(value, (list, tuple))
+        elif expected_type == 'date':
+            # Simple date format check, would be more robust in production
+            if not isinstance(value, str):
+                return False
+            try:
+                return bool(re.match(r'^\d{4}-\d{2}-\d{2}', value))
+            except:
+                return False
+        else:
+            return True  # Unknown type, assume valid
+    
+    def get_message(self, value: Any = None) -> str:
+        if self.error_message:
+            return super().get_message(value)
+        return f"Field '{self.field_path}' has wrong type. Expected {self.expected_type}"
+    
+    def describe(self) -> str:
+        return f"Field '{self.field_path}' must be of type {self.expected_type}"
+
+
+class RangeValidationRule(ValidationRule):
+    """Rule that validates numeric values are within a specified range"""
+    def __init__(self, field_path: str, min_value: float = None, max_value: float = None,
+                 severity: ValidationSeverity = ValidationSeverity.ERROR,
+                 error_message: str = None):
+        super().__init__(field_path, severity, error_message)
+        self.min_value = min_value
+        self.max_value = max_value
+        
+    def validate(self, data: Dict[str, Any], accessor: Callable) -> List[Dict[str, Any]]:
+        value = accessor(data, self.field_path)
+        
+        # Skip validation if value is None
+        if value is None:
+            return []
+        
+        try:
+            # Convert to numeric if needed
+            if not isinstance(value, (int, float)):
+                value = float(value)
+                
+            if self.min_value is not None and value < self.min_value:
+                return [{
+                    "field": self.field_path,
+                    "severity": self.severity.value,
+                    "message": self.get_message(value),
+                    "rule_type": "range",
+                    "constraint": "min",
+                    "threshold": self.min_value,
+                    "actual_value": value
+                }]
+                
+            if self.max_value is not None and value > self.max_value:
+                return [{
+                    "field": self.field_path,
+                    "severity": self.severity.value,
+                    "message": self.get_message(value),
+                    "rule_type": "range",
+                    "constraint": "max",
+                    "threshold": self.max_value,
+                    "actual_value": value
+                }]
+        except (ValueError, TypeError):
+            # If value can't be converted to a number, return a type error
+            return [{
+                "field": self.field_path,
+                "severity": self.severity.value,
+                "message": f"Field '{self.field_path}' must be numeric for range validation",
+                "rule_type": "type_conversion",
+                "actual_value": str(value)
+            }]
+            
+        return []
+    
+    def get_message(self, value: Any = None) -> str:
+        if self.error_message:
+            return super().get_message(value)
+            
+        if self.min_value is not None and self.max_value is not None:
+            return f"Field '{self.field_path}' value must be between {self.min_value} and {self.max_value}"
+        elif self.min_value is not None:
+            return f"Field '{self.field_path}' value must be at least {self.min_value}"
+        elif self.max_value is not None:
+            return f"Field '{self.field_path}' value must be at most {self.max_value}"
+        else:
+            return f"Range validation failed for field '{self.field_path}'"
+    
+    def describe(self) -> str:
+        if self.min_value is not None and self.max_value is not None:
+            return f"Field '{self.field_path}' must be between {self.min_value} and {self.max_value}"
+        elif self.min_value is not None:
+            return f"Field '{self.field_path}' must be >= {self.min_value}"
+        elif self.max_value is not None:
+            return f"Field '{self.field_path}' must be <= {self.max_value}"
+        else:
+            return f"Range validation for '{self.field_path}'"
+
+
+class LengthValidationRule(ValidationRule):
+    """Rule that validates string length is within a specified range"""
+    def __init__(self, field_path: str, min_length: int = None, max_length: int = None,
+                 severity: ValidationSeverity = ValidationSeverity.ERROR,
+                 error_message: str = None):
+        super().__init__(field_path, severity, error_message)
+        self.min_length = min_length
+        self.max_length = max_length
+        
+    def validate(self, data: Dict[str, Any], accessor: Callable) -> List[Dict[str, Any]]:
+        value = accessor(data, self.field_path)
+        
+        # Skip validation if value is None
+        if value is None:
+            return []
+        
+        # Convert to string if needed
+        str_value = str(value)
+        length = len(str_value)
+        
+        if self.min_length is not None and length < self.min_length:
+            return [{
+                "field": self.field_path,
+                "severity": self.severity.value,
+                "message": self.get_message(value),
+                "rule_type": "length",
+                "constraint": "min_length",
+                "threshold": self.min_length,
+                "actual_length": length
+            }]
+            
+        if self.max_length is not None and length > self.max_length:
+            return [{
+                "field": self.field_path,
+                "severity": self.severity.value,
+                "message": self.get_message(value),
+                "rule_type": "length",
+                "constraint": "max_length",
+                "threshold": self.max_length,
+                "actual_length": length
+            }]
+            
+        return []
+    
+    def get_message(self, value: Any = None) -> str:
+        if self.error_message:
+            return super().get_message(value)
+            
+        length = len(str(value)) if value is not None else 0
+        
+        if self.min_length is not None and self.max_length is not None:
+            return f"Field '{self.field_path}' length must be between {self.min_length} and {self.max_length} characters (currently {length})"
+        elif self.min_length is not None:
+            return f"Field '{self.field_path}' length must be at least {self.min_length} characters (currently {length})"
+        elif self.max_length is not None:
+            return f"Field '{self.field_path}' length must be at most {self.max_length} characters (currently {length})"
+        else:
+            return f"Length validation failed for field '{self.field_path}'"
+    
+    def describe(self) -> str:
+        if self.min_length is not None and self.max_length is not None:
+            return f"Field '{self.field_path}' length must be between {self.min_length} and {self.max_length}"
+        elif self.min_length is not None:
+            return f"Field '{self.field_path}' length must be >= {self.min_length}"
+        elif self.max_length is not None:
+            return f"Field '{self.field_path}' length must be <= {self.max_length}"
+        else:
+            return f"Length validation for '{self.field_path}'"
+
+
+class PatternValidationRule(ValidationRule):
+    """Rule that validates string values match a regular expression pattern"""
+    def __init__(self, field_path: str, pattern: str,
+                 severity: ValidationSeverity = ValidationSeverity.ERROR,
+                 error_message: str = None):
+        super().__init__(field_path, severity, error_message)
+        self.pattern = pattern
+        self._compiled_pattern = re.compile(pattern)
+        
+    def validate(self, data: Dict[str, Any], accessor: Callable) -> List[Dict[str, Any]]:
+        value = accessor(data, self.field_path)
+        
+        # Skip validation if value is None
+        if value is None:
+            return []
+        
+        # Convert to string if needed
+        str_value = str(value)
+        
+        if not self._compiled_pattern.match(str_value):
+            return [{
+                "field": self.field_path,
+                "severity": self.severity.value,
+                "message": self.get_message(value),
+                "rule_type": "pattern",
+                "pattern": self.pattern,
+                "actual_value": str_value
+            }]
+            
+        return []
+    
+    def get_message(self, value: Any = None) -> str:
+        if self.error_message:
+            return super().get_message(value)
+        return f"Field '{self.field_path}' value does not match required pattern"
+    
+    def describe(self) -> str:
+        return f"Field '{self.field_path}' must match pattern: {self.pattern}"
+
+
+class CrossFieldValidationRule(ValidationRule):
+    """Rule that validates relationships between multiple fields"""
+    def __init__(self, field_path: str, related_field_path: str, relation_type: str,
+                 severity: ValidationSeverity = ValidationSeverity.ERROR,
+                 error_message: str = None):
+        super().__init__(field_path, severity, error_message)
+        self.related_field_path = related_field_path
+        self.relation_type = relation_type
+        
+    def validate(self, data: Dict[str, Any], accessor: Callable) -> List[Dict[str, Any]]:
+        value1 = accessor(data, self.field_path)
+        value2 = accessor(data, self.related_field_path)
+        
+        # Skip validation if either value is None
+        if value1 is None or value2 is None:
+            return []
+        
+        valid = False
+        
+        if self.relation_type == 'eq':
+            valid = value1 == value2
+        elif self.relation_type == 'ne':
+            valid = value1 != value2
+        elif self.relation_type == 'gt':
+            try:
+                valid = float(value1) > float(value2)
+            except (ValueError, TypeError):
+                return [{
+                    "field": self.field_path,
+                    "related_field": self.related_field_path,
+                    "severity": self.severity.value,
+                    "message": f"Fields must be numeric for '{self.relation_type}' comparison",
+                    "rule_type": "cross_field",
+                    "values": {self.field_path: str(value1), self.related_field_path: str(value2)}
+                }]
+        elif self.relation_type == 'ge':
+            try:
+                valid = float(value1) >= float(value2)
+            except (ValueError, TypeError):
+                return [{
+                    "field": self.field_path,
+                    "related_field": self.related_field_path,
+                    "severity": self.severity.value,
+                    "message": f"Fields must be numeric for '{self.relation_type}' comparison",
+                    "rule_type": "cross_field",
+                    "values": {self.field_path: str(value1), self.related_field_path: str(value2)}
+                }]
+        elif self.relation_type == 'lt':
+            try:
+                valid = float(value1) < float(value2)
+            except (ValueError, TypeError):
+                return [{
+                    "field": self.field_path,
+                    "related_field": self.related_field_path,
+                    "severity": self.severity.value,
+                    "message": f"Fields must be numeric for '{self.relation_type}' comparison",
+                    "rule_type": "cross_field",
+                    "values": {self.field_path: str(value1), self.related_field_path: str(value2)}
+                }]
+        elif self.relation_type == 'le':
+            try:
+                valid = float(value1) <= float(value2)
+            except (ValueError, TypeError):
+                return [{
+                    "field": self.field_path,
+                    "related_field": self.related_field_path,
+                    "severity": self.severity.value,
+                    "message": f"Fields must be numeric for '{self.relation_type}' comparison",
+                    "rule_type": "cross_field",
+                    "values": {self.field_path: str(value1), self.related_field_path: str(value2)}
+                }]
+        elif self.relation_type == 'contains':
+            valid = str(value2) in str(value1)
+        elif self.relation_type == 'starts_with':
+            valid = str(value1).startswith(str(value2))
+        elif self.relation_type == 'ends_with':
+            valid = str(value1).endswith(str(value2))
+            
+        if not valid:
+            return [{
+                "field": self.field_path,
+                "related_field": self.related_field_path,
+                "severity": self.severity.value,
+                "message": self.get_message(value1),
+                "rule_type": "cross_field",
+                "relation": self.relation_type,
+                "values": {self.field_path: str(value1), self.related_field_path: str(value2)}
+            }]
+            
+        return []
+    
+    def get_message(self, value: Any = None) -> str:
+        if self.error_message:
+            return super().get_message(value)
+            
+        relation_desc = {
+            'eq': 'equal to',
+            'ne': 'not equal to',
+            'gt': 'greater than',
+            'ge': 'greater than or equal to',
+            'lt': 'less than',
+            'le': 'less than or equal to',
+            'contains': 'containing',
+            'starts_with': 'starting with',
+            'ends_with': 'ending with'
+        }.get(self.relation_type, self.relation_type)
+        
+        return f"Field '{self.field_path}' must be {relation_desc} '{self.related_field_path}'"
+    
+    def describe(self) -> str:
+        relation_desc = {
+            'eq': '==',
+            'ne': '!=',
+            'gt': '>',
+            'ge': '>=',
+            'lt': '<',
+            'le': '<=',
+            'contains': 'contains',
+            'starts_with': 'starts with',
+            'ends_with': 'ends with'
+        }.get(self.relation_type, self.relation_type)
+        
+        return f"Field '{self.field_path}' {relation_desc} '{self.related_field_path}'"
+
+
+class CustomValidationRule(ValidationRule):
+    """Rule that uses a custom validation function"""
+    def __init__(self, field_path: str, validation_func: Callable,
+                 severity: ValidationSeverity = ValidationSeverity.ERROR,
+                 error_message: str = None, description: str = None):
+        super().__init__(field_path, severity, error_message)
+        self.validation_func = validation_func
+        self.description = description or "Custom validation rule"
+        
+    def validate(self, data: Dict[str, Any], accessor: Callable) -> List[Dict[str, Any]]:
+        value = accessor(data, self.field_path)
+        
+        try:
+            # Call the custom validation function
+            result = self.validation_func(value, data)
+            
+            # If result is boolean, interpret True as valid
+            if isinstance(result, bool):
+                if result:
+                    return []
+                else:
+                    return [{
+                        "field": self.field_path,
+                        "severity": self.severity.value,
+                        "message": self.get_message(value),
+                        "rule_type": "custom",
+                        "description": self.description
+                    }]
+            
+            # If result is a string, interpret as error message
+            elif isinstance(result, str):
+                if not result:
+                    return []
+                else:
+                    return [{
+                        "field": self.field_path,
+                        "severity": self.severity.value,
+                        "message": result,
+                        "rule_type": "custom",
+                        "description": self.description
+                    }]
+            
+            # If result is a list, return it directly
+            elif isinstance(result, list):
+                return result
+            
+            # Otherwise assume validation passed
+            return []
+            
+        except Exception as e:
+            # If validation function raises an exception, return that as an error
+            return [{
+                "field": self.field_path,
+                "severity": self.severity.value,
+                "message": f"Validation error: {str(e)}",
+                "rule_type": "custom",
+                "description": self.description,
+                "exception": str(e)
+            }]
+    
+    def describe(self) -> str:
+        return self.description
+
+
+class RuleSet:
+    """A collection of validation rules for a specific entity type"""
+    def __init__(self, name: str, rules: List[ValidationRule] = None):
+        self.name = name
+        self.rules = rules or []
+        
+    def add_rule(self, rule: ValidationRule) -> 'RuleSet':
+        """Add a rule to this rule set"""
+        self.rules.append(rule)
+        return self
+        
+    def validate(self, data: Dict[str, Any], accessor: Callable) -> List[Dict[str, Any]]:
+        """Validate data against all rules in this rule set"""
+        results = []
+        for rule in self.rules:
+            results.extend(rule.validate(data, accessor))
+        return results
+
+
+class DataValidator:
+    """
+    Enhanced validator with composable validation rules, cross-field validations,
+    and data quality validation metrics.
+    """
+    def __init__(self, validation_rules: Dict[str, Any] = None):
+        self.logger = logging.getLogger(self.__class__.__name__)
+        
+        # Initialize from legacy rule format if provided
+        if validation_rules:
+            self.rule_sets = self._convert_legacy_rules(validation_rules)
+        else:
+            # Initialize modern rule sets
+            self.rule_sets = self._create_default_rule_sets()
+        
+        # Data quality metrics
+        self.data_quality_metrics = {
+            "total_records_validated": 0,
+            "valid_records": 0,
+            "invalid_records": 0,
+            "error_count": 0,
+            "warning_count": 0,
+            "info_count": 0,
+            "validation_rate": 0,  # Records per second
+            "field_error_distribution": {},
+            "severity_distribution": {
+                "error": 0,
+                "warning": 0,
+                "info": 0
+            },
+            "last_validation_timestamp": None
+        }
+        
+    def _convert_legacy_rules(self, legacy_rules: Dict[str, Any]) -> Dict[str, RuleSet]:
+        """Convert legacy validation rules format to modern rule sets"""
+        rule_sets = {}
+        
+        for table, table_rules in legacy_rules.items():
+            rule_set = RuleSet(name=table)
+            
+            for field, field_rules in table_rules.items():
+                if "required" in field_rules and field_rules["required"]:
+                    rule_set.add_rule(RequiredFieldRule(field_path=field))
+                    
+                if "type" in field_rules:
+                    rule_set.add_rule(TypeValidationRule(
+                        field_path=field, 
+                        expected_type=field_rules["type"]
+                    ))
+                    
+                if "min_length" in field_rules or "max_length" in field_rules:
+                    rule_set.add_rule(LengthValidationRule(
+                        field_path=field, 
+                        min_length=field_rules.get("min_length"),
+                        max_length=field_rules.get("max_length")
+                    ))
+                    
+                if "pattern" in field_rules:
+                    rule_set.add_rule(PatternValidationRule(
+                        field_path=field, 
+                        pattern=field_rules["pattern"]
+                    ))
+                    
+                if "min_value" in field_rules or "max_value" in field_rules:
+                    rule_set.add_rule(RangeValidationRule(
+                        field_path=field, 
+                        min_value=field_rules.get("min_value"),
+                        max_value=field_rules.get("max_value")
+                    ))
+                
+            rule_sets[table] = rule_set
+            
+        return rule_sets
+    
+    def _create_default_rule_sets(self) -> Dict[str, RuleSet]:
+        """Create default rule sets for common tables"""
+        rule_sets = {}
+        
+        # Property rule set
+        property_rules = RuleSet(name="properties")
+        property_rules.add_rule(RequiredFieldRule("parcel_id"))
+        property_rules.add_rule(TypeValidationRule("parcel_id", "string"))
+        property_rules.add_rule(RequiredFieldRule("ownership.primary_owner"))
+        property_rules.add_rule(LengthValidationRule("ownership.primary_owner", min_length=2, max_length=100))
+        property_rules.add_rule(TypeValidationRule("valuation.land", "number"))
+        property_rules.add_rule(TypeValidationRule("valuation.improvements", "number"))
+        property_rules.add_rule(TypeValidationRule("valuation.total", "number"))
+        property_rules.add_rule(CrossFieldValidationRule(
+            "valuation.total", "valuation.land", "gt", 
+            error_message="Total valuation must be greater than land value"
+        ))
+        rule_sets["properties"] = property_rules
+        
+        # Assessment rule set
+        assessment_rules = RuleSet(name="assessments")
+        assessment_rules.add_rule(RequiredFieldRule("property_id"))
+        assessment_rules.add_rule(RequiredFieldRule("assessment_date"))
+        assessment_rules.add_rule(TypeValidationRule("assessment_date", "date"))
+        assessment_rules.add_rule(RequiredFieldRule("assessed_value"))
+        assessment_rules.add_rule(TypeValidationRule("assessed_value", "number"))
+        assessment_rules.add_rule(RangeValidationRule("assessed_value", min_value=0))
+        rule_sets["assessments"] = assessment_rules
+        
+        # Person rule set
+        person_rules = RuleSet(name="persons")
+        person_rules.add_rule(RequiredFieldRule("full_name"))
+        person_rules.add_rule(LengthValidationRule("full_name", min_length=2, max_length=100))
+        person_rules.add_rule(TypeValidationRule("email", "string"))
+        person_rules.add_rule(PatternValidationRule(
+            "email", 
+            r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', 
+            severity=ValidationSeverity.WARNING,
+            error_message="Email format appears to be invalid"
+        ))
+        rule_sets["persons"] = person_rules
+        
+        return rule_sets
+    
+    def add_rule_set(self, table_name: str, rule_set: RuleSet) -> None:
+        """Add a rule set for a table"""
+        self.rule_sets[table_name] = rule_set
+        
+    def add_rule(self, table_name: str, rule: ValidationRule) -> None:
+        """Add a rule to an existing rule set, or create a new one"""
+        if table_name not in self.rule_sets:
+            self.rule_sets[table_name] = RuleSet(name=table_name)
+        self.rule_sets[table_name].add_rule(rule)
+        
+    def _get_accessor_function(self) -> Callable:
+        """Get a function that can access nested fields in data"""
+        def accessor(data: Dict[str, Any], field_path: str) -> Any:
+            """Access a nested field in data using dot notation"""
+            if not field_path:
+                return None
+                
+            parts = field_path.split('.')
+            current = data
+            
+            for part in parts:
+                if current is None:
+                    return None
+                if isinstance(current, dict) and part in current:
+                    current = current[part]
+                else:
+                    return None
+                    
+            return current
+            
+        return accessor
+    
+    def validate(self, records: List[TransformedRecord]) -> List[ValidationResult]:
+        """
+        Validate a list of transformed records.
+        
+        Args:
+            records: List of transformed records to validate
             
         Returns:
             List of validation results
         """
-        self.logger.info(f"Validating {len(records)} records")
+        start_time = time.time()
+        results = []
+        accessor = self._get_accessor_function()
         
-        validation_results = []
         for record in records:
-            is_valid = True
+            table_name = record.target_table
+            
+            # Skip validation if no rules exist for this table
+            if table_name not in self.rule_sets:
+                # Create a default passing validation result
+                results.append(ValidationResult(
+                    record=record,
+                    is_valid=True,
+                    info=[f"No validation rules defined for table '{table_name}'"]
+                ))
+                continue
+                
+            # Get the rule set for this table
+            rule_set = self.rule_sets[table_name]
+            
+            # Validate against all rules in the rule set
+            validation_issues = rule_set.validate(record.data, accessor)
+            
+            # Process validation issues by severity
             errors = []
             warnings = []
+            infos = []
             
-            if record.target_table in self.validation_rules:
-                rules = self.validation_rules[record.target_table]
+            for issue in validation_issues:
+                severity = issue.get("severity", "error")
+                message = issue.get("message", "Unknown validation error")
                 
-                # Check required fields
-                for field in rules.get('required_fields', []):
-                    if self._get_nested_field(record.data, field) is None:
-                        is_valid = False
-                        errors.append(f"Required field '{field}' is missing")
+                if severity == ValidationSeverity.ERROR.value:
+                    errors.append(message)
+                    self.data_quality_metrics["severity_distribution"]["error"] += 1
+                elif severity == ValidationSeverity.WARNING.value:
+                    warnings.append(message)
+                    self.data_quality_metrics["severity_distribution"]["warning"] += 1
+                elif severity == ValidationSeverity.INFO.value:
+                    infos.append(message)
+                    self.data_quality_metrics["severity_distribution"]["info"] += 1
                 
-                # Check field types
-                for field, expected_type in rules.get('field_types', {}).items():
-                    value = self._get_nested_field(record.data, field)
-                    if value is not None and not self._check_type(value, expected_type):
-                        is_valid = False
-                        errors.append(f"Field '{field}' has wrong type. Expected {expected_type}")
-                
-                # Check field constraints
-                for field, constraints in rules.get('constraints', {}).items():
-                    value = self._get_nested_field(record.data, field)
-                    if value is not None:
-                        # Check min/max for numeric fields
-                        if 'min' in constraints and value < constraints['min']:
-                            is_valid = False
-                            errors.append(f"Field '{field}' value {value} is less than minimum {constraints['min']}")
-                        
-                        if 'max' in constraints and value > constraints['max']:
-                            is_valid = False
-                            errors.append(f"Field '{field}' value {value} is greater than maximum {constraints['max']}")
-                        
-                        # Check length for string fields
-                        if 'min_length' in constraints and len(str(value)) < constraints['min_length']:
-                            is_valid = False
-                            errors.append(f"Field '{field}' length is less than minimum {constraints['min_length']}")
-                        
-                        if 'max_length' in constraints and len(str(value)) > constraints['max_length']:
-                            is_valid = False
-                            errors.append(f"Field '{field}' length is greater than maximum {constraints['max_length']}")
-                        
-                        # Check pattern for string fields
-                        if 'pattern' in constraints and not re.match(constraints['pattern'], str(value)):
-                            is_valid = False
-                            errors.append(f"Field '{field}' does not match required pattern")
-                
-                # Check warning thresholds
-                for field, thresholds in rules.get('warnings', {}).items():
-                    value = self._get_nested_field(record.data, field)
-                    if value is not None:
-                        if 'min' in thresholds and value < thresholds['min']:
-                            warnings.append(f"Field '{field}' value {value} is below warning threshold {thresholds['min']}")
-                        
-                        if 'max' in thresholds and value > thresholds['max']:
-                            warnings.append(f"Field '{field}' value {value} is above warning threshold {thresholds['max']}")
+                # Track field error distribution
+                field = issue.get("field", "unknown")
+                if field not in self.data_quality_metrics["field_error_distribution"]:
+                    self.data_quality_metrics["field_error_distribution"][field] = 0
+                self.data_quality_metrics["field_error_distribution"][field] += 1
             
-            validation_results.append(ValidationResult(
+            # Determine if record is valid (no errors)
+            is_valid = len(errors) == 0
+            
+            # Create validation metrics
+            metrics = {
+                "completion_percentage": self._calculate_completion_percentage(record.data),
+                "field_count": len(record.data) if isinstance(record.data, dict) else 0,
+                "validation_time_ms": int((time.time() - start_time) * 1000)
+            }
+            
+            # Create validation result
+            validation_result = ValidationResult(
                 record=record,
                 is_valid=is_valid,
                 errors=errors,
-                warnings=warnings
-            ))
-        
-        valid_count = sum(1 for r in validation_results if r.is_valid)
-        self.logger.info(f"Validation complete: {valid_count}/{len(records)} records valid")
-        return validation_results
-    
-    def _get_nested_field(self, data: Dict[str, Any], field_path: str) -> Any:
-        """Get a nested field value using dot notation"""
-        if '.' not in field_path:
-            return data.get(field_path)
-        
-        parts = field_path.split('.')
-        current = data
-        
-        for part in parts:
-            if isinstance(current, dict) and part in current:
-                current = current[part]
+                warnings=warnings,
+                info=infos,
+                metrics=metrics
+            )
+            
+            results.append(validation_result)
+            
+            # Update metrics
+            self.data_quality_metrics["total_records_validated"] += 1
+            if is_valid:
+                self.data_quality_metrics["valid_records"] += 1
             else:
-                return None
+                self.data_quality_metrics["invalid_records"] += 1
+            self.data_quality_metrics["error_count"] += len(errors)
+            self.data_quality_metrics["warning_count"] += len(warnings)
+            self.data_quality_metrics["info_count"] += len(infos)
         
-        return current
+        # Update validation rate
+        elapsed_time = time.time() - start_time
+        if elapsed_time > 0:
+            self.data_quality_metrics["validation_rate"] = len(records) / elapsed_time
+        
+        self.data_quality_metrics["last_validation_timestamp"] = datetime.datetime.now().isoformat()
+        
+        return results
+    
+    def _calculate_completion_percentage(self, data: Dict[str, Any]) -> float:
+        """Calculate completion percentage of a record (non-null fields)"""
+        if not isinstance(data, dict) or not data:
+            return 0.0
+        
+        total_fields = 0
+        non_null_fields = 0
+        
+        def count_fields(obj, prefix=""):
+            nonlocal total_fields, non_null_fields
+            
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    field_path = f"{prefix}.{key}" if prefix else key
+                    if isinstance(value, (dict, list)):
+                        count_fields(value, field_path)
+                    else:
+                        total_fields += 1
+                        if value is not None:
+                            non_null_fields += 1
+            elif isinstance(obj, list):
+                for i, item in enumerate(obj):
+                    field_path = f"{prefix}[{i}]"
+                    if isinstance(item, (dict, list)):
+                        count_fields(item, field_path)
+                    else:
+                        total_fields += 1
+                        if item is not None:
+                            non_null_fields += 1
+        
+        count_fields(data)
+        
+        if total_fields == 0:
+            return 0.0
+            
+        return (non_null_fields / total_fields) * 100.0
+    
+    def get_validation_metrics(self) -> Dict[str, Any]:
+        """Get validation metrics"""
+        return self.data_quality_metrics
+    
+    def reset_metrics(self) -> None:
+        """Reset validation metrics"""
+        self.data_quality_metrics = {
+            "total_records_validated": 0,
+            "valid_records": 0,
+            "invalid_records": 0,
+            "error_count": 0,
+            "warning_count": 0,
+            "info_count": 0,
+            "validation_rate": 0,
+            "field_error_distribution": {},
+            "severity_distribution": {
+                "error": 0,
+                "warning": 0,
+                "info": 0
+            },
+            "last_validation_timestamp": None
+        }
+        
+
     
     def _check_type(self, value: Any, expected_type: str) -> bool:
         """Check if a value matches the expected type"""
