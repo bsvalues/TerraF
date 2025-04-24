@@ -259,7 +259,10 @@ class ValidationResult:
 
 
 class SyncResult:
-    """Represents the result of a sync operation"""
+    """
+    Represents the result of a sync operation with enhanced performance metrics
+    and detailed processing information.
+    """
     def __init__(
         self,
         success: bool,
@@ -280,9 +283,13 @@ class SyncResult:
         self.start_time = start_time or datetime.datetime.now().isoformat()
         self.end_time = end_time or datetime.datetime.now().isoformat()
         
+        # Enhanced attributes for performance optimization
+        self.performance_metrics: Dict[str, Any] = {}
+        self.tables_processed: Dict[str, int] = {}
+        
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization"""
-        return {
+        result = {
             "success": self.success,
             "records_processed": self.records_processed,
             "records_succeeded": self.records_succeeded,
@@ -294,6 +301,15 @@ class SyncResult:
             "duration_seconds": self._calculate_duration()
         }
         
+        # Add enhanced information if available
+        if self.performance_metrics:
+            result["performance_metrics"] = self.performance_metrics
+            
+        if self.tables_processed:
+            result["tables_processed"] = self.tables_processed
+            
+        return result
+        
     def _calculate_duration(self) -> float:
         """Calculate duration in seconds between start and end times"""
         try:
@@ -302,6 +318,57 @@ class SyncResult:
             return (end - start).total_seconds()
         except (ValueError, TypeError):
             return 0.0
+            
+    def get_processing_rate(self) -> float:
+        """
+        Calculate the processing rate in records per second
+        
+        Returns:
+            Processing rate (records/second)
+        """
+        duration = self._calculate_duration()
+        if duration <= 0 or self.records_processed <= 0:
+            return 0.0
+        return self.records_processed / duration
+    
+    def get_success_rate(self) -> float:
+        """
+        Calculate the success rate as a percentage
+        
+        Returns:
+            Success rate (percentage)
+        """
+        if self.records_processed <= 0:
+            return 0.0
+        return (self.records_succeeded / self.records_processed) * 100.0
+    
+    def add_performance_metrics(self, metrics: Dict[str, Any]) -> None:
+        """Add or update performance metrics"""
+        if not hasattr(self, 'performance_metrics'):
+            self.performance_metrics = {}
+        
+        # Merge metrics with any existing ones
+        for category, values in metrics.items():
+            if category in self.performance_metrics:
+                if isinstance(values, dict) and isinstance(self.performance_metrics[category], dict):
+                    # Merge dictionaries
+                    self.performance_metrics[category].update(values)
+                else:
+                    # Replace value
+                    self.performance_metrics[category] = values
+            else:
+                # Add new category
+                self.performance_metrics[category] = values
+                
+    def add_table_processed(self, table_name: str, count: int = 1) -> None:
+        """Record a table being processed with record count"""
+        if not hasattr(self, 'tables_processed'):
+            self.tables_processed = {}
+            
+        if table_name in self.tables_processed:
+            self.tables_processed[table_name] += count
+        else:
+            self.tables_processed[table_name] = count
 
 
 @dataclass
@@ -856,6 +923,217 @@ class ResourceMonitor:
                 "timestamp": metrics["timestamp"]
             }
         }
+
+
+class DatabasePerformanceMonitor:
+    """
+    Monitor database performance and resource utilization.
+    Provides insights into query execution times, connection pools,
+    and database load for performance optimization.
+    """
+    def __init__(
+        self, 
+        db_connection: DatabaseConnection,
+        collection_interval_seconds: float = 10.0,
+        max_history_size: int = 100
+    ):
+        self.db_connection = db_connection
+        self.collection_interval = collection_interval_seconds
+        self.max_history_size = max_history_size
+        self.should_run = False
+        self.monitoring_thread = None
+        self.logger = logging.getLogger(f"{self.__class__.__name__}-{db_connection.db_type}")
+        
+        # Initialize metrics storage
+        self.metrics = {
+            "query_stats": {
+                "avg_execution_time_ms": 0.0,
+                "total_queries": 0,
+                "queries_per_second": 0.0,
+                "slow_query_count": 0
+            },
+            "connection_stats": {
+                "active_connections": 0,
+                "idle_connections": 0,
+                "max_connections": 100,  # Simulated value
+                "connection_utilization": 0.0
+            },
+            "resource_usage": {
+                "cpu_percent": 0.0,
+                "memory_mb": 0.0,
+                "disk_io_mb": 0.0
+            },
+            "history": [],
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+        # Query timing history
+        self.query_history = []
+        
+    def start(self) -> None:
+        """Start database performance monitoring"""
+        if self.monitoring_thread is not None:
+            return
+            
+        self.should_run = True
+        self.monitoring_thread = threading.Thread(target=self._monitoring_loop)
+        self.monitoring_thread.daemon = True
+        self.monitoring_thread.start()
+        self.logger.info(f"Database performance monitoring started for {self.db_connection.db_type}")
+        
+    def stop(self) -> None:
+        """Stop database performance monitoring"""
+        self.should_run = False
+        if self.monitoring_thread:
+            self.monitoring_thread.join(timeout=5.0)
+            self.monitoring_thread = None
+        self.logger.info(f"Database performance monitoring stopped for {self.db_connection.db_type}")
+        
+    def _monitoring_loop(self) -> None:
+        """Background monitoring loop"""
+        try:
+            while self.should_run:
+                self._update_metrics()
+                time.sleep(self.collection_interval)
+        except Exception as e:
+            self.logger.error(f"Error in database performance monitoring: {str(e)}")
+            
+    def _update_metrics(self) -> None:
+        """Update database performance metrics"""
+        try:
+            # In a real implementation, these would be actual database queries
+            # or monitoring API calls. For demo purposes, we'll simulate metrics.
+            
+            # Simulate connection stats
+            active = random.randint(1, 20)
+            idle = random.randint(5, 30)
+            max_conn = 100
+            
+            # Update connection stats
+            self.metrics["connection_stats"] = {
+                "active_connections": active,
+                "idle_connections": idle,
+                "max_connections": max_conn,
+                "connection_utilization": (active / max_conn) * 100.0
+            }
+            
+            # Simulate resource usage
+            self.metrics["resource_usage"] = {
+                "cpu_percent": random.uniform(5.0, 40.0),
+                "memory_mb": random.uniform(50.0, 500.0),
+                "disk_io_mb": random.uniform(0.1, 10.0)
+            }
+            
+            # Calculate query metrics based on recent history
+            if self.query_history:
+                avg_time = sum(q["execution_time_ms"] for q in self.query_history) / len(self.query_history)
+                slow_count = sum(1 for q in self.query_history if q["execution_time_ms"] > 1000)
+                
+                # Queries per second based on recent history
+                elapsed_time = 0
+                if len(self.query_history) >= 2:
+                    first = datetime.datetime.fromisoformat(self.query_history[0]["timestamp"])
+                    last = datetime.datetime.fromisoformat(self.query_history[-1]["timestamp"])
+                    elapsed_time = (last - first).total_seconds()
+                
+                qps = 0.0
+                if elapsed_time > 0:
+                    qps = len(self.query_history) / elapsed_time
+                
+                self.metrics["query_stats"] = {
+                    "avg_execution_time_ms": avg_time,
+                    "total_queries": len(self.query_history),
+                    "queries_per_second": qps,
+                    "slow_query_count": slow_count
+                }
+            
+            # Update timestamp
+            self.metrics["timestamp"] = datetime.datetime.now().isoformat()
+            
+            # Add to history
+            history_entry = {
+                "timestamp": self.metrics["timestamp"],
+                "active_connections": self.metrics["connection_stats"]["active_connections"],
+                "queries_per_second": self.metrics["query_stats"]["queries_per_second"],
+                "avg_execution_time_ms": self.metrics["query_stats"]["avg_execution_time_ms"],
+                "resource_usage": {
+                    "cpu_percent": self.metrics["resource_usage"]["cpu_percent"],
+                    "memory_mb": self.metrics["resource_usage"]["memory_mb"]
+                }
+            }
+            self.metrics["history"].append(history_entry)
+            
+            # Trim history if needed
+            if len(self.metrics["history"]) > self.max_history_size:
+                self.metrics["history"] = self.metrics["history"][-self.max_history_size:]
+                
+        except Exception as e:
+            self.logger.error(f"Error updating database performance metrics: {str(e)}")
+    
+    def record_query(self, query: str, execution_time_ms: float, rows_affected: int = 0) -> None:
+        """Record information about a database query"""
+        query_entry = {
+            "query": query[:100],  # Only store beginning of query
+            "execution_time_ms": execution_time_ms,
+            "rows_affected": rows_affected,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+        self.query_history.append(query_entry)
+        
+        # Keep history limited
+        if len(self.query_history) > self.max_history_size:
+            self.query_history = self.query_history[-self.max_history_size:]
+    
+    def get_current_metrics(self) -> Dict[str, Any]:
+        """Get current database performance metrics"""
+        return {
+            "current": {
+                "query_stats": self.metrics["query_stats"],
+                "connection_stats": self.metrics["connection_stats"],
+                "resource_usage": self.metrics["resource_usage"],
+                "timestamp": self.metrics["timestamp"]
+            },
+            "history": self.metrics["history"][-10:]  # Return only last 10 entries
+        }
+    
+    def get_recommendations(self) -> List[Dict[str, Any]]:
+        """Generate performance improvement recommendations based on metrics"""
+        recommendations = []
+        
+        # Check connection pool utilization
+        conn_util = self.metrics["connection_stats"]["connection_utilization"]
+        if conn_util > 80.0:
+            recommendations.append({
+                "category": "connection_pool",
+                "severity": "high",
+                "message": "Connection pool utilization is high (>80%). Consider increasing max connections.",
+                "current_value": conn_util,
+                "recommendation": "Increase max_connections setting."
+            })
+        
+        # Check for slow queries
+        slow_count = self.metrics["query_stats"]["slow_query_count"]
+        if slow_count > 5:
+            recommendations.append({
+                "category": "query_performance",
+                "severity": "medium",
+                "message": f"Found {slow_count} slow queries (>1000ms). Review and optimize.",
+                "recommendation": "Analyze slow queries and add proper indexes."
+            })
+        
+        # Check average query time
+        avg_time = self.metrics["query_stats"]["avg_execution_time_ms"]
+        if avg_time > 500.0:
+            recommendations.append({
+                "category": "query_performance",
+                "severity": "medium",
+                "message": f"Average query time is high ({avg_time:.2f}ms). Consider optimization.",
+                "current_value": avg_time,
+                "recommendation": "Review query patterns and database indexing strategy."
+            })
+        
+        return recommendations
 
 
 class DAGNode:
@@ -4416,18 +4694,37 @@ class SyncOrchestrator:
             poll_interval_seconds=perf_config.get("resource_poll_interval", 5.0)
         )
         
+        # Configure database performance monitoring
+        # Use the existing constructor parameters
+        self.source_db_monitor = DatabasePerformanceMonitor(
+            source_connection,
+            perf_config.get("db_monitor_interval", 10.0)
+        )
+        
+        self.target_db_monitor = DatabasePerformanceMonitor(
+            target_connection,
+            perf_config.get("db_monitor_interval", 10.0)
+        )
+        
         # Configure incremental optimization
         self.dag_processor = DAGProcessor()
         
-        # Start resource monitoring
+        # Start monitoring
         self.resource_monitor.start_monitoring()
+        # Start database monitors - using their respective methods
+        self.source_db_monitor.start_monitoring()
+        self.target_db_monitor.start_monitoring()
         
         # Metrics storage
         self.performance_metrics = {
             "batch_metrics": {},
             "parallel_metrics": {},
             "dag_metrics": {},
-            "resource_metrics": []
+            "resource_metrics": [],
+            "database_metrics": {
+                "source": {},
+                "target": {}
+            }
         }
         
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -4526,6 +4823,26 @@ class SyncOrchestrator:
             # Log final resource metrics
             final_resource_metrics = self.resource_monitor.get_current_metrics()
             self.performance_metrics["resource_metrics"].append(final_resource_metrics)
+            
+            # Collect database performance metrics
+            source_db_metrics = self.source_db_monitor.get_current_metrics()
+            target_db_metrics = self.target_db_monitor.get_current_metrics()
+            self.performance_metrics["database_metrics"]["source"] = source_db_metrics
+            self.performance_metrics["database_metrics"]["target"] = target_db_metrics
+            
+            # Get database performance recommendations
+            source_recommendations = self.source_db_monitor.get_recommendations()
+            target_recommendations = self.target_db_monitor.get_recommendations()
+            
+            if source_recommendations:
+                self.logger.info(f"Source DB recommendations: {len(source_recommendations)} items found")
+                for rec in source_recommendations:
+                    self.logger.info(f"- {rec['severity'].upper()}: {rec['message']}")
+            
+            if target_recommendations:
+                self.logger.info(f"Target DB recommendations: {len(target_recommendations)} items found")
+                for rec in target_recommendations:
+                    self.logger.info(f"- {rec['severity'].upper()}: {rec['message']}")
             
             self.logger.info("Full sync completed successfully")
             return sync_result
