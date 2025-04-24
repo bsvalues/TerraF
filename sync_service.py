@@ -15,8 +15,14 @@ import time
 import random
 import logging
 import datetime
+import threading
+import queue
+import multiprocessing
+import concurrent.futures
 from enum import Enum
-from typing import Dict, List, Any, Optional, Tuple, Union, Callable, TypedDict, TypeVar, Generic
+from typing import Dict, List, Any, Optional, Tuple, Union, Callable, TypedDict, TypeVar, Generic, Set, NamedTuple, Iterator
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from dataclasses import dataclass, field
 
 # For demo purposes, we'll simulate database connections
 class DatabaseConnection:
@@ -296,6 +302,841 @@ class SyncResult:
             return (end - start).total_seconds()
         except (ValueError, TypeError):
             return 0.0
+
+
+@dataclass
+class PerformanceMetrics:
+    """Performance metrics for sync operations"""
+    operation_id: str = field(default_factory=lambda: f"op-{int(time.time())}")
+    operation_type: str = "unknown"
+    start_time: float = field(default_factory=time.time)
+    end_time: Optional[float] = None
+    records_processed: int = 0
+    processing_rate: float = 0.0  # records per second
+    batch_sizes: List[int] = field(default_factory=list)
+    batch_durations: List[float] = field(default_factory=list)
+    thread_counts: Dict[str, int] = field(default_factory=dict)
+    memory_usage: Dict[str, float] = field(default_factory=dict)
+    error_counts: Dict[str, int] = field(default_factory=dict)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for reporting"""
+        result = {
+            "operation_id": self.operation_id,
+            "operation_type": self.operation_type,
+            "start_time": datetime.datetime.fromtimestamp(self.start_time).isoformat(),
+            "records_processed": self.records_processed,
+            "batch_stats": {
+                "total_batches": len(self.batch_sizes),
+                "avg_batch_size": sum(self.batch_sizes) / max(1, len(self.batch_sizes)),
+                "avg_batch_duration_ms": sum(self.batch_durations) / max(1, len(self.batch_durations)) * 1000,
+            },
+            "resource_usage": {
+                "threads": self.thread_counts,
+                "memory_mb": self.memory_usage
+            },
+            "error_stats": self.error_counts
+        }
+        
+        if self.end_time:
+            duration = self.end_time - self.start_time
+            result["end_time"] = datetime.datetime.fromtimestamp(self.end_time).isoformat()
+            result["duration_seconds"] = duration
+            result["processing_rate"] = self.records_processed / max(0.001, duration)
+            
+        return result
+    
+    def record_batch(self, size: int, duration_seconds: float) -> None:
+        """Record a batch processing operation"""
+        self.batch_sizes.append(size)
+        self.batch_durations.append(duration_seconds)
+        self.records_processed += size
+    
+    def complete(self) -> None:
+        """Mark the operation as complete"""
+        self.end_time = time.time()
+        duration = self.end_time - self.start_time
+        if duration > 0:
+            self.processing_rate = self.records_processed / duration
+
+
+class BatchConfiguration:
+    """Configuration for batch processing operations"""
+    def __init__(
+        self, 
+        batch_size: int = 100,
+        max_retries: int = 3,
+        retry_delay_seconds: float = 1.0,
+        dynamic_sizing: bool = True,
+        min_batch_size: int = 10,
+        max_batch_size: int = 1000,
+        target_batch_duration_seconds: float = 2.0,
+        prioritize_tables: Dict[str, int] = None  # Table name -> priority (lower is higher priority)
+    ):
+        self.batch_size = batch_size
+        self.max_retries = max_retries
+        self.retry_delay_seconds = retry_delay_seconds
+        self.dynamic_sizing = dynamic_sizing
+        self.min_batch_size = min_batch_size
+        self.max_batch_size = max_batch_size
+        self.target_batch_duration_seconds = target_batch_duration_seconds
+        self.prioritize_tables = prioritize_tables or {}
+        
+    def adjust_batch_size(self, last_duration: float, current_batch_size: int) -> int:
+        """
+        Dynamically adjust batch size based on performance
+        to hit the target batch duration.
+        """
+        if not self.dynamic_sizing:
+            return self.batch_size
+            
+        # If we're too slow, decrease batch size
+        if last_duration > self.target_batch_duration_seconds * 1.5:
+            new_size = int(current_batch_size * (self.target_batch_duration_seconds / max(0.001, last_duration)))
+            return max(self.min_batch_size, new_size)
+            
+        # If we're too fast, increase batch size
+        if last_duration < self.target_batch_duration_seconds * 0.75:
+            new_size = int(current_batch_size * (self.target_batch_duration_seconds / max(0.001, last_duration)))
+            return min(self.max_batch_size, new_size)
+            
+        # We're close enough to the target
+        return current_batch_size
+
+
+class BatchProcessor:
+    """
+    Handles efficient batch processing of records with optimized throughput
+    and error handling capabilities.
+    """
+    def __init__(
+        self, 
+        configuration: BatchConfiguration = None,
+        logger: Optional[logging.Logger] = None
+    ):
+        self.config = configuration or BatchConfiguration()
+        self.logger = logger or logging.getLogger(self.__class__.__name__)
+        self.metrics = PerformanceMetrics()
+        self.shutdown_requested = False
+        self.batch_queues: Dict[str, List] = {}  # Table name -> records
+        self.checkpoints: Dict[str, Any] = {}  # For resumable operations
+        
+    def process_in_batches(
+        self, 
+        records: List[Any], 
+        processor_func: Callable[[List[Any]], List[Any]],
+        table_key: Callable[[Any], str] = None
+    ) -> List[Any]:
+        """
+        Process records in optimized batches
+        
+        Args:
+            records: List of records to process
+            processor_func: Function to process a batch of records
+            table_key: Optional function to extract table name for priority
+            
+        Returns:
+            List of processed results
+        """
+        if not records:
+            return []
+            
+        self.metrics = PerformanceMetrics()
+        self.metrics.operation_type = "batch_processing"
+        
+        # Sort by priority if table_key is provided
+        if table_key and self.config.prioritize_tables:
+            records = sorted(
+                records,
+                key=lambda r: self.config.prioritize_tables.get(table_key(r), 999)
+            )
+            
+        # Process in batches
+        results = []
+        batch_size = self.config.batch_size
+        
+        for i in range(0, len(records), batch_size):
+            if self.shutdown_requested:
+                self.logger.warning("Shutdown requested, stopping batch processing")
+                break
+                
+            batch = records[i:i+batch_size]
+            batch_results, duration = self._process_batch_with_retry(batch, processor_func)
+            results.extend(batch_results)
+            
+            # Record metrics and adjust batch size
+            self.metrics.record_batch(len(batch), duration)
+            batch_size = self.config.adjust_batch_size(duration, batch_size)
+            
+            self.logger.info(
+                f"Processed batch {len(self.metrics.batch_sizes)}: "
+                f"{len(batch)} records in {duration:.2f}s, "
+                f"next batch size: {batch_size}"
+            )
+            
+        self.metrics.complete()
+        self.logger.info(
+            f"Completed batch processing: {self.metrics.records_processed} records "
+            f"at {self.metrics.processing_rate:.2f} records/sec"
+        )
+        
+        return results
+    
+    def _process_batch_with_retry(
+        self, 
+        batch: List[Any], 
+        processor_func: Callable[[List[Any]], List[Any]]
+    ) -> Tuple[List[Any], float]:
+        """Process a batch with retry logic on failure"""
+        start_time = time.time()
+        retries = 0
+        
+        while retries <= self.config.max_retries:
+            try:
+                results = processor_func(batch)
+                duration = time.time() - start_time
+                return results, duration
+            except Exception as e:
+                retries += 1
+                error_type = type(e).__name__
+                
+                # Track error in metrics
+                if error_type not in self.metrics.error_counts:
+                    self.metrics.error_counts[error_type] = 0
+                self.metrics.error_counts[error_type] += 1
+                
+                if retries <= self.config.max_retries:
+                    self.logger.warning(
+                        f"Batch processing error ({error_type}): {str(e)}. "
+                        f"Retrying {retries}/{self.config.max_retries} "
+                        f"in {self.config.retry_delay_seconds}s"
+                    )
+                    time.sleep(self.config.retry_delay_seconds)
+                else:
+                    self.logger.error(
+                        f"Batch processing failed after {retries} retries: {str(e)}"
+                    )
+                    raise
+                    
+        # This should never happen due to the raise above
+        return [], time.time() - start_time
+    
+    def save_checkpoint(self, key: str, data: Any) -> None:
+        """Save a checkpoint for resumable processing"""
+        self.checkpoints[key] = {
+            "data": data,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+    def get_checkpoint(self, key: str) -> Optional[Any]:
+        """Get a previously saved checkpoint"""
+        if key in self.checkpoints:
+            return self.checkpoints[key]["data"]
+        return None
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get current performance metrics"""
+        return self.metrics.to_dict()
+    
+    def request_shutdown(self) -> None:
+        """Request a graceful shutdown of batch processing"""
+        self.shutdown_requested = True
+
+
+class ParallelProcessor:
+    """
+    Handles parallel processing using thread and process pools
+    with dynamic resource allocation.
+    """
+    def __init__(
+        self,
+        thread_pool_size: int = None,
+        process_pool_size: int = None,
+        io_bound: bool = True,
+        logger: Optional[logging.Logger] = None
+    ):
+        self.logger = logger or logging.getLogger(self.__class__.__name__)
+        self.io_bound = io_bound
+        
+        # Auto-detect optimal pool sizes if not specified
+        if thread_pool_size is None:
+            thread_pool_size = min(32, (multiprocessing.cpu_count() * 4))
+        
+        if process_pool_size is None:
+            process_pool_size = max(2, multiprocessing.cpu_count() - 1)
+            
+        self.thread_pool_size = thread_pool_size
+        self.process_pool_size = process_pool_size
+        self.metrics = PerformanceMetrics()
+        self.metrics.thread_counts = {
+            "thread_pool_size": thread_pool_size,
+            "process_pool_size": process_pool_size
+        }
+        
+        self.thread_executor = None
+        self.process_executor = None
+        
+    def map(
+        self, 
+        func: Callable[[Any], Any], 
+        items: List[Any],
+        chunksize: int = 1,
+        show_progress: bool = True
+    ) -> List[Any]:
+        """
+        Apply function to each item in parallel
+        
+        Args:
+            func: Function to apply to each item
+            items: List of items to process
+            chunksize: Size of chunks for multiprocessing (ignored for threads)
+            show_progress: Whether to log progress
+            
+        Returns:
+            List of results in the same order as input items
+        """
+        if not items:
+            return []
+            
+        self.metrics = PerformanceMetrics()
+        self.metrics.operation_type = "parallel_map"
+        
+        # Choose executor based on workload type
+        if self.io_bound:
+            self.logger.info(f"Using ThreadPoolExecutor with {self.thread_pool_size} workers")
+            executor = ThreadPoolExecutor(max_workers=self.thread_pool_size)
+        else:
+            self.logger.info(f"Using ProcessPoolExecutor with {self.process_pool_size} workers")
+            executor = ProcessPoolExecutor(max_workers=self.process_pool_size)
+            
+        # Set up progress tracking
+        total_items = len(items)
+        completed = 0
+        results = [None] * total_items
+        start_time = time.time()
+        
+        try:
+            # Submit all tasks
+            future_to_index = {
+                executor.submit(func, item): i
+                for i, item in enumerate(items)
+            }
+            
+            # Process results as they complete
+            for future in as_completed(future_to_index):
+                index = future_to_index[future]
+                try:
+                    results[index] = future.result()
+                except Exception as e:
+                    self.logger.error(f"Error processing item {index}: {str(e)}")
+                    error_type = type(e).__name__
+                    if error_type not in self.metrics.error_counts:
+                        self.metrics.error_counts[error_type] = 0
+                    self.metrics.error_counts[error_type] += 1
+                    results[index] = None
+                    
+                # Update progress
+                completed += 1
+                if show_progress and completed % max(1, total_items // 10) == 0:
+                    progress = completed / total_items * 100
+                    elapsed = time.time() - start_time
+                    rate = completed / max(0.001, elapsed)
+                    remaining = (total_items - completed) / max(0.001, rate)
+                    self.logger.info(
+                        f"Progress: {progress:.1f}% ({completed}/{total_items}), "
+                        f"Rate: {rate:.2f} items/sec, "
+                        f"Est. remaining: {remaining:.1f}s"
+                    )
+        finally:
+            executor.shutdown()
+            
+        # Record final metrics
+        self.metrics.records_processed = total_items
+        self.metrics.complete()
+        self.logger.info(
+            f"Completed parallel processing: {total_items} items "
+            f"at {self.metrics.processing_rate:.2f} items/sec"
+        )
+            
+        return results
+    
+    def map_batched(
+        self,
+        func: Callable[[List[Any]], List[Any]],
+        items: List[Any],
+        batch_size: int = 100,
+        show_progress: bool = True
+    ) -> List[Any]:
+        """
+        Apply function to batches of items in parallel
+        
+        Args:
+            func: Function to apply to each batch
+            items: List of items to process
+            batch_size: Size of batches
+            show_progress: Whether to log progress
+            
+        Returns:
+            List of results (flattened)
+        """
+        if not items:
+            return []
+            
+        # Create batches
+        batches = []
+        for i in range(0, len(items), batch_size):
+            batches.append(items[i:i+batch_size])
+            
+        # Process batches in parallel
+        self.logger.info(f"Processing {len(items)} items in {len(batches)} batches")
+        batch_results = self.map(func, batches, show_progress=show_progress)
+        
+        # Flatten results
+        results = []
+        for batch_result in batch_results:
+            if batch_result:
+                results.extend(batch_result)
+                
+        return results
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get current performance metrics"""
+        return self.metrics.to_dict()
+
+
+class ResourceMonitor:
+    """
+    Monitors system resources and provides dynamic 
+    resource allocation recommendations.
+    """
+    def __init__(self, poll_interval_seconds: float = 5.0):
+        self.poll_interval = poll_interval_seconds
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.monitoring = False
+        self._monitor_thread = None
+        self.metrics_history = []
+        self.current_metrics = {
+            "cpu_percent": 0,
+            "memory_percent": 0,
+            "memory_used_mb": 0,
+            "disk_io_percent": 0,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+    def start_monitoring(self) -> None:
+        """Start background monitoring of system resources"""
+        if self.monitoring:
+            return
+            
+        self.monitoring = True
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_resources,
+            daemon=True
+        )
+        self._monitor_thread.start()
+        self.logger.info("Resource monitoring started")
+        
+    def stop_monitoring(self) -> None:
+        """Stop background monitoring"""
+        self.monitoring = False
+        if self._monitor_thread:
+            self._monitor_thread.join(timeout=2.0)
+            self._monitor_thread = None
+        self.logger.info("Resource monitoring stopped")
+        
+    def _monitor_resources(self) -> None:
+        """Background thread for resource monitoring"""
+        try:
+            while self.monitoring:
+                # Collect current resource metrics
+                metrics = self._collect_metrics()
+                
+                # Save and rotate history
+                self.metrics_history.append(metrics)
+                if len(self.metrics_history) > 100:
+                    self.metrics_history = self.metrics_history[-100:]
+                    
+                # Update current metrics
+                self.current_metrics = metrics
+                
+                # Sleep until next poll
+                time.sleep(self.poll_interval)
+        except Exception as e:
+            self.logger.error(f"Error in resource monitoring: {str(e)}")
+            self.monitoring = False
+            
+    def _collect_metrics(self) -> Dict[str, Any]:
+        """Collect current system metrics"""
+        # For the purpose of this example, we'll simulate metrics
+        # In a real implementation, we would use psutil or similar
+        return {
+            "cpu_percent": random.uniform(10, 90),
+            "memory_percent": random.uniform(20, 85),
+            "memory_used_mb": random.uniform(1000, 8000),
+            "disk_io_percent": random.uniform(5, 60),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+    def get_current_metrics(self) -> Dict[str, Any]:
+        """Get the current system metrics"""
+        return self.current_metrics
+        
+    def get_metrics_history(self) -> List[Dict[str, Any]]:
+        """Get the history of metrics"""
+        return self.metrics_history
+        
+    def recommend_resources(self, operation_type: str) -> Dict[str, Any]:
+        """
+        Recommend optimal resource allocation based on current system state
+        
+        Args:
+            operation_type: Type of operation (e.g., 'etl', 'validation')
+            
+        Returns:
+            Dictionary with thread count, process count, and batch size recommendations
+        """
+        # Get current system metrics
+        metrics = self.current_metrics
+        
+        # Calculate recommended thread pool size based on CPU usage
+        cpu_percent = metrics["cpu_percent"]
+        memory_percent = metrics["memory_percent"]
+        
+        # Base recommendations
+        base_thread_count = min(32, (multiprocessing.cpu_count() * 4))
+        base_process_count = max(2, multiprocessing.cpu_count() - 1)
+        
+        # Adjust based on current resource usage
+        if cpu_percent > 80:
+            # CPU is highly loaded, reduce parallelism
+            thread_factor = 0.6
+            process_factor = 0.5
+        elif cpu_percent > 60:
+            thread_factor = 0.8
+            process_factor = 0.7
+        elif cpu_percent < 30:
+            # CPU is underutilized, increase parallelism
+            thread_factor = 1.2
+            process_factor = 1.1
+        else:
+            # Moderate CPU usage, use base values
+            thread_factor = 1.0
+            process_factor = 1.0
+            
+        # Further adjust based on memory usage
+        if memory_percent > 85:
+            # High memory usage, reduce parallelism to avoid swapping
+            thread_factor *= 0.7
+            process_factor *= 0.6
+            
+        # Calculate recommended values
+        recommended_thread_count = max(2, int(base_thread_count * thread_factor))
+        recommended_process_count = max(1, int(base_process_count * process_factor))
+        
+        # Adjust batch size based on operation type and resource usage
+        if operation_type == 'etl':
+            if memory_percent > 80:
+                batch_size = 50  # Smaller batches for memory-intensive operations
+            elif cpu_percent > 70:
+                batch_size = 100  # Moderate batches for CPU-intensive operations
+            else:
+                batch_size = 200  # Larger batches for general operations
+        elif operation_type == 'validation':
+            batch_size = 500  # Validation is typically less resource-intensive
+        else:
+            batch_size = 100  # Default batch size
+            
+        return {
+            "thread_count": recommended_thread_count,
+            "process_count": recommended_process_count,
+            "batch_size": batch_size,
+            "based_on": {
+                "cpu_percent": cpu_percent,
+                "memory_percent": memory_percent,
+                "timestamp": metrics["timestamp"]
+            }
+        }
+
+
+class DAGNode:
+    """
+    Represents a node in a directed acyclic graph for dependency tracking
+    in incremental processing operations.
+    """
+    def __init__(self, id: str, data: Any = None):
+        self.id = id
+        self.data = data
+        self.dependencies: Set[str] = set()  # IDs of nodes this node depends on
+        self.dependents: Set[str] = set()    # IDs of nodes that depend on this node
+        self.status = "pending"  # pending, processing, completed, failed
+        self.result = None       # Result of processing this node
+        self.error = None        # Error if processing failed
+        
+    def add_dependency(self, node_id: str) -> None:
+        """Add a dependency for this node"""
+        self.dependencies.add(node_id)
+    
+    def remove_dependency(self, node_id: str) -> None:
+        """Remove a dependency for this node"""
+        if node_id in self.dependencies:
+            self.dependencies.remove(node_id)
+            
+    def add_dependent(self, node_id: str) -> None:
+        """Add a dependent node"""
+        self.dependents.add(node_id)
+    
+    def remove_dependent(self, node_id: str) -> None:
+        """Remove a dependent node"""
+        if node_id in self.dependents:
+            self.dependents.remove(node_id)
+            
+    def is_ready(self) -> bool:
+        """Check if this node is ready for processing"""
+        return self.status == "pending" and not self.dependencies
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        return {
+            "id": self.id,
+            "dependencies": list(self.dependencies),
+            "dependents": list(self.dependents),
+            "status": self.status,
+            "has_result": self.result is not None,
+            "has_error": self.error is not None
+        }
+
+
+class DAGProcessor:
+    """
+    Processes nodes in a directed acyclic graph with dependency tracking
+    for complex incremental operations.
+    """
+    def __init__(self, logger: Optional[logging.Logger] = None):
+        self.nodes: Dict[str, DAGNode] = {}
+        self.logger = logger or logging.getLogger(self.__class__.__name__)
+        self.processing_order: List[str] = []  # Order in which nodes were processed
+        self.metrics = PerformanceMetrics()
+        self.metrics.operation_type = "dag_processing"
+        
+    def add_node(self, node_id: str, data: Any = None) -> DAGNode:
+        """Add a node to the graph"""
+        if node_id in self.nodes:
+            return self.nodes[node_id]
+            
+        node = DAGNode(node_id, data)
+        self.nodes[node_id] = node
+        return node
+    
+    def add_dependency(self, dependent_id: str, dependency_id: str) -> None:
+        """Add a dependency between nodes"""
+        # Ensure nodes exist
+        if dependent_id not in self.nodes:
+            self.add_node(dependent_id)
+        if dependency_id not in self.nodes:
+            self.add_node(dependency_id)
+            
+        # Add dependency relationship
+        self.nodes[dependent_id].add_dependency(dependency_id)
+        self.nodes[dependency_id].add_dependent(dependent_id)
+    
+    def get_ready_nodes(self) -> List[DAGNode]:
+        """Get nodes that are ready for processing"""
+        return [
+            node for node in self.nodes.values()
+            if node.is_ready()
+        ]
+    
+    def process_all(
+        self, 
+        processor_func: Callable[[Any], Any],
+        parallel: bool = True,
+        max_workers: int = None,
+        checkpoint_after: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Process all nodes in dependency order
+        
+        Args:
+            processor_func: Function to process a node's data
+            parallel: Whether to process ready nodes in parallel
+            max_workers: Maximum number of parallel workers
+            checkpoint_after: Save checkpoint after this many nodes
+            
+        Returns:
+            Dictionary of node_id -> results
+        """
+        if not max_workers:
+            max_workers = min(32, (multiprocessing.cpu_count() * 2))
+            
+        # Start metrics
+        self.metrics = PerformanceMetrics()
+        self.metrics.operation_type = "dag_processing"
+        self.metrics.thread_counts["max_workers"] = max_workers
+        
+        # Track processed nodes
+        processed_nodes = 0
+        results = {}
+        
+        # Process until all nodes are processed
+        self.processing_order = []
+        
+        if parallel:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                while len(self.processing_order) < len(self.nodes):
+                    # Get all ready nodes
+                    ready_nodes = self.get_ready_nodes()
+                    if not ready_nodes:
+                        if len(self.processing_order) < len(self.nodes):
+                            self.logger.error("No ready nodes but not all nodes processed. Possible cycle.")
+                            break
+                        continue
+                        
+                    self.logger.info(f"Processing {len(ready_nodes)} ready nodes in parallel")
+                    
+                    # Mark nodes as processing
+                    for node in ready_nodes:
+                        node.status = "processing"
+                    
+                    # Submit tasks
+                    future_to_node = {
+                        executor.submit(self._process_node, node, processor_func): node
+                        for node in ready_nodes
+                    }
+                    
+                    # Process results as they complete
+                    for future in as_completed(future_to_node):
+                        node = future_to_node[future]
+                        try:
+                            result = future.result()
+                            results[node.id] = result
+                            processed_nodes += 1
+                            
+                            # Update dependents
+                            for dependent_id in node.dependents:
+                                dependent = self.nodes[dependent_id]
+                                dependent.remove_dependency(node.id)
+                        except Exception as e:
+                            self.logger.error(f"Error processing node {node.id}: {str(e)}")
+                            error_type = type(e).__name__
+                            if error_type not in self.metrics.error_counts:
+                                self.metrics.error_counts[error_type] = 0
+                            self.metrics.error_counts[error_type] += 1
+                    
+                    # Check if checkpoint needed
+                    if processed_nodes % checkpoint_after == 0:
+                        self.logger.info(f"Checkpoint: {processed_nodes} nodes processed")
+        else:
+            # Sequential processing
+            while len(self.processing_order) < len(self.nodes):
+                ready_nodes = self.get_ready_nodes()
+                if not ready_nodes:
+                    if len(self.processing_order) < len(self.nodes):
+                        self.logger.error("No ready nodes but not all nodes processed. Possible cycle.")
+                        break
+                    continue
+                
+                # Process one node at a time
+                node = ready_nodes[0]
+                node.status = "processing"
+                
+                try:
+                    result = self._process_node(node, processor_func)
+                    results[node.id] = result
+                    processed_nodes += 1
+                    
+                    # Update dependents
+                    for dependent_id in node.dependents:
+                        dependent = self.nodes[dependent_id]
+                        dependent.remove_dependency(node.id)
+                        
+                    if processed_nodes % checkpoint_after == 0:
+                        self.logger.info(f"Checkpoint: {processed_nodes} nodes processed")
+                except Exception as e:
+                    self.logger.error(f"Error processing node {node.id}: {str(e)}")
+                    error_type = type(e).__name__
+                    if error_type not in self.metrics.error_counts:
+                        self.metrics.error_counts[error_type] = 0
+                    self.metrics.error_counts[error_type] += 1
+        
+        # Complete metrics
+        self.metrics.records_processed = processed_nodes
+        self.metrics.complete()
+        self.logger.info(
+            f"Completed DAG processing: {processed_nodes} nodes "
+            f"at {self.metrics.processing_rate:.2f} nodes/sec"
+        )
+        
+        return results
+    
+    def _process_node(
+        self, 
+        node: DAGNode, 
+        processor_func: Callable[[Any], Any]
+    ) -> Any:
+        """Process a single node"""
+        try:
+            # Process node data
+            start_time = time.time()
+            result = processor_func(node.data)
+            duration = time.time() - start_time
+            
+            # Update node status
+            node.status = "completed"
+            node.result = result
+            
+            # Update processing order
+            self.processing_order.append(node.id)
+            
+            # Log progress
+            self.logger.debug(f"Processed node {node.id} in {duration:.4f}s")
+            
+            return result
+        except Exception as e:
+            # Update node status on error
+            node.status = "failed"
+            node.error = str(e)
+            
+            # Update processing order 
+            self.processing_order.append(node.id)
+            
+            # Re-raise to propagate the error
+            raise
+    
+    def visualize(self) -> str:
+        """Generate a visualization of the graph"""
+        # For a real implementation, this would use graphviz or similar
+        # Here we'll just return a text representation
+        lines = []
+        lines.append("Directed Acyclic Graph Visualization:")
+        lines.append(f"Total nodes: {len(self.nodes)}")
+        
+        status_counts = {"pending": 0, "processing": 0, "completed": 0, "failed": 0}
+        for node in self.nodes.values():
+            status_counts[node.status] += 1
+            
+        lines.append(f"Status: {status_counts}")
+        
+        if self.processing_order:
+            lines.append("Processing order: " + " -> ".join(self.processing_order[:5]) + 
+                         (f" (+ {len(self.processing_order)-5} more)" if len(self.processing_order) > 5 else ""))
+            
+        # List nodes with many dependencies
+        complex_nodes = [
+            node for node in self.nodes.values()
+            if len(node.dependencies) > 3 or len(node.dependents) > 3
+        ]
+        if complex_nodes:
+            lines.append("Complex nodes:")
+            for node in complex_nodes[:3]:
+                lines.append(f"  Node {node.id}: {len(node.dependencies)} dependencies, {len(node.dependents)} dependents")
+            if len(complex_nodes) > 3:
+                lines.append(f"  (+ {len(complex_nodes)-3} more complex nodes)")
+                
+        return "\n".join(lines)
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get processing metrics"""
+        return self.metrics.to_dict()
 
 
 class IncrementalETLOptimizer:
@@ -3502,13 +4343,15 @@ class SyncOrchestrator:
     """
     Orchestrates the sync process, handling change detection,
     transformation, validation, and writing to the target system.
+    Enhanced with performance optimization capabilities for scalable processing.
     """
     def __init__(
         self,
         source_connection: DatabaseConnection,
         target_connection: DatabaseConnection,
         field_mapping_config: Dict[str, Any] = None,
-        validation_rules: Dict[str, Any] = None
+        validation_rules: Dict[str, Any] = None,
+        performance_config: Dict[str, Any] = None
     ):
         self.source_connection = source_connection
         self.target_connection = target_connection
@@ -3523,6 +4366,48 @@ class SyncOrchestrator:
         self.change_detector = ChangeDetector(source_connection)
         self.transformer = DataTransformer(field_mapping_config)
         self.validator = DataValidator(validation_rules)
+        
+        # Initialize performance optimization components
+        perf_config = performance_config or {}
+        
+        # Configure batch processing
+        batch_config = BatchConfiguration(
+            batch_size=perf_config.get("batch_size", 100),
+            max_retries=perf_config.get("max_retries", 3),
+            dynamic_sizing=perf_config.get("dynamic_batch_sizing", True),
+            min_batch_size=perf_config.get("min_batch_size", 10),
+            max_batch_size=perf_config.get("max_batch_size", 1000),
+            target_batch_duration_seconds=perf_config.get("target_batch_duration", 2.0),
+            prioritize_tables=perf_config.get("table_priorities", {})
+        )
+        self.batch_processor = BatchProcessor(batch_config)
+        
+        # Configure parallel processing
+        io_bound = perf_config.get("io_bound", True)  # Default to I/O bound for database operations
+        self.parallel_processor = ParallelProcessor(
+            thread_pool_size=perf_config.get("thread_pool_size", None),
+            process_pool_size=perf_config.get("process_pool_size", None),
+            io_bound=io_bound
+        )
+        
+        # Configure resource monitoring
+        self.resource_monitor = ResourceMonitor(
+            poll_interval_seconds=perf_config.get("resource_poll_interval", 5.0)
+        )
+        
+        # Configure incremental optimization
+        self.dag_processor = DAGProcessor()
+        
+        # Start resource monitoring
+        self.resource_monitor.start_monitoring()
+        
+        # Metrics storage
+        self.performance_metrics = {
+            "batch_metrics": {},
+            "parallel_metrics": {},
+            "dag_metrics": {},
+            "resource_metrics": []
+        }
         
         self.logger = logging.getLogger(self.__class__.__name__)
         
