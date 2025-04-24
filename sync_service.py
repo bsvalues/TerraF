@@ -4114,6 +4114,86 @@ class DataValidator:
         self.data_quality_metrics["last_validation_timestamp"] = datetime.datetime.now().isoformat()
         
         return results
+        
+    def validate_parallel(
+        self, 
+        records: List[TransformedRecord], 
+        max_workers: int = None,
+        batch_size: int = 50
+    ) -> List[ValidationResult]:
+        """
+        Validate records in parallel using a thread pool for improved performance.
+        
+        Args:
+            records: List of TransformedRecord objects to validate
+            max_workers: Maximum number of worker threads (defaults to CPU count * 5)
+            batch_size: Size of batches to process in parallel
+            
+        Returns:
+            List of ValidationResult objects with validation outcomes
+        """
+        if not records:
+            return []
+            
+        if max_workers is None:
+            max_workers = min(32, multiprocessing.cpu_count() * 5)
+            
+        self.logger.info(
+            f"Validating {len(records)} records in parallel "
+            f"with {max_workers} workers and batch size {batch_size}"
+        )
+        
+        start_time = time.time()
+        all_results = []
+        
+        # Process in batches to avoid creating too many small tasks
+        for i in range(0, len(records), batch_size):
+            batch = records[i:i+batch_size]
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all records in this batch for validation
+                future_to_record = {
+                    executor.submit(self.validate_single, record): record
+                    for record in batch
+                }
+                
+                # Collect results as they complete
+                batch_results = []
+                for future in concurrent.futures.as_completed(future_to_record):
+                    try:
+                        result = future.result()
+                        batch_results.append(result)
+                    except Exception as e:
+                        record = future_to_record[future]
+                        self.logger.error(f"Validation error for record {record.source_id}: {str(e)}")
+                        # Create an error result
+                        batch_results.append(ValidationResult(
+                            record=record,
+                            is_valid=False,
+                            errors=[f"Validation exception: {str(e)}"]
+                        ))
+                
+                all_results.extend(batch_results)
+                
+        elapsed_time = time.time() - start_time
+        
+        # Update validation rate and metrics
+        if elapsed_time > 0:
+            validation_rate = len(records) / elapsed_time
+            self.data_quality_metrics["validation_rate"] = validation_rate
+            
+        valid_count = sum(1 for r in all_results if r.is_valid)
+        self.data_quality_metrics["total_records_validated"] += len(records)
+        self.data_quality_metrics["valid_records"] += valid_count
+        self.data_quality_metrics["invalid_records"] += (len(records) - valid_count)
+        self.data_quality_metrics["last_validation_timestamp"] = datetime.datetime.now().isoformat()
+        
+        self.logger.info(
+            f"Parallel validation complete: {valid_count}/{len(all_results)} records valid "
+            f"in {elapsed_time:.2f}s ({len(records)/max(0.001, elapsed_time):.1f} records/sec)"
+        )
+        
+        return all_results
     
     def _calculate_completion_percentage(self, data: Dict[str, Any]) -> float:
         """Calculate completion percentage of a record (non-null fields)"""
@@ -4695,15 +4775,9 @@ class SyncOrchestrator:
         )
         
         # Configure database performance monitoring
-        # Use the existing constructor parameters
         self.source_db_monitor = DatabasePerformanceMonitor(
-            source_connection,
-            perf_config.get("db_monitor_interval", 10.0)
-        )
-        
-        self.target_db_monitor = DatabasePerformanceMonitor(
-            target_connection,
-            perf_config.get("db_monitor_interval", 10.0)
+            source_connection=source_connection,
+            target_connection=target_connection
         )
         
         # Configure incremental optimization
@@ -4713,7 +4787,8 @@ class SyncOrchestrator:
         self.resource_monitor.start_monitoring()
         # Start database monitors - using their respective methods
         self.source_db_monitor.start_monitoring()
-        self.target_db_monitor.start_monitoring()
+        # We only need one monitor instance for both source and target
+        self.target_db_monitor = self.source_db_monitor
         
         # Metrics storage
         self.performance_metrics = {
@@ -4790,17 +4865,20 @@ class SyncOrchestrator:
             )
             
             # Validate the transformed data in parallel
-            self.logger.info("Validating records in parallel...")
+            self.logger.info("Validating records in parallel using optimized validator...")
             
-            # Create a function to validate a single record
-            def validate_record(record):
-                return self.validator.validate_single(record)
+            # Use the validator's built-in parallel processing
+            # This leverages the validator's optimized batch processing and metrics tracking
+            resource_metrics = self.resource_monitor.get_current_metrics()
+            recommended_threads = self.resource_monitor.recommend_resources("validation")["thread_count"]
             
-            # Process validation in parallel
-            validation_results = self.parallel_processor.map(
-                validate_record, 
+            self.logger.info(f"Using {recommended_threads} threads for parallel validation")
+            
+            # Perform parallel validation with dynamic thread count
+            validation_results = self.validator.validate_parallel(
                 transformed_records,
-                show_progress=True
+                max_workers=recommended_threads,
+                batch_size=min(100, max(10, len(transformed_records) // recommended_threads))
             )
             
             # Store metrics from parallel processing
@@ -4825,14 +4903,17 @@ class SyncOrchestrator:
             self.performance_metrics["resource_metrics"].append(final_resource_metrics)
             
             # Collect database performance metrics
-            source_db_metrics = self.source_db_monitor.get_current_metrics()
-            target_db_metrics = self.target_db_monitor.get_current_metrics()
-            self.performance_metrics["database_metrics"]["source"] = source_db_metrics
-            self.performance_metrics["database_metrics"]["target"] = target_db_metrics
+            perf_summary = self.source_db_monitor.get_performance_summary()
+            # Extract the metrics
+            if "metrics" in perf_summary:
+                source_db_metrics = perf_summary["metrics"].get("source", {})
+                target_db_metrics = perf_summary["metrics"].get("target", {})
+                self.performance_metrics["database_metrics"]["source"] = source_db_metrics
+                self.performance_metrics["database_metrics"]["target"] = target_db_metrics
             
             # Get database performance recommendations
-            source_recommendations = self.source_db_monitor.get_recommendations()
-            target_recommendations = self.target_db_monitor.get_recommendations()
+            source_recommendations = perf_summary.get("recommendations", [])
+            target_recommendations = []
             
             if source_recommendations:
                 self.logger.info(f"Source DB recommendations: {len(source_recommendations)} items found")
@@ -4877,8 +4958,22 @@ class SyncOrchestrator:
             # Transform the data
             transformed_records = self.transformer.transform(changes)
             
-            # Validate the transformed data
-            validation_results = self.validator.validate(transformed_records)
+            # Validate the transformed data using parallel validation for better performance
+            resource_metrics = self.resource_monitor.get_current_metrics()
+            recommended_threads = self.resource_monitor.recommend_resources("validation")["thread_count"]
+            
+            self.logger.info(f"Using {recommended_threads} threads for parallel validation in incremental sync")
+            
+            # Use parallel validation if we have enough records to justify it
+            if len(transformed_records) > 10:
+                validation_results = self.validator.validate_parallel(
+                    transformed_records,
+                    max_workers=recommended_threads,
+                    batch_size=min(100, max(10, len(transformed_records) // recommended_threads))
+                )
+            else:
+                # For small batches, just use regular validation
+                validation_results = self.validator.validate(transformed_records)
             
             # Write valid records to target
             sync_result = self._write_to_target(validation_results)
@@ -4938,8 +5033,23 @@ class SyncOrchestrator:
             # Transform the data
             transformed_records = self.transformer.transform(all_changes)
             
-            # Validate the transformed data
-            validation_results = self.validator.validate(transformed_records)
+            # Validate the transformed data using parallel validation for improved performance
+            self.logger.info(f"Validating {len(transformed_records)} records for selective sync...")
+            resource_metrics = self.resource_monitor.get_current_metrics()
+            recommended_threads = self.resource_monitor.recommend_resources("validation")["thread_count"]
+            
+            self.logger.info(f"Using {recommended_threads} threads for parallel validation in selective sync")
+            
+            # Use parallel validation if we have enough records to justify it
+            if len(transformed_records) > 10:
+                validation_results = self.validator.validate_parallel(
+                    transformed_records,
+                    max_workers=recommended_threads,
+                    batch_size=min(100, max(10, len(transformed_records) // recommended_threads))
+                )
+            else:
+                # For small batches, just use regular validation
+                validation_results = self.validator.validate(transformed_records)
             
             # Write valid records to target
             sync_result = self._write_to_target(validation_results)
