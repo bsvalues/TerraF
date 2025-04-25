@@ -1096,7 +1096,7 @@ class ResourceMonitor:
         }
 
 
-class DatabasePerformanceMonitor:
+class RepositoryPerformanceMonitor:
     """
     Monitor repository performance and resource utilization.
     Provides insights into query execution times, connection pools,
@@ -4946,7 +4946,7 @@ class SyncOrchestrator:
         )
         
         # Configure database performance monitoring
-        self.source_db_monitor = DatabasePerformanceMonitor(
+        self.source_db_monitor = RepositoryPerformanceMonitor(
             source_connection=source_connection,
             target_connection=target_connection
         )
@@ -6901,7 +6901,7 @@ class HistoricalTrendAnalyzer:
             }
 
 
-class DatabasePerformanceMonitor:
+class RepositoryPerformanceMonitor:
     """
     Monitors database performance during synchronization operations
     and provides metrics and optimization recommendations.
@@ -6935,7 +6935,7 @@ class DatabasePerformanceMonitor:
         self.current_metrics = {
             "source": {
                 "start_time": datetime.datetime.now().isoformat(),
-                "queries_executed": 0,
+                "operations_executed": 0,
                 "rows_processed": 0,
                 "execution_time_ms": 0,
                 "avg_query_time_ms": 0,
@@ -6947,7 +6947,7 @@ class DatabasePerformanceMonitor:
             },
             "target": {
                 "start_time": datetime.datetime.now().isoformat(),
-                "queries_executed": 0,
+                "operations_executed": 0,
                 "rows_processed": 0,
                 "execution_time_ms": 0,
                 "avg_query_time_ms": 0,
@@ -6972,10 +6972,10 @@ class DatabasePerformanceMonitor:
         # Finalize metrics
         for db in ["source", "target"]:
             self.current_metrics[db]["end_time"] = end_time
-            if self.current_metrics[db]["queries_executed"] > 0:
+            if self.current_metrics[db]["operations_executed"] > 0:
                 self.current_metrics[db]["avg_query_time_ms"] = (
                     self.current_metrics[db]["execution_time_ms"] / 
-                    self.current_metrics[db]["queries_executed"]
+                    self.current_metrics[db]["operations_executed"]
                 )
             
             # Add to history
@@ -7001,7 +7001,7 @@ class DatabasePerformanceMonitor:
             return
             
         metrics = self.current_metrics[db_type]
-        metrics["queries_executed"] += 1
+        metrics["operations_executed"] += 1
         metrics["rows_processed"] += rows_affected
         metrics["execution_time_ms"] += query_time_ms
         
@@ -7021,12 +7021,12 @@ class DatabasePerformanceMonitor:
         metrics = self.current_metrics[db_type]
         
         # Simulate CPU, memory, and IO based on query activity
-        query_activity = min(100, metrics["queries_executed"] * 2)
+        query_activity = min(100, metrics["operations_executed"] * 2)
         
         # Generate realistic metrics
         metrics["cpu_utilization"] = min(90, 30 + query_activity / 3 + random.randint(-5, 5))
         metrics["memory_utilization"] = min(90, 40 + query_activity / 4 + random.randint(-3, 3))
-        metrics["io_operations"] = metrics["queries_executed"] * 3 + metrics["rows_processed"] / 10
+        metrics["io_operations"] = metrics["operations_executed"] * 3 + metrics["rows_processed"] / 10
     
     def get_performance_summary(self) -> Dict[str, Any]:
         """
@@ -7514,7 +7514,7 @@ class SyncService:
         )
         
         # Initialize the database performance monitor
-        self.performance_monitor = DatabasePerformanceMonitor(
+        self.performance_monitor = RepositoryPerformanceMonitor(
             source_connection=self.source_connection,
             target_connection=self.target_connection
         )
@@ -7995,7 +7995,7 @@ class SyncService:
                         "memory_utilization": 40,
                         "active_connections": 5,
                         "avg_query_time_ms": 25,
-                        "queries_executed": 100,
+                        "operations_executed": 100,
                         "transaction_count": 10
                     },
                     "target": {
@@ -8003,7 +8003,7 @@ class SyncService:
                         "memory_utilization": 45,
                         "active_connections": 8,
                         "avg_query_time_ms": 30,
-                        "queries_executed": 120,
+                        "operations_executed": 120,
                         "transaction_count": 15
                     }
                 },
@@ -8120,13 +8120,13 @@ class SyncService:
                             "cpu_utilization": 30,
                             "memory_utilization": 40,
                             "avg_query_time_ms": 25,
-                            "queries_executed": 100
+                            "operations_executed": 100
                         },
                         "target": {
                             "cpu_utilization": 35,
                             "memory_utilization": 45,
                             "avg_query_time_ms": 30,
-                            "queries_executed": 120
+                            "operations_executed": 120
                         }
                     },
                     "recommendations": []
