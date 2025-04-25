@@ -525,3 +525,122 @@ class ModelInterface:
         except Exception as e:
             logger.error(f"Error generating embeddings with OpenAI: {str(e)}")
             raise
+            
+    def analyze_code(
+        self,
+        code: str,
+        language: str,
+        query: str,
+        provider: str = "auto",
+        model: Optional[str] = None,
+        max_tokens: int = 2000,
+        temperature: float = 0.3
+    ) -> Dict[str, Any]:
+        """
+        Analyze code with AI for quality, architecture, performance, or security insights.
+        
+        Args:
+            code: Source code to analyze
+            language: Programming language of the code
+            query: Specific analysis question or focus
+            provider: AI provider to use (openai, anthropic, or auto)
+            model: Specific model to use
+            max_tokens: Maximum tokens in response
+            temperature: Temperature for generation
+            
+        Returns:
+            Dictionary containing analysis results
+            
+        Raises:
+            ValueError: If no suitable provider is available
+        """
+        # Construct the prompt
+        system_message = f"""You are an expert code analyzer specializing in {language} development.
+Analyze the provided code with special attention to best practices, maintainability, and performance.
+Focus your analysis on answering the provided query.
+Provide a thorough analysis in a structured format with:
+1. A brief summary of the code's purpose
+2. Quality assessment (scale of 1-10)
+3. Detailed response to the specific query
+4. List of identified issues
+5. Specific recommendations for improvement"""
+
+        prompt = f"""Please analyze the following {language} code:
+
+```{language}
+{code}
+```
+
+Specific analysis query: {query}
+
+Respond in JSON format with the following structure:
+{{
+    "summary": "Brief summary of what the code does",
+    "quality_score": quality score from 1-10,
+    "query_response": "Detailed response addressing the specific analysis query",
+    "issues": ["Issue 1", "Issue 2", ...],
+    "recommendations": ["Recommendation 1", "Recommendation 2", ...]
+}}
+"""
+
+        # If provider is auto, select the best available provider
+        if provider == "auto":
+            if self.openai_available:
+                provider = "openai"
+            elif self.anthropic_available:
+                provider = "anthropic"
+            else:
+                raise ValueError("No AI provider available. Please configure OpenAI or Anthropic API keys.")
+        
+        try:
+            # Generate analysis using the selected provider
+            response_text = self.generate_text(
+                prompt=prompt,
+                system_message=system_message,
+                provider=provider,
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            
+            # Extract JSON from the response
+            try:
+                # Try to parse response as JSON directly
+                analysis_result = json.loads(response_text)
+            except json.JSONDecodeError:
+                # If direct parsing fails, try to extract JSON from markdown
+                import re
+                json_match = re.search(r"```json\n(.*?)\n```", response_text, re.DOTALL)
+                if json_match:
+                    try:
+                        analysis_result = json.loads(json_match.group(1))
+                    except json.JSONDecodeError:
+                        # If extraction fails, return basic response
+                        analysis_result = {
+                            "summary": "Could not parse analysis result",
+                            "quality_score": 5,
+                            "query_response": response_text,
+                            "issues": ["Error parsing analysis result"],
+                            "recommendations": ["Try again with more specific query"]
+                        }
+                else:
+                    # If no JSON block found, use the text as the query response
+                    analysis_result = {
+                        "summary": "Analysis completed",
+                        "quality_score": 5,
+                        "query_response": response_text,
+                        "issues": [],
+                        "recommendations": []
+                    }
+            
+            return analysis_result
+            
+        except Exception as e:
+            logger.error(f"Error analyzing code: {str(e)}")
+            return {
+                "summary": "Error analyzing code",
+                "quality_score": 0,
+                "query_response": f"Error: {str(e)}",
+                "issues": ["Analysis failed due to an error"],
+                "recommendations": ["Try again with a shorter code sample or different provider"]
+            }
