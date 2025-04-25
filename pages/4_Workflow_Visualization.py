@@ -724,9 +724,9 @@ if __name__ == "__main__":
     print(f"Training data shape: {result['train_data'].shape}")
     print(f"Testing data shape: {result['test_data'].shape}")
     print(f"Data statistics: {result['statistics']}")
-    """),
+    """,
     
-    "E-commerce Order Processing": ("""
+    "E-commerce Order Processing": """
 class OrderProcessor {
     constructor(orderRepository, paymentService, inventoryService, emailService) {
         this.orderRepository = orderRepository;
@@ -1052,7 +1052,7 @@ class EmailService {
         // Send email
     }
 }
-    """)
+    """
 }
 
 # Sidebar
