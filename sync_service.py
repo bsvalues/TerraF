@@ -1962,7 +1962,7 @@ class DataQualityProfiler:
             
             # In a real implementation, this would get actual field metadata
             # For the simulation, we'll use mock data based on collection name
-            fields = self._get_mock_columns(collection_name)
+            fields = self._get_mock_fields(collection_name)
             
             # Sample data from the collection
             sample_query = f"""
@@ -1986,14 +1986,14 @@ class DataQualityProfiler:
             
             # Process each field
             for field in fields:
-                field_name = field["column_name"]  # Keep column_name for backward compatibility
+                field_name = field["field_name"]
                 data_type = field["data_type"]
                 
                 # Extract values for this field from sample data
                 values = [item.get(field_name) for item in sample_data if field_name in item]
                 
                 # Generate field statistics
-                field_profile = self._analyze_column(field_name, data_type, values)
+                field_profile = self._analyze_field(field_name, data_type, values)
                 profile["fields"][field_name] = field_profile
             
             # Calculate correlations between numeric fields
@@ -2230,36 +2230,36 @@ class DataQualityProfiler:
         # For the simulation, we'll generate a random count
         return random.randint(1000, 100000)
     
-    def _get_mock_columns(self, collection_name: str) -> List[Dict[str, str]]:
+    def _get_mock_fields(self, collection_name: str) -> List[Dict[str, str]]:
         """Get mock field information for a collection"""
         if collection_name == "properties":
             return [
-                {"column_name": "property_id", "data_type": "INTEGER"},
-                {"column_name": "parcel_number", "data_type": "VARCHAR"},
-                {"column_name": "owner_name", "data_type": "VARCHAR"},
-                {"column_name": "address", "data_type": "VARCHAR"},
-                {"column_name": "land_value", "data_type": "DECIMAL"},
-                {"column_name": "improvement_value", "data_type": "DECIMAL"},
-                {"column_name": "total_value", "data_type": "DECIMAL"},
-                {"column_name": "last_updated", "data_type": "DATETIME"}
+                {"field_name": "property_id", "data_type": "INTEGER"},
+                {"field_name": "parcel_number", "data_type": "VARCHAR"},
+                {"field_name": "owner_name", "data_type": "VARCHAR"},
+                {"field_name": "address", "data_type": "VARCHAR"},
+                {"field_name": "land_value", "data_type": "DECIMAL"},
+                {"field_name": "improvement_value", "data_type": "DECIMAL"},
+                {"field_name": "total_value", "data_type": "DECIMAL"},
+                {"field_name": "last_updated", "data_type": "DATETIME"}
             ]
         elif collection_name == "valuations":
             return [
-                {"column_name": "valuation_id", "data_type": "INTEGER"},
-                {"column_name": "property_id", "data_type": "INTEGER"},
-                {"column_name": "valuation_date", "data_type": "DATE"},
-                {"column_name": "value_amount", "data_type": "DECIMAL"},
-                {"column_name": "value_type", "data_type": "VARCHAR"},
-                {"column_name": "assessor_id", "data_type": "INTEGER"}
+                {"field_name": "valuation_id", "data_type": "INTEGER"},
+                {"field_name": "property_id", "data_type": "INTEGER"},
+                {"field_name": "valuation_date", "data_type": "DATE"},
+                {"field_name": "value_amount", "data_type": "DECIMAL"},
+                {"field_name": "value_type", "data_type": "VARCHAR"},
+                {"field_name": "assessor_id", "data_type": "INTEGER"}
             ]
         else:
             # Generic fields for other collections
             return [
-                {"column_name": "id", "data_type": "INTEGER"},
-                {"column_name": "name", "data_type": "VARCHAR"},
-                {"column_name": "description", "data_type": "VARCHAR"},
-                {"column_name": "created_at", "data_type": "DATETIME"},
-                {"column_name": "updated_at", "data_type": "DATETIME"}
+                {"field_name": "id", "data_type": "INTEGER"},
+                {"field_name": "name", "data_type": "VARCHAR"},
+                {"field_name": "description", "data_type": "VARCHAR"},
+                {"field_name": "created_at", "data_type": "DATETIME"},
+                {"field_name": "updated_at", "data_type": "DATETIME"}
             ]
     
     def _analyze_field(self, field_name: str, data_type: str, values: List[Any]) -> Dict[str, Any]:
