@@ -268,7 +268,8 @@ class SyncService:
     def __init__(
         self,
         batch_config: Optional[BatchConfiguration] = None,
-        resource_monitor: Optional[Callable[[], Dict[str, Any]]] = None
+        resource_monitor: Optional[Callable[[], Dict[str, Any]]] = None,
+        config: Optional[Dict[str, Any]] = None
     ):
         """
         Initialize the sync service.
@@ -276,11 +277,13 @@ class SyncService:
         Args:
             batch_config: Batch configuration parameters
             resource_monitor: Function to monitor system resources
+            config: Additional configuration parameters
         """
         self.batch_config = batch_config or BatchConfiguration()
         self.resource_monitor = resource_monitor or self._default_resource_monitor
         self.optimizer = PerformanceOptimizer(self.batch_config)
         self.metrics = SyncMetrics()
+        self.config = config or {}
         
         self._running = False
         self._paused = False
@@ -288,6 +291,15 @@ class SyncService:
         self._queue = queue.Queue()
         self._lock = threading.Lock()
         self._metrics_thread = None
+        
+        # Initialize additional metrics for dashboard integration
+        self._last_sync_result = {
+            "success": False,
+            "records_processed": 0,
+            "start_time": None,
+            "end_time": None,
+            "performance_metrics": {}
+        }
     
     def _default_resource_monitor(self) -> Dict[str, Any]:
         """
@@ -498,6 +510,349 @@ class SyncService:
             except Exception as e:
                 logger.error(f"Error collecting metrics: {str(e)}")
                 time.sleep(5.0)
+
+# Dashboard integration methods
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        """
+        Get performance metrics for dashboard display.
+        
+        Returns:
+            Dictionary of performance metrics
+        """
+        # Get current system resource metrics
+        resources = self.resource_monitor()
+        
+        # Format metrics for dashboard
+        system_resources = {
+            "cpu_percent": resources.get("cpu", 0),
+            "memory_percent": resources.get("memory", 0),
+            "disk_io_percent": resources.get("disk", 0),
+            "memory_used_mb": 1024 * resources.get("memory", 0) / 100,  # Simulated
+            "network_throughput_mbps": resources.get("network", 0)
+        }
+        
+        # Calculate health status based on resource usage
+        system_health = self._interpret_system_health(system_resources)
+        
+        # Calculate optimal batch sizes based on system resources
+        optimal_batch_sizes = self._calculate_optimal_batch_sizes(system_resources)
+        
+        # Get processing metrics
+        processing_metrics = {
+            "batch_size": self.get_current_batch_size(),
+            "throughput_items_per_second": self.metrics.get_metrics().get("throughput_items_per_second", 0),
+            "error_rate": self.metrics.get_metrics().get("error_rate", 0),
+            "total_items_processed": self.metrics.get_metrics().get("total_items", 0),
+            "successful_items": self.metrics.get_metrics().get("successful_items", 0),
+            "failed_items": self.metrics.get_metrics().get("failed_items", 0)
+        }
+        
+        # Get repository metrics (simulated)
+        repository_metrics = self._get_repository_metrics()
+        
+        # Return consolidated metrics
+        return {
+            "system_resources": system_resources,
+            "interpretation": {
+                "system_health": system_health
+            },
+            "optimal_batch_sizes": optimal_batch_sizes,
+            "processing": processing_metrics,
+            "repository": repository_metrics,
+            "timestamp": time.time()
+        }
+    
+    def _interpret_system_health(self, system_resources: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Interpret system health based on resource metrics.
+        
+        Args:
+            system_resources: Dictionary of system resource metrics
+            
+        Returns:
+            Dictionary of health interpretations
+        """
+        cpu_percent = system_resources.get("cpu_percent", 0)
+        memory_percent = system_resources.get("memory_percent", 0)
+        disk_io_percent = system_resources.get("disk_io_percent", 0)
+        
+        # Determine health status for each component
+        cpu_status = "healthy"
+        if cpu_percent > 85:
+            cpu_status = "critical"
+        elif cpu_percent > 70:
+            cpu_status = "warning"
+        elif cpu_percent > 50:
+            cpu_status = "elevated"
+            
+        memory_status = "healthy"
+        if memory_percent > 90:
+            memory_status = "critical"
+        elif memory_percent > 75:
+            memory_status = "warning"
+        elif memory_percent > 60:
+            memory_status = "elevated"
+            
+        disk_status = "healthy"
+        if disk_io_percent > 80:
+            disk_status = "critical"
+        elif disk_io_percent > 60:
+            disk_status = "warning"
+        elif disk_io_percent > 40:
+            disk_status = "elevated"
+            
+        # Determine overall health
+        overall_status = "healthy"
+        if cpu_status == "critical" or memory_status == "critical" or disk_status == "critical":
+            overall_status = "critical"
+        elif cpu_status == "warning" or memory_status == "warning" or disk_status == "warning":
+            overall_status = "warning"
+        elif cpu_status == "elevated" or memory_status == "elevated" or disk_status == "elevated":
+            overall_status = "elevated"
+            
+        # Generate interpretations
+        interpretations = []
+        if cpu_status != "healthy":
+            interpretations.append(f"CPU usage is {cpu_percent:.1f}%, which may impact sync performance.")
+        if memory_status != "healthy":
+            interpretations.append(f"Memory usage is {memory_percent:.1f}%, which may limit batch processing capabilities.")
+        if disk_status != "healthy":
+            interpretations.append(f"Disk I/O usage is {disk_io_percent:.1f}%, which may slow down data reading/writing operations.")
+            
+        if not interpretations:
+            interpretations.append("All systems operating within optimal parameters. Batch sizes can be maximized.")
+            
+        return {
+            "overall": overall_status,
+            "components": {
+                "cpu": cpu_status,
+                "memory": memory_status,
+                "disk_io": disk_status
+            },
+            "resource_interpretations": interpretations
+        }
+    
+    def _calculate_optimal_batch_sizes(self, system_resources: Dict[str, Any], repository_metrics: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Calculate optimal batch sizes based on system resources.
+        
+        Args:
+            system_resources: Dictionary of system resource metrics
+            repository_metrics: Optional repository metrics
+            
+        Returns:
+            Dictionary of optimal batch sizes and explanations
+        """
+        cpu_percent = system_resources.get("cpu_percent", 0)
+        memory_percent = system_resources.get("memory_percent", 0)
+        disk_io_percent = system_resources.get("disk_io_percent", 0)
+        
+        # Base batch sizes for different operations
+        base_sizes = {
+            "full_sync": 100,
+            "incremental_sync": 200,
+            "selective_sync": 150
+        }
+        
+        # Calculate adjustment factors
+        cpu_factor = max(0.2, 1.0 - (cpu_percent / 100) * 0.8)
+        memory_factor = max(0.2, 1.0 - (memory_percent / 100) * 0.8)
+        disk_factor = max(0.2, 1.0 - (disk_io_percent / 100) * 0.8)
+        
+        # Combined factor
+        combined_factor = min(cpu_factor, memory_factor, disk_factor)
+        
+        # Calculate adjusted batch sizes
+        adjusted_sizes = {}
+        for op_type, base_size in base_sizes.items():
+            adjusted_sizes[op_type] = max(10, int(base_size * combined_factor))
+        
+        # Generate explanations
+        explanations = []
+        limiting_factor = "none"
+        min_factor = min(cpu_factor, memory_factor, disk_factor)
+        
+        if abs(min_factor - cpu_factor) < 0.01:
+            limiting_factor = "CPU"
+            explanations.append(f"CPU usage ({cpu_percent:.1f}%) is the limiting factor for batch sizing.")
+        elif abs(min_factor - memory_factor) < 0.01:
+            limiting_factor = "Memory"
+            explanations.append(f"Memory usage ({memory_percent:.1f}%) is the limiting factor for batch sizing.")
+        elif abs(min_factor - disk_factor) < 0.01:
+            limiting_factor = "Disk I/O"
+            explanations.append(f"Disk I/O usage ({disk_io_percent:.1f}%) is the limiting factor for batch sizing.")
+            
+        explanations.append(f"Combined adjustment factor: {combined_factor:.2f}")
+        
+        if combined_factor > 0.8:
+            explanations.append("System resources are optimal, batch sizes can be maximized.")
+        elif combined_factor > 0.5:
+            explanations.append("System resources are good, moderate batch sizes recommended.")
+        else:
+            explanations.append("System resources are constrained, smaller batch sizes recommended to prevent overload.")
+        
+        return {
+            "batch_sizes": adjusted_sizes,
+            "adjustment_factor": combined_factor,
+            "limiting_factor": limiting_factor,
+            "adjustment_explanations": explanations
+        }
+    
+    def _get_repository_metrics(self) -> Dict[str, Any]:
+        """
+        Get repository metrics (simulated).
+        
+        Returns:
+            Dictionary of repository metrics
+        """
+        return {
+            "total_repositories": 5,
+            "total_files": 1200 + int(300 * np.random.random()),
+            "average_file_size_kb": 25 + int(10 * np.random.random()),
+            "total_size_mb": 30 + int(5 * np.random.random()),
+            "connection_latency_ms": 50 + int(20 * np.random.random()),
+            "repositories": [
+                {
+                    "name": "code_repositories",
+                    "file_count": 450 + int(50 * np.random.random()),
+                    "size_mb": 12 + int(2 * np.random.random())
+                },
+                {
+                    "name": "workflow_patterns",
+                    "file_count": 180 + int(20 * np.random.random()),
+                    "size_mb": 5 + int(1 * np.random.random())
+                },
+                {
+                    "name": "architecture_templates",
+                    "file_count": 75 + int(10 * np.random.random()),
+                    "size_mb": 3 + int(0.5 * np.random.random())
+                },
+                {
+                    "name": "code_metrics",
+                    "file_count": 320 + int(30 * np.random.random()),
+                    "size_mb": 8 + int(1.5 * np.random.random())
+                },
+                {
+                    "name": "performance_data",
+                    "file_count": 175 + int(25 * np.random.random()),
+                    "size_mb": 2 + int(0.5 * np.random.random())
+                }
+            ]
+        }
+    
+    # Sync operation methods
+    def full_sync(self) -> Dict[str, Any]:
+        """
+        Perform a full synchronization operation.
+        
+        Returns:
+            Dictionary with operation results
+        """
+        # Start the service if not already running
+        if not self.is_running():
+            self.start()
+        
+        # Simulate a full sync operation
+        start_time = time.time()
+        
+        # Simulate processing time
+        time.sleep(1.0)
+        
+        # Generate result
+        records_processed = 1000 + int(200 * np.random.random())
+        end_time = time.time()
+        
+        # Create result data
+        result = {
+            "success": True,
+            "records_processed": records_processed,
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration": end_time - start_time,
+            "performance_metrics": self.get_metrics()
+        }
+        
+        # Store last result
+        self._last_sync_result = result
+        
+        return result
+    
+    def incremental_sync(self) -> Dict[str, Any]:
+        """
+        Perform an incremental synchronization operation.
+        
+        Returns:
+            Dictionary with operation results
+        """
+        # Start the service if not already running
+        if not self.is_running():
+            self.start()
+        
+        # Simulate an incremental sync operation
+        start_time = time.time()
+        
+        # Simulate processing time (faster than full sync)
+        time.sleep(0.5)
+        
+        # Generate result
+        records_processed = 200 + int(100 * np.random.random())
+        end_time = time.time()
+        
+        # Create result data
+        result = {
+            "success": True,
+            "records_processed": records_processed,
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration": end_time - start_time,
+            "performance_metrics": self.get_metrics()
+        }
+        
+        # Store last result
+        self._last_sync_result = result
+        
+        return result
+    
+    def selective_sync(self, collections: List[str]) -> Dict[str, Any]:
+        """
+        Perform a selective synchronization operation.
+        
+        Args:
+            collections: List of collections to synchronize
+            
+        Returns:
+            Dictionary with operation results
+        """
+        # Start the service if not already running
+        if not self.is_running():
+            self.start()
+        
+        # Simulate a selective sync operation
+        start_time = time.time()
+        
+        # Simulate processing time (based on number of collections)
+        time.sleep(0.2 * len(collections))
+        
+        # Generate result
+        records_per_collection = 100 + int(50 * np.random.random())
+        records_processed = len(collections) * records_per_collection
+        end_time = time.time()
+        
+        # Create result data
+        result = {
+            "success": True,
+            "records_processed": records_processed,
+            "collections": collections,
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration": end_time - start_time,
+            "performance_metrics": self.get_metrics()
+        }
+        
+        # Store last result
+        self._last_sync_result = result
+        
+        return result
 
 # Singleton instance for global access
 _default_service = None
