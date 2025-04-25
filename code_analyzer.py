@@ -1,604 +1,556 @@
 import os
-import ast
 import re
+import json
 import logging
-from pathlib import Path
-from collections import defaultdict
-from utils import count_lines_of_code, estimate_complexity
+from typing import List, Dict, Any, Optional, Tuple, Union
+from model_interface import ModelInterface
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('code_analyzer')
 
-class CodeVisitor(ast.NodeVisitor):
-    """AST visitor for analyzing Python code"""
+class CodeAnalysisResult:
+    """Result of a code analysis operation."""
     
-    def __init__(self):
-        self.classes = []
-        self.functions = []
-        self.imports = []
-        self.global_vars = []
-        self.issues = []
-        self.magic_numbers = []
-        self.nested_blocks = []
+    def __init__(
+        self,
+        quality_score: float,
+        issues: List[Dict[str, Any]],
+        suggestions: List[Dict[str, Any]],
+        metrics: Dict[str, Any],
+        summary: str
+    ):
+        """
+        Initialize a code analysis result.
         
-        # Track node hierarchy
-        self.parent_stack = []
-        
-        # Track current context
-        self.current_class = None
-        self.current_function = None
+        Args:
+            quality_score: Overall code quality score (0-10)
+            issues: List of identified issues
+            suggestions: List of improvement suggestions
+            metrics: Dictionary of code metrics
+            summary: Summary of the analysis
+        """
+        self.quality_score = quality_score
+        self.issues = issues
+        self.suggestions = suggestions
+        self.metrics = metrics
+        self.summary = summary
     
-    def visit_ClassDef(self, node):
-        """Process class definitions"""
-        # Store class info
-        class_info = {
-            'name': node.name,
-            'line': node.lineno,
-            'methods': [],
-            'class_vars': [],
-            'bases': [base.id if hasattr(base, 'id') else 'unknown' for base in node.bases]
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the result to a dictionary.
+        
+        Returns:
+            Dictionary representation of the result
+        """
+        return {
+            "quality_score": self.quality_score,
+            "issues": self.issues,
+            "suggestions": self.suggestions,
+            "metrics": self.metrics,
+            "summary": self.summary
         }
-        self.classes.append(class_info)
-        
-        # Set current class context
-        prev_class = self.current_class
-        self.current_class = class_info
-        
-        # Visit children
-        self.generic_visit(node)
-        
-        # Restore previous context
-        self.current_class = prev_class
     
-    def visit_FunctionDef(self, node):
-        """Process function and method definitions"""
-        # Calculate function complexity
-        complexity = self._calculate_complexity(node)
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'CodeAnalysisResult':
+        """
+        Create a result from a dictionary.
         
-        # Count parameters
-        params = [arg.arg for arg in node.args.args]
-        
-        # Store function info
-        func_info = {
-            'name': node.name,
-            'line': node.lineno,
-            'complexity': complexity,
-            'parameters': params,
-            'loc': self._count_lines(node)
-        }
-        
-        # Check if it's a method or a function
-        if self.current_class:
-            self.current_class['methods'].append(func_info)
-        else:
-            self.functions.append(func_info)
-        
-        # Check for long parameter lists (more than 5 parameters)
-        if len(params) > 5:
-            self.issues.append({
-                'type': 'long_parameter_list',
-                'detail': f"Function '{node.name}' has a long parameter list ({len(params)} parameters)",
-                'line': node.lineno
-            })
-        
-        # Check for long functions (more than 50 lines)
-        lines = self._count_lines(node)
-        if lines > 50:
-            self.issues.append({
-                'type': 'long_method',
-                'detail': f"Function '{node.name}' is too long ({lines} lines)",
-                'line': node.lineno
-            })
-        
-        # Check for complex functions (complexity > 10)
-        if complexity > 10:
-            self.issues.append({
-                'type': 'complex_method',
-                'detail': f"Function '{node.name}' is too complex (complexity: {complexity})",
-                'line': node.lineno
-            })
-        
-        # Set current function context
-        prev_function = self.current_function
-        self.current_function = func_info
-        
-        # Remember the parent node for child nodes
-        self.parent_stack.append(node)
-        
-        # Visit children
-        self.generic_visit(node)
-        
-        # Restore previous context
-        self.current_function = prev_function
-        self.parent_stack.pop()
-    
-    def visit_Import(self, node):
-        """Process import statements"""
-        for alias in node.names:
-            self.imports.append({
-                'module': alias.name,
-                'alias': alias.asname,
-                'line': node.lineno,
-                'type': 'import'
-            })
-        self.generic_visit(node)
-    
-    def visit_ImportFrom(self, node):
-        """Process from-import statements"""
-        for alias in node.names:
-            self.imports.append({
-                'module': node.module,
-                'name': alias.name,
-                'alias': alias.asname,
-                'line': node.lineno,
-                'type': 'from_import'
-            })
-        self.generic_visit(node)
-    
-    def visit_Assign(self, node):
-        """Process assignments to find global variables"""
-        # Add a parent reference (not part of the standard AST)
-        node.parent_node = self.parent_stack[-1] if self.parent_stack else None
-        
-        # Check if it's a class variable or a global variable
-        if self.current_class and not self.current_function:
-            for target in node.targets:
-                if hasattr(target, 'id'):
-                    self.current_class['class_vars'].append({
-                        'name': target.id,
-                        'line': node.lineno
-                    })
-        elif not self.current_function and not self.current_class:
-            for target in node.targets:
-                if hasattr(target, 'id'):
-                    self.global_vars.append({
-                        'name': target.id,
-                        'line': node.lineno
-                    })
-        
-        self.generic_visit(node)
-    
-    def visit_Constant(self, node):
-        """Process numeric literals to find magic numbers"""
-        # Add a parent reference
-        node.parent_node = self.parent_stack[-1] if self.parent_stack else None
-        
-        if isinstance(node.value, (int, float)):
-            # Skip common numbers like 0, 1, -1
-            if node.value not in [0, 1, -1, 2, 10, 100]:
-                self.magic_numbers.append({
-                    'value': node.value,
-                    'line': getattr(node, 'lineno', 0)
-                })
-        
-        self.generic_visit(node)
-    
-    def visit_Num(self, node):
-        """Process numeric literals to find magic numbers (legacy)"""
-        # Add a parent reference
-        node.parent_node = self.parent_stack[-1] if self.parent_stack else None
-        
-        # Skip common numbers like 0, 1, -1
-        if node.n not in [0, 1, -1, 2, 10, 100]:
-            self.magic_numbers.append({
-                'value': node.n,
-                'line': getattr(node, 'lineno', 0)
-            })
-        
-        self.generic_visit(node)
-    
-    def visit_If(self, node):
-        """Process if statements to detect nesting"""
-        # Check nesting level recursively
-        nesting_level = self._check_nesting_level(node, 1)
-        if nesting_level > 3:
-            self.nested_blocks.append({
-                'type': 'nested_conditional',
-                'level': nesting_level,
-                'line': node.lineno,
-                'detail': f"Nested conditional statements (depth: {nesting_level})"
-            })
+        Args:
+            data: Dictionary representation of the result
             
-            # Add to issues as well
-            self.issues.append({
-                'type': 'nested_conditional',
-                'detail': f"Nested conditional statements (depth: {nesting_level})",
-                'line': node.lineno
-            })
-        
-        # Remember the parent node for child nodes
-        self.parent_stack.append(node)
-        
-        # Visit children
-        self.generic_visit(node)
-        
-        # Restore previous context
-        self.parent_stack.pop()
-    
-    def _check_nesting_level(self, node, current_level):
-        """Recursively check nesting level of conditional statements"""
-        max_level = current_level
-        
-        # Check if and elif blocks
-        for child_node in ast.iter_child_nodes(node):
-            if isinstance(child_node, ast.If):
-                # Add parent reference to help with navigation later
-                child_node.parent_node = node
-                
-                # Recurse to find the deepest nesting
-                child_level = self._check_nesting_level(child_node, current_level + 1)
-                max_level = max(max_level, child_level)
-        
-        return max_level
-    
-    def _count_lines(self, node):
-        """Count the number of lines in a node"""
-        if hasattr(node, 'end_lineno') and hasattr(node, 'lineno'):
-            return node.end_lineno - node.lineno + 1
-        return 0
-    
-    def _calculate_complexity(self, node):
-        """Calculate cyclomatic complexity of a function/method"""
-        # Start with a base complexity of 1
-        complexity = 1
-        
-        # Increment complexity for each branching statement
-        for child in ast.walk(node):
-            if isinstance(child, (ast.If, ast.While, ast.For)):
-                complexity += 1
-            elif isinstance(child, ast.BoolOp) and isinstance(child.op, ast.And):
-                complexity += len(child.values) - 1
-            elif isinstance(child, ast.BoolOp) and isinstance(child.op, ast.Or):
-                complexity += len(child.values) - 1
-        
-        return complexity
+        Returns:
+            CodeAnalysisResult instance
+        """
+        return cls(
+            quality_score=data.get("quality_score", 0.0),
+            issues=data.get("issues", []),
+            suggestions=data.get("suggestions", []),
+            metrics=data.get("metrics", {}),
+            summary=data.get("summary", "")
+        )
 
-def analyze_python_file(file_path):
+class CodeAnalyzer:
     """
-    Analyze a Python file using AST
+    Analyzer for code quality, architecture, and performance.
     
-    Parameters:
-    - file_path: Path to the Python file
-    
-    Returns:
-    - dict: Analysis results
+    This class analyzes code using AI models to provide quality assessments,
+    identify issues, and suggest improvements.
     """
-    try:
-        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-            content = f.read()
+    
+    def __init__(self, model_interface: Optional[ModelInterface] = None):
+        """
+        Initialize the code analyzer.
         
-        # Parse the AST
-        tree = ast.parse(content, filename=file_path)
+        Args:
+            model_interface: Model interface for AI operations
+        """
+        self.model_interface = model_interface or ModelInterface()
+    
+    def analyze_code(
+        self,
+        code: str,
+        language: str,
+        analysis_type: str = "quality",
+        provider: str = "openai"
+    ) -> CodeAnalysisResult:
+        """
+        Analyze code for quality, issues, and improvements.
         
-        # Visit nodes and collect information
-        visitor = CodeVisitor()
-        visitor.visit(tree)
+        Args:
+            code: Code to analyze
+            language: Programming language of the code
+            analysis_type: Type of analysis to perform (quality, architecture, performance, security)
+            provider: AI provider to use
         
-        # Count lines of code
-        loc = count_lines_of_code(file_path)
+        Returns:
+            CodeAnalysisResult with analysis results
         
-        # Find commented code blocks
-        commented_code = find_commented_code(content)
-        
-        # Calculate overall complexity based on various factors
-        if len(visitor.functions) > 0:
-            avg_func_complexity = sum(f.get('complexity', 0) for f in visitor.functions) / len(visitor.functions)
-        else:
-            avg_func_complexity = 0
-        
-        complexity_factors = [
-            len(visitor.nested_blocks) * 0.5,
-            len(visitor.magic_numbers) * 0.1,
-            avg_func_complexity,
-            len(visitor.issues) * 0.3
-        ]
-        
-        overall_complexity = min(10, round(sum(complexity_factors)))
-        
-        # Create result dictionary
-        result = {
-            'classes': visitor.classes,
-            'functions': visitor.functions,
-            'imports': visitor.imports,
-            'global_vars': visitor.global_vars,
-            'issues': visitor.issues,
-            'magic_numbers': visitor.magic_numbers,
-            'nested_blocks': visitor.nested_blocks,
-            'commented_code': commented_code,
-            'loc': loc,
-            'complexity': overall_complexity
-        }
-        
-        return result
-    except Exception as e:
-        logger.error(f"Error analyzing Python file {file_path}: {str(e)}")
-        return {
-            'classes': [],
-            'functions': [],
-            'imports': [],
-            'global_vars': [],
-            'issues': [{'type': 'error', 'detail': f"Error analyzing file: {str(e)}", 'line': 0}],
-            'magic_numbers': [],
-            'nested_blocks': [],
-            'commented_code': [],
-            'loc': 0,
-            'complexity': 0
-        }
-
-def find_commented_code(content):
-    """
-    Detect blocks of commented code
-    
-    Parameters:
-    - content: File content as string
-    
-    Returns:
-    - list: Line numbers where commented code blocks start
-    """
-    commented_code = []
-    lines = content.splitlines()
-    
-    comment_block_start = None
-    consecutive_comments = 0
-    
-    for i, line in enumerate(lines):
-        line = line.strip()
-        
-        if line.startswith('#') and len(line) > 1:
-            # Skip comment lines that are likely documentation
-            if any(doc_starter in line.lower() for doc_starter in 
-                   ['todo', 'hack', 'fixme', 'note', 'description', 'param', 'return']):
-                continue
-                
-            # Check if this line looks like code
-            code_line = line[1:].strip()
-            if (
-                re.match(r'(def|class|if|for|while|try|except|with|return|import|from)\s', code_line) or
-                re.match(r'[a-zA-Z_][a-zA-Z0-9_]*\s*[=+-/*]', code_line) or
-                code_line.endswith(':')
-            ):
-                if comment_block_start is None:
-                    comment_block_start = i + 1  # Line numbers are 1-based
-                consecutive_comments += 1
-        else:
-            # Reset if we've seen enough consecutive comments to call it a block
-            if consecutive_comments >= 3:
-                commented_code.append({
-                    'line': comment_block_start,
-                    'count': consecutive_comments
-                })
-            comment_block_start = None
-            consecutive_comments = 0
-    
-    # Check if the file ends with a comment block
-    if consecutive_comments >= 3:
-        commented_code.append({
-            'line': comment_block_start,
-            'count': consecutive_comments
-        })
-    
-    return commented_code
-
-def analyze_file(repo_path, file_path):
-    """
-    Analyze a file based on its extension
-    
-    Parameters:
-    - repo_path: Path to the repository
-    - file_path: Relative path to the file
-    
-    Returns:
-    - dict: Analysis results or None if file type is not supported
-    """
-    full_path = os.path.join(repo_path, file_path)
-    
-    # Check file extension
-    _, ext = os.path.splitext(file_path.lower())
-    
-    if ext == '.py':
-        # Analyze Python file using AST
-        return analyze_python_file(full_path)
-    else:
-        # For other file types, just count lines and estimate complexity
-        return {
-            'loc': count_lines_of_code(full_path),
-            'complexity': estimate_complexity(full_path),
-            'issues': []
-        }
-
-def count_file_lines(file_path):
-    """Count the number of lines in a file"""
-    try:
-        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-            return len(f.readlines())
-    except Exception:
-        return 0
-
-def find_duplicated_code_simple(repo_path, file_paths, min_lines=5):
-    """
-    A simple approach to find potential code duplications
-    
-    Parameters:
-    - repo_path: Path to the repository
-    - file_paths: List of file paths to analyze
-    - min_lines: Minimum consecutive lines to consider as duplication
-    
-    Returns:
-    - list: Potential code duplications
-    """
-    logger.info("Looking for duplicated code...")
-    
-    # Store file content as lines
-    files_content = {}
-    for file_path in file_paths:
+        Raises:
+            Exception: If analysis fails
+        """
         try:
-            full_path = os.path.join(repo_path, file_path)
-            with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
-                content = f.read()
-            files_content[file_path] = content.splitlines()
-        except Exception:
-            pass
-    
-    # Look for duplicate blocks
-    duplications = []
-    
-    # Dictionary to store blocks of code and their origins
-    block_origins = {}
-    
-    # Process each file
-    for file_path, lines in files_content.items():
-        for i in range(len(lines) - min_lines + 1):
-            # Create a block of min_lines consecutive lines
-            block = '\n'.join(lines[i:i+min_lines])
+            # Truncate code if too long
+            max_code_length = 8000
+            truncated = False
+            if len(code) > max_code_length:
+                code = code[:max_code_length]
+                truncated = True
             
-            # Skip empty blocks or blocks with just whitespace
-            if not block.strip():
-                continue
-                
-            # Check if we've seen this block before
-            if block in block_origins:
-                # Found a duplication
-                orig_file, orig_line = block_origins[block]
-                
-                # Avoid reporting duplications within the same file
-                if orig_file != file_path:
-                    duplications.append({
-                        'file1': orig_file,
-                        'start_line1': orig_line,
-                        'file2': file_path,
-                        'start_line2': i + 1,
-                        'lines': min_lines
-                    })
-            else:
-                # Record this block
-                block_origins[block] = (file_path, i + 1)
+            # Select prompt based on analysis type
+            if analysis_type == "architecture":
+                prompt, system_message = self._get_architecture_analysis_prompt(code, language, truncated)
+            elif analysis_type == "performance":
+                prompt, system_message = self._get_performance_analysis_prompt(code, language, truncated)
+            elif analysis_type == "security":
+                prompt, system_message = self._get_security_analysis_prompt(code, language, truncated)
+            else:  # Default to quality analysis
+                prompt, system_message = self._get_quality_analysis_prompt(code, language, truncated)
+            
+            # Generate analysis using AI model
+            analysis_text = self.model_interface.generate_text(
+                prompt=prompt,
+                system_message=system_message,
+                provider=provider,
+                max_tokens=2000,
+                temperature=0.3
+            )
+            
+            # Extract JSON from response
+            analysis_data = self._extract_json_from_text(analysis_text)
+            
+            # Create and return analysis result
+            return CodeAnalysisResult.from_dict(analysis_data)
+        
+        except Exception as e:
+            logger.error(f"Error analyzing code: {str(e)}")
+            # Return a basic error result
+            return CodeAnalysisResult(
+                quality_score=0.0,
+                issues=[{"severity": "high", "message": f"Analysis failed: {str(e)}"}],
+                suggestions=[],
+                metrics={},
+                summary=f"Code analysis failed due to an error: {str(e)}"
+            )
     
-    logger.info(f"Found {len(duplications)} potential code duplications")
-    return duplications
+    def analyze_file(
+        self,
+        file_path: str,
+        analysis_type: str = "quality",
+        provider: str = "openai"
+    ) -> CodeAnalysisResult:
+        """
+        Analyze a code file.
+        
+        Args:
+            file_path: Path to the file to analyze
+            analysis_type: Type of analysis to perform
+            provider: AI provider to use
+        
+        Returns:
+            CodeAnalysisResult with analysis results
+        
+        Raises:
+            Exception: If file reading or analysis fails
+        """
+        try:
+            # Read file
+            with open(file_path, 'r', encoding='utf-8') as f:
+                code = f.read()
+            
+            # Determine language from file extension
+            _, ext = os.path.splitext(file_path)
+            language = self._get_language_from_extension(ext)
+            
+            # Analyze code
+            return self.analyze_code(code, language, analysis_type, provider)
+        
+        except Exception as e:
+            logger.error(f"Error analyzing file {file_path}: {str(e)}")
+            # Return a basic error result
+            return CodeAnalysisResult(
+                quality_score=0.0,
+                issues=[{"severity": "high", "message": f"File analysis failed: {str(e)}"}],
+                suggestions=[],
+                metrics={},
+                summary=f"File analysis failed due to an error: {str(e)}"
+            )
+    
+    def _get_language_from_extension(self, extension: str) -> str:
+        """
+        Determine programming language from file extension.
+        
+        Args:
+            extension: File extension
+        
+        Returns:
+            Programming language name
+        """
+        extension = extension.lower()
+        language_map = {
+            '.py': 'Python',
+            '.js': 'JavaScript',
+            '.ts': 'TypeScript',
+            '.jsx': 'JavaScript (React)',
+            '.tsx': 'TypeScript (React)',
+            '.java': 'Java',
+            '.c': 'C',
+            '.cpp': 'C++',
+            '.cs': 'C#',
+            '.go': 'Go',
+            '.rb': 'Ruby',
+            '.php': 'PHP',
+            '.swift': 'Swift',
+            '.kt': 'Kotlin',
+            '.rs': 'Rust',
+            '.scala': 'Scala',
+            '.html': 'HTML',
+            '.css': 'CSS',
+            '.scss': 'SCSS',
+            '.sql': 'SQL'
+        }
+        
+        return language_map.get(extension, 'Unknown')
+    
+    def _get_quality_analysis_prompt(self, code: str, language: str, truncated: bool) -> Tuple[str, str]:
+        """
+        Get prompt for code quality analysis.
+        
+        Args:
+            code: Code to analyze
+            language: Programming language
+            truncated: Whether the code was truncated
+        
+        Returns:
+            Tuple of (prompt, system_message)
+        """
+        system_message = f"""
+        You are an expert {language} developer specializing in code quality analysis.
+        Analyze the provided code for quality issues, code style, maintainability, and best practices.
+        Focus on identifying anti-patterns, code smells, and opportunities for improvement.
+        Provide a thorough, objective assessment with specific examples from the code.
+        Format your response as a JSON object containing analysis results.
+        """
+        
+        prompt = f"""
+        Please analyze the following {language} code for quality:
+        
+        ```{language.lower()}
+        {code}
+        ```
+        
+        {" (Note: This code has been truncated due to length limitations.)" if truncated else ""}
+        
+        Analyze the code for:
+        1. Code style and formatting
+        2. Variable and function naming
+        3. Code structure and organization
+        4. Error handling
+        5. Comments and documentation
+        6. Adherence to {language} best practices
+        
+        Return your analysis as a JSON object with the following structure:
+        {{
+            "quality_score": number from 1 to 10,
+            "issues": [
+                {{
+                    "line": line number (optional),
+                    "severity": "high", "medium", or "low",
+                    "type": issue type (e.g., "naming", "error handling"),
+                    "message": description of the issue
+                }}
+            ],
+            "suggestions": [
+                {{
+                    "type": suggestion type,
+                    "message": description of the suggestion,
+                    "example": example of improved code (optional)
+                }}
+            ],
+            "metrics": {{
+                "complexity": number from 1 to 10,
+                "maintainability": number from 1 to 10,
+                "readability": number from 1 to 10,
+                "test_coverage": estimated test coverage percentage
+            }},
+            "summary": summary of the analysis
+        }}
+        """
+        
+        return prompt, system_message
+    
+    def _get_architecture_analysis_prompt(self, code: str, language: str, truncated: bool) -> Tuple[str, str]:
+        """
+        Get prompt for code architecture analysis.
+        
+        Args:
+            code: Code to analyze
+            language: Programming language
+            truncated: Whether the code was truncated
+        
+        Returns:
+            Tuple of (prompt, system_message)
+        """
+        system_message = f"""
+        You are an expert {language} architect specializing in software design and architecture analysis.
+        Analyze the provided code for architectural patterns, component relationships, and design quality.
+        Focus on identifying design patterns, architectural issues, and opportunities for improvement.
+        Provide a thorough, objective assessment with specific examples from the code.
+        Format your response as a JSON object containing analysis results.
+        """
+        
+        prompt = f"""
+        Please analyze the following {language} code for architectural quality:
+        
+        ```{language.lower()}
+        {code}
+        ```
+        
+        {" (Note: This code has been truncated due to length limitations.)" if truncated else ""}
+        
+        Analyze the code for:
+        1. Architecture and design patterns
+        2. Component/class relationships
+        3. Separation of concerns
+        4. Cohesion and coupling
+        5. Extensibility and modularity
+        6. Adherence to SOLID principles and clean architecture
+        
+        Return your analysis as a JSON object with the following structure:
+        {{
+            "quality_score": number from 1 to 10,
+            "issues": [
+                {{
+                    "severity": "high", "medium", or "low",
+                    "type": issue type (e.g., "coupling", "modularity"),
+                    "message": description of the issue
+                }}
+            ],
+            "suggestions": [
+                {{
+                    "type": suggestion type,
+                    "message": description of the suggestion,
+                    "example": example of improved design (optional)
+                }}
+            ],
+            "metrics": {{
+                "cohesion": number from 1 to 10,
+                "coupling": number from 1 to 10,
+                "modularity": number from 1 to 10,
+                "extensibility": number from 1 to 10
+            }},
+            "summary": summary of the analysis
+        }}
+        """
+        
+        return prompt, system_message
+    
+    def _get_performance_analysis_prompt(self, code: str, language: str, truncated: bool) -> Tuple[str, str]:
+        """
+        Get prompt for code performance analysis.
+        
+        Args:
+            code: Code to analyze
+            language: Programming language
+            truncated: Whether the code was truncated
+        
+        Returns:
+            Tuple of (prompt, system_message)
+        """
+        system_message = f"""
+        You are an expert {language} performance engineer specializing in optimization and efficiency analysis.
+        Analyze the provided code for performance issues, algorithmic complexity, and resource usage patterns.
+        Focus on identifying performance bottlenecks and opportunities for optimization.
+        Provide a thorough, objective assessment with specific examples from the code.
+        Format your response as a JSON object containing analysis results.
+        """
+        
+        prompt = f"""
+        Please analyze the following {language} code for performance:
+        
+        ```{language.lower()}
+        {code}
+        ```
+        
+        {" (Note: This code has been truncated due to length limitations.)" if truncated else ""}
+        
+        Analyze the code for:
+        1. Time complexity (Big O notation)
+        2. Memory usage patterns
+        3. Algorithm efficiency
+        4. Resource management
+        5. Performance bottlenecks
+        6. I/O and network operations
+        
+        Return your analysis as a JSON object with the following structure:
+        {{
+            "quality_score": number from 1 to 10,
+            "issues": [
+                {{
+                    "severity": "high", "medium", or "low",
+                    "type": issue type (e.g., "time complexity", "memory usage"),
+                    "message": description of the issue
+                }}
+            ],
+            "suggestions": [
+                {{
+                    "type": suggestion type,
+                    "message": description of the suggestion,
+                    "example": example of optimized code (optional)
+                }}
+            ],
+            "metrics": {{
+                "time_complexity": estimated Big O notation,
+                "memory_efficiency": number from 1 to 10,
+                "algorithm_efficiency": number from 1 to 10,
+                "resource_management": number from 1 to 10
+            }},
+            "summary": summary of the analysis
+        }}
+        """
+        
+        return prompt, system_message
+    
+    def _get_security_analysis_prompt(self, code: str, language: str, truncated: bool) -> Tuple[str, str]:
+        """
+        Get prompt for code security analysis.
+        
+        Args:
+            code: Code to analyze
+            language: Programming language
+            truncated: Whether the code was truncated
+        
+        Returns:
+            Tuple of (prompt, system_message)
+        """
+        system_message = f"""
+        You are an expert {language} security engineer specializing in application security and vulnerability assessment.
+        Analyze the provided code for security vulnerabilities, injection points, and security best practices.
+        Focus on identifying common security issues like injection attacks, authentication issues, and data exposure.
+        Provide a thorough, objective assessment with specific examples from the code.
+        Format your response as a JSON object containing analysis results.
+        """
+        
+        prompt = f"""
+        Please analyze the following {language} code for security vulnerabilities:
+        
+        ```{language.lower()}
+        {code}
+        ```
+        
+        {" (Note: This code has been truncated due to length limitations.)" if truncated else ""}
+        
+        Analyze the code for:
+        1. Injection vulnerabilities (SQL, XSS, command injection)
+        2. Authentication and authorization issues
+        3. Sensitive data exposure
+        4. Security misconfiguration
+        5. Input validation and sanitization
+        6. Cryptographic issues
+        
+        Return your analysis as a JSON object with the following structure:
+        {{
+            "quality_score": number from 1 to 10,
+            "issues": [
+                {{
+                    "severity": "high", "medium", or "low",
+                    "type": issue type (e.g., "injection", "authentication"),
+                    "message": description of the vulnerability,
+                    "cwe": CWE identifier if applicable (optional)
+                }}
+            ],
+            "suggestions": [
+                {{
+                    "type": suggestion type,
+                    "message": description of the security improvement,
+                    "example": example of secure code (optional)
+                }}
+            ],
+            "metrics": {{
+                "input_validation": number from 1 to 10,
+                "authentication": number from 1 to 10,
+                "data_protection": number from 1 to 10,
+                "overall_security": number from 1 to 10
+            }},
+            "summary": summary of the security analysis
+        }}
+        """
+        
+        return prompt, system_message
+    
+    def _extract_json_from_text(self, text: str) -> Dict[str, Any]:
+        """
+        Extract JSON data from text response.
+        
+        Args:
+            text: Text response from AI model
+        
+        Returns:
+            Extracted JSON data as dictionary
+        """
+        try:
+            # Try to find JSON block in markdown
+            json_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+            if json_match:
+                json_str = json_match.group(1).strip()
+                return json.loads(json_str)
+            
+            # Try to find JSON object directly (starts with { and ends with })
+            json_match = re.search(r"(\{[\s\S]*\})", text)
+            if json_match:
+                json_str = json_match.group(1).strip()
+                return json.loads(json_str)
+            
+            # If no JSON found, try to parse the entire text
+            return json.loads(text)
+        except Exception as e:
+            logger.error(f"Error extracting JSON from text: {str(e)}")
+            # Return default structure if JSON extraction fails
+            return {
+                "quality_score": 5.0,
+                "issues": [{"severity": "medium", "message": "Could not parse detailed analysis results"}],
+                "suggestions": [],
+                "metrics": {},
+                "summary": "The analysis was completed, but results could not be properly formatted."
+            }
 
-def perform_code_review(repo_path):
+
+# Singleton instance for global access
+_default_analyzer = None
+
+def get_code_analyzer() -> CodeAnalyzer:
     """
-    Perform a comprehensive code review of the repository
-    
-    Parameters:
-    - repo_path: Path to the cloned repository
+    Get the default code analyzer instance.
     
     Returns:
-    - dict: Code review results
+        Default code analyzer instance
     """
-    logger.info(f"Performing code review for repository at {repo_path}...")
+    global _default_analyzer
     
-    # Initialize results
-    results = {
-        'files_analyzed': [],
-        'issues': [],
-        'files_with_issues': [],
-        'top_complex_files': [],
-        'metrics': {
-            'total_loc': 0,
-            'total_classes': 0,
-            'total_functions': 0,
-            'average_complexity': 0
-        },
-        'improvement_opportunities': {},
-        'duplications': []
-    }
+    if _default_analyzer is None:
+        _default_analyzer = CodeAnalyzer()
     
-    # Find Python files
-    python_files = []
-    for root, _, files in os.walk(repo_path):
-        for file in files:
-            # Skip files in hidden directories
-            rel_path = os.path.relpath(root, repo_path)
-            if any(part.startswith('.') for part in Path(rel_path).parts):
-                continue
-                
-            if file.endswith('.py'):
-                python_files.append(os.path.join(rel_path, file))
-    
-    # Analyze each Python file
-    total_complexity = 0
-    analyzed_count = 0
-    
-    for file_path in python_files:
-        analysis = analyze_file(repo_path, file_path)
-        if analysis:
-            # Count lines and complexity
-            results['metrics']['total_loc'] += analysis.get('loc', 0)
-            results['metrics']['total_classes'] += len(analysis.get('classes', []))
-            results['metrics']['total_functions'] += len(analysis.get('functions', []))
-            file_complexity = analysis.get('complexity', 0)
-            total_complexity += file_complexity
-            analyzed_count += 1
-            
-            # Track issues
-            file_issues = analysis.get('issues', [])
-            if file_issues:
-                results['files_with_issues'].append({
-                    'file': file_path,
-                    'issue_count': len(file_issues),
-                    'details': [issue.get('detail', '') for issue in file_issues]
-                })
-                
-                # Group issues by type
-                for issue in file_issues:
-                    issue_with_file = issue.copy()
-                    issue_with_file['file'] = file_path
-                    results['issues'].append(issue_with_file)
-            
-            # Track complex files
-            results['top_complex_files'].append({
-                'file': file_path,
-                'complexity': file_complexity,
-                'loc': analysis.get('loc', 0)
-            })
-            
-            # Record analyzed file
-            results['files_analyzed'].append(file_path)
-    
-    # Sort complex files by complexity
-    results['top_complex_files'] = sorted(
-        results['top_complex_files'], 
-        key=lambda x: x['complexity'], 
-        reverse=True
-    )[:10]  # Keep only top 10
-    
-    # Calculate average complexity
-    if analyzed_count > 0:
-        results['metrics']['average_complexity'] = total_complexity / analyzed_count
-    
-    # Calculate issue density (issues per 1000 lines of code)
-    if results['metrics']['total_loc'] > 0:
-        issue_density = len(results['issues']) * 1000 / results['metrics']['total_loc']
-        results['metrics']['issue_density'] = issue_density
-    else:
-        results['metrics']['issue_density'] = 0
-    
-    # Generate improvement opportunities
-    results['improvement_opportunities'] = {
-        'Code Quality': [
-            "Enforce consistent coding standards with a linter like flake8 or pylint",
-            "Add docstrings to all public classes and functions",
-            "Break down complex functions into smaller, more focused ones",
-            "Reduce nesting by extracting conditions into helper functions"
-        ],
-        'Testing': [
-            "Increase test coverage for complex modules",
-            "Implement integration tests for critical component interactions",
-            "Add property-based testing for data transformation functions",
-            "Use mock objects to test components in isolation"
-        ],
-        'Architecture': [
-            "Apply the Single Responsibility Principle to large classes",
-            "Introduce design patterns for recurring problems",
-            "Consider using dependency injection for better testability",
-            "Implement proper error handling throughout the codebase"
-        ]
-    }
-    
-    # Find duplicated code
-    results['duplications'] = find_duplicated_code_simple(repo_path, python_files)
-    
-    logger.info(f"Code review complete. Analyzed {len(results['files_analyzed'])} files.")
-    return results
+    return _default_analyzer
