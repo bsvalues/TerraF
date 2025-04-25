@@ -468,7 +468,7 @@ class BatchConfiguration:
         self.workload_targets = {
             "data_transform": 2.0,       # Target seconds for data transformation
             "data_validation": 1.5,      # Target seconds for data validation
-            "database_write": 3.0,       # Target seconds for database writes
+            "repository_write": 3.0,       # Target seconds for repository writes
             "api_request": 1.0,          # Target seconds for API requests
             "default": 2.0               # Default target seconds
         }
@@ -4967,7 +4967,7 @@ class SyncOrchestrator:
             "parallel_metrics": {},
             "dag_metrics": {},
             "resource_metrics": [],
-            "database_metrics": {
+            "repository_metrics": {
                 "source": {},
                 "target": {}
             }
@@ -5083,8 +5083,8 @@ class SyncOrchestrator:
             if "metrics" in perf_summary:
                 source_db_metrics = perf_summary["metrics"].get("source", {})
                 target_db_metrics = perf_summary["metrics"].get("target", {})
-                self.performance_metrics["database_metrics"]["source"] = source_db_metrics
-                self.performance_metrics["database_metrics"]["target"] = target_db_metrics
+                self.performance_metrics["repository_metrics"]["source"] = source_db_metrics
+                self.performance_metrics["repository_metrics"]["target"] = target_db_metrics
             
             # Get database performance recommendations
             source_recommendations = perf_summary.get("recommendations", [])
@@ -8020,7 +8020,7 @@ class SyncService:
             try:
                 db_performance_summary = self.performance_monitor.get_performance_summary()
             except Exception as db_err:
-                self.logger.warning(f"Using fallback database metrics due to error: {str(db_err)}")
+                self.logger.warning(f"Using fallback repository metrics due to error: {str(db_err)}")
                 db_performance_summary = default_db_metrics
             
             # Ensure required metrics exist
