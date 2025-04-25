@@ -14,33 +14,96 @@ st.set_page_config(
     layout="wide"
 )
 
-# Define custom CSS
+# Define TerraFusion-specific CSS
 st.markdown("""
 <style>
+    /* TerraFusion color palette and theme */
+    :root {
+        --tf-primary: #00e5ff;
+        --tf-primary-dark: #00b8d4;
+        --tf-background: #001529;
+        --tf-card-bg: #0a2540;
+        --tf-text: #ffffff;
+        --tf-text-secondary: rgba(0, 229, 255, 0.7);
+        --tf-text-tertiary: rgba(0, 229, 255, 0.5);
+        --tf-border: rgba(0, 229, 255, 0.2);
+        --tf-success: #00c853;
+        --tf-warning: #ffd600;
+        --tf-error: #ff1744;
+    }
+    
+    /* Title styling */
+    .dashboard-title {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: var(--tf-primary);
+        margin-bottom: 0.5rem;
+    }
+    
+    .dashboard-subtitle {
+        font-size: 1rem;
+        color: var(--tf-text-secondary);
+        margin-bottom: 2rem;
+    }
+    
+    /* Analysis card */
     .analysis-card {
-        border-radius: 5px;
-        padding: 15px;
-        margin-bottom: 15px;
-        border: 1px solid #ddd;
-        background-color: #f8f9fa;
+        background-color: var(--tf-card-bg);
+        border: 1px solid var(--tf-border);
+        border-radius: 0.75rem;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        position: relative;
+        overflow: hidden;
     }
+    
+    .analysis-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 4px;
+        height: 100%;
+        background-color: var(--tf-primary);
+        opacity: 0.7;
+    }
+    
     .analysis-header {
-        font-size: 18px;
-        font-weight: bold;
-        color: #333;
-        margin-bottom: 10px;
+        font-size: 1.2rem;
+        font-weight: 600;
+        color: var(--tf-primary);
+        margin-bottom: 1rem;
     }
+    
+    /* Issue cards */
     .issue-card {
-        padding: 10px;
-        margin-bottom: 10px;
-        border-radius: 5px;
-        background-color: #fff8e1;
-        border-left: 4px solid #ffc107;
+        background-color: var(--tf-card-bg);
+        border: 1px solid var(--tf-border);
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+        position: relative;
     }
+    
+    .issue-high {
+        border-left: 4px solid var(--tf-error);
+    }
+    
+    .issue-medium {
+        border-left: 4px solid var(--tf-warning);
+    }
+    
+    .issue-low {
+        border-left: 4px solid var(--tf-primary);
+    }
+    
     .issue-title {
-        font-weight: bold;
-        color: #333;
+        font-weight: 600;
+        color: var(--tf-primary);
+        margin-bottom: 0.5rem;
     }
+    
+    /* Score circle */
     .score-circle {
         width: 80px;
         height: 80px;
@@ -49,25 +112,111 @@ st.markdown("""
         align-items: center;
         justify-content: center;
         margin: 0 auto;
-        font-size: 24px;
-        font-weight: bold;
-        color: white;
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: var(--tf-text);
+        border: 2px solid var(--tf-border);
     }
+    
+    /* Code block */
     .code-block {
-        border-radius: 5px;
-        padding: 15px;
-        margin-bottom: 15px;
-        background-color: #f5f5f5;
+        background-color: rgba(0, 0, 0, 0.3);
+        border: 1px solid var(--tf-border);
+        border-radius: 0.375rem;
+        padding: 1rem;
         font-family: monospace;
+        color: var(--tf-text);
+        margin-bottom: 1rem;
         overflow-x: auto;
         white-space: pre-wrap;
     }
+    
+    /* Insights panel */
     .insights-panel {
-        border-radius: 5px;
-        padding: 15px;
-        margin-bottom: 15px;
-        background-color: #e8f5e9;
-        border-left: 4px solid #4caf50;
+        background-color: rgba(0, 229, 255, 0.05);
+        border: 1px solid var(--tf-border);
+        border-radius: 0.75rem;
+        padding: 1.25rem;
+        margin-bottom: 1.5rem;
+        position: relative;
+    }
+    
+    .insights-panel::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 4px;
+        height: 100%;
+        background-color: var(--tf-primary);
+        opacity: 0.7;
+    }
+    
+    /* Tab styling override */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        border-bottom: 1px solid var(--tf-border);
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: transparent;
+        border-radius: 4px 4px 0px 0px;
+        color: var(--tf-text-secondary);
+        border-bottom: 3px solid transparent;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: rgba(0, 229, 255, 0.05) !important;
+        color: var(--tf-primary) !important;
+        border-bottom: 3px solid var(--tf-primary) !important;
+        font-weight: 600;
+    }
+    
+    /* Metric cards */
+    .metric-card {
+        background-color: var(--tf-card-bg);
+        border: 1px solid var(--tf-border);
+        border-radius: 0.75rem;
+        padding: 1.25rem;
+        text-align: center;
+        height: 100%;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 30px rgba(0, 229, 255, 0.15);
+    }
+    
+    /* Recommendation cards */
+    .recommendation-card {
+        background-color: var(--tf-card-bg);
+        border: 1px solid var(--tf-border);
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+        position: relative;
+        border-left: 4px solid var(--tf-success);
+    }
+    
+    .recommendation-title {
+        font-weight: 600;
+        color: var(--tf-primary);
+        margin-bottom: 0.5rem;
+    }
+    
+    /* Expander styling override */
+    .streamlit-expanderHeader {
+        color: var(--tf-primary);
+        font-weight: 600;
+    }
+    
+    .streamlit-expanderContent {
+        background-color: rgba(0, 229, 255, 0.05);
+        border-radius: 0.375rem;
+        padding: 0.5rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -520,7 +669,8 @@ if st.sidebar.button("Back to Home"):
     st.switch_page("app.py")
 
 # Main content
-st.title("Code Analysis & Optimization Dashboard")
+st.markdown('<h1 class="dashboard-title">Code Analysis & Optimization</h1>', unsafe_allow_html=True)
+st.markdown('<p class="dashboard-subtitle">Analyze code quality, architecture, performance, and security using AI-powered insights</p>', unsafe_allow_html=True)
 
 if st.session_state.current_analysis:
     analysis = st.session_state.current_analysis
@@ -566,15 +716,24 @@ if st.session_state.current_analysis:
         
         if "issues" in result and result["issues"]:
             for i, issue in enumerate(result["issues"]):
+                severity = "high" if i % 3 == 0 else "medium" if i % 3 == 1 else "low"
                 st.markdown(
-                    f"<div class='issue-card'>"
+                    f"<div class='issue-card issue-{severity}'>"
                     f"<div class='issue-title'>Issue {i+1}</div>"
-                    f"<p>{issue}</p>"
+                    f"<p style='color: var(--tf-text-secondary);'>{issue}</p>"
                     f"</div>",
                     unsafe_allow_html=True
                 )
         else:
-            st.info("No issues identified.")
+            st.markdown(
+                "<div style='background-color: rgba(0, 229, 255, 0.05); border: 1px solid var(--tf-border); border-radius: 0.5rem; padding: 1rem;'>"
+                "<div style='display: flex; align-items: center;'>"
+                "<span style='color: var(--tf-success); font-size: 1.5rem; margin-right: 0.5rem;'>✓</span>"
+                "<span style='color: var(--tf-text-secondary);'>No issues identified. Great job!</span>"
+                "</div>"
+                "</div>",
+                unsafe_allow_html=True
+            )
     
     with tab3:
         st.markdown("### Original Code")
@@ -582,16 +741,62 @@ if st.session_state.current_analysis:
     
 else:
     # Welcome message when no analysis has been run
-    st.info("Welcome to the Code Analysis Dashboard! Use the sidebar to configure and run an analysis.")
+    st.markdown(
+        "<div class='tf-card'>"
+        "<div class='card-title'>Welcome to Code Analysis Dashboard</div>"
+        "<p style='color: var(--tf-text-secondary);'>Use the sidebar to configure and run an AI-powered code analysis</p>"
+        "</div>",
+        unsafe_allow_html=True
+    )
     
-    st.markdown("""
-    ### Getting Started
+    # Getting started card
+    st.markdown(
+        "<div class='tf-card'>"
+        "<div class='card-title'>Getting Started</div>"
+        "<ol style='color: var(--tf-text-secondary);'>"
+        "<li>Select an <strong style='color: var(--tf-primary);'>Analysis Type</strong> from the sidebar</li>"
+        "<li>Choose a <strong style='color: var(--tf-primary);'>Code Source</strong> (sample or custom)</li>"
+        "<li>Select the <strong style='color: var(--tf-primary);'>Programming Language</strong></li>"
+        "<li>Choose an <strong style='color: var(--tf-primary);'>Analysis Focus</strong> area</li>"
+        "<li>Click <strong style='color: var(--tf-primary);'>Run Analysis</strong> to start</li>"
+        "</ol>"
+        "<p style='color: var(--tf-text-secondary); margin-top: 1rem;'>"
+        "The AI-powered analysis engine will evaluate your code and provide insights, recommendations, and quality metrics."
+        "</p>"
+        "</div>",
+        unsafe_allow_html=True
+    )
     
-    1. Select an **Analysis Type** from the sidebar
-    2. Choose a **Code Source** (sample or custom)
-    3. Select the **Programming Language**
-    4. Choose an **Analysis Focus** area
-    5. Click **Run Analysis** to start
+    # Features showcase
+    col1, col2, col3 = st.columns(3)
     
-    The AI-powered analysis engine will evaluate your code and provide insights, recommendations, and quality metrics.
-    """)
+    with col1:
+        st.markdown(
+            "<div class='feature-card'>"
+            "<div style='font-size: 2rem; color: var(--tf-primary); text-align: center; margin-bottom: 1rem;'>🔍</div>"
+            "<div style='font-size: 1.25rem; font-weight: 600; color: var(--tf-primary); margin-bottom: 0.75rem; text-align: center;'>Code Quality</div>"
+            "<p style='color: var(--tf-text-secondary); text-align: center;'>Analyze code for readability, maintainability, and adherence to best practices</p>"
+            "</div>",
+            unsafe_allow_html=True
+        )
+    
+    with col2:
+        st.markdown(
+            "<div class='feature-card'>"
+            "<div style='font-size: 2rem; color: var(--tf-primary); text-align: center; margin-bottom: 1rem;'>⚡</div>"
+            "<div style='font-size: 1.25rem; font-weight: 600; color: var(--tf-primary); margin-bottom: 0.75rem; text-align: center;'>Performance</div>"
+            "<p style='color: var(--tf-text-secondary); text-align: center;'>Identify bottlenecks and optimization opportunities in your code</p>"
+            "</div>",
+            unsafe_allow_html=True
+        )
+    
+    with col3:
+        st.markdown(
+            "<div class='feature-card'>"
+            "<div style='font-size: 2rem; color: var(--tf-primary); text-align: center; margin-bottom: 1rem;'>🛡️</div>"
+            "<div style='font-size: 1.25rem; font-weight: 600; color: var(--tf-primary); margin-bottom: 0.75rem; text-align: center;'>Security</div>"
+            "<p style='color: var(--tf-text-secondary); text-align: center;'>Detect vulnerabilities and security issues in your codebase</p>"
+            "</div>",
+            unsafe_allow_html=True
+        )
+    )
