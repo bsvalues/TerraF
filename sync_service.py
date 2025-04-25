@@ -1939,34 +1939,34 @@ class DataQualityProfiler:
         self.profiles = {}  # Cache for table profiles
         self.quality_scores = {}  # Cache for quality scores
         
-    def profile_table(self, table_name: str, sample_size: int = 1000) -> Dict[str, Any]:
+    def profile_collection(self, collection_name: str, sample_size: int = 1000) -> Dict[str, Any]:
         """
-        Generate a data quality profile for a table
+        Generate a data quality profile for a collection
         
         Args:
-            table_name: Name of the table to profile
-            sample_size: Maximum number of rows to analyze
+            collection_name: Name of the collection to profile
+            sample_size: Maximum number of items to analyze
             
         Returns:
-            Dictionary with table profile information
+            Dictionary with collection profile information
         """
-        self.logger.info(f"Profiling table {table_name} (sample size: {sample_size})")
+        self.logger.info(f"Profiling collection {collection_name} (sample size: {sample_size})")
         
         try:
-            # Query to get column information
-            columns_query = f"""
-            SELECT column_name, data_type 
-            FROM information_schema.columns
-            WHERE table_name = :table_name
+            # Query to get field information
+            fields_query = f"""
+            SELECT field_name, data_type 
+            FROM information_schema.fields
+            WHERE collection_name = :collection_name
             """
             
-            # In a real implementation, this would get actual column metadata
-            # For the simulation, we'll use mock data based on table name
-            columns = self._get_mock_columns(table_name)
+            # In a real implementation, this would get actual field metadata
+            # For the simulation, we'll use mock data based on collection name
+            fields = self._get_mock_columns(collection_name)
             
-            # Sample data from the table
+            # Sample data from the collection
             sample_query = f"""
-            SELECT * FROM {table_name}
+            SELECT * FROM {collection_name}
             LIMIT :sample_size
             """
             
@@ -1976,241 +1976,241 @@ class DataQualityProfiler:
             
             # Generate profile
             profile = {
-                "table_name": table_name,
+                "collection_name": collection_name,
                 "timestamp": datetime.datetime.now().isoformat(),
-                "row_count": self._estimate_row_count(table_name),
-                "columns": {},
+                "item_count": self._estimate_row_count(collection_name),
+                "fields": {},
                 "correlation": {},
                 "overall_quality_score": 0.0
             }
             
-            # Process each column
-            for column in columns:
-                column_name = column["column_name"]
-                data_type = column["data_type"]
+            # Process each field
+            for field in fields:
+                field_name = field["column_name"]  # Keep column_name for backward compatibility
+                data_type = field["data_type"]
                 
-                # Extract values for this column from sample data
-                values = [row.get(column_name) for row in sample_data if column_name in row]
+                # Extract values for this field from sample data
+                values = [item.get(field_name) for item in sample_data if field_name in item]
                 
-                # Generate column statistics
-                column_profile = self._analyze_column(column_name, data_type, values)
-                profile["columns"][column_name] = column_profile
+                # Generate field statistics
+                field_profile = self._analyze_column(field_name, data_type, values)
+                profile["fields"][field_name] = field_profile
             
-            # Calculate correlations between numeric columns
+            # Calculate correlations between numeric fields
             # In a real implementation, this would use actual correlation calculation
             # For the simulation, we'll generate mock correlation data
-            profile["correlation"] = self._generate_mock_correlations(profile["columns"])
+            profile["correlation"] = self._generate_mock_correlations(profile["fields"])
             
             # Calculate overall quality score
             profile["overall_quality_score"] = self._calculate_quality_score(profile)
             
             # Cache the profile
-            self.profiles[table_name] = profile
-            self.quality_scores[table_name] = profile["overall_quality_score"]
+            self.profiles[collection_name] = profile
+            self.quality_scores[collection_name] = profile["overall_quality_score"]
             
             return profile
             
         except Exception as e:
-            self.logger.error(f"Error profiling table {table_name}: {str(e)}")
+            self.logger.error(f"Error profiling collection {collection_name}: {str(e)}")
             return {
                 "error": str(e),
-                "table_name": table_name,
+                "collection_name": collection_name,
                 "timestamp": datetime.datetime.now().isoformat()
             }
     
-    def detect_anomalies(self, table_name: str, threshold: float = 0.8) -> Dict[str, Any]:
+    def detect_anomalies(self, collection_name: str, threshold: float = 0.8) -> Dict[str, Any]:
         """
-        Detect anomalies in table data based on the profile
+        Detect anomalies in collection data based on the profile
         
         Args:
-            table_name: Name of the table to analyze
+            collection_name: Name of the collection to analyze
             threshold: Threshold for anomaly detection (0-1)
             
         Returns:
             Dictionary with anomaly information
         """
-        self.logger.info(f"Detecting anomalies in {table_name} (threshold: {threshold})")
+        self.logger.info(f"Detecting anomalies in {collection_name} (threshold: {threshold})")
         
         try:
             # Get the profile or generate if not exists
-            profile = self.profiles.get(table_name)
+            profile = self.profiles.get(collection_name)
             if not profile:
-                profile = self.profile_table(table_name)
+                profile = self.profile_collection(collection_name)
                 
             # Find anomalies
             anomalies = {
-                "table_name": table_name,
+                "collection_name": collection_name,
                 "timestamp": datetime.datetime.now().isoformat(),
                 "threshold": threshold,
-                "columns": {},
-                "records": []
+                "fields": {},
+                "items": []
             }
             
-            # Check each column for anomalies
-            for column_name, column_profile in profile["columns"].items():
-                column_anomalies = []
+            # Check each field for anomalies
+            for field_name, field_profile in profile["fields"].items():
+                field_anomalies = []
                 
                 # Check for NULL percentage anomalies
-                if column_profile.get("null_percentage", 0) > (1 - threshold) * 100:
-                    column_anomalies.append({
+                if field_profile.get("null_percentage", 0) > (1 - threshold) * 100:
+                    field_anomalies.append({
                         "type": "high_null_percentage",
-                        "value": column_profile["null_percentage"],
-                        "description": f"High percentage of NULL values: {column_profile['null_percentage']:.2f}%"
+                        "value": field_profile["null_percentage"],
+                        "description": f"High percentage of NULL values: {field_profile['null_percentage']:.2f}%"
                     })
                 
                 # Check for unique values anomalies
-                if column_profile.get("unique_percentage", 0) < threshold * 100 and column_profile.get("cardinality", 0) < 10:
-                    column_anomalies.append({
+                if field_profile.get("unique_percentage", 0) < threshold * 100 and field_profile.get("cardinality", 0) < 10:
+                    field_anomalies.append({
                         "type": "low_cardinality",
-                        "value": column_profile["cardinality"],
-                        "description": f"Low cardinality (few unique values): {column_profile['cardinality']}"
+                        "value": field_profile["cardinality"],
+                        "description": f"Low cardinality (few unique values): {field_profile['cardinality']}"
                     })
                 
-                # For numeric columns, check for statistical anomalies
-                if column_profile.get("type") == "numeric":
+                # For numeric fields, check for statistical anomalies
+                if field_profile.get("type") == "numeric":
                     # Check for skewness
-                    if abs(column_profile.get("skewness", 0)) > 3:
-                        column_anomalies.append({
+                    if abs(field_profile.get("skewness", 0)) > 3:
+                        field_anomalies.append({
                             "type": "high_skewness",
-                            "value": column_profile["skewness"],
-                            "description": f"Highly skewed distribution: {column_profile['skewness']:.2f}"
+                            "value": field_profile["skewness"],
+                            "description": f"Highly skewed distribution: {field_profile['skewness']:.2f}"
                         })
                     
                     # Check for outliers
-                    if column_profile.get("outlier_percentage", 0) > (1 - threshold) * 100:
-                        column_anomalies.append({
+                    if field_profile.get("outlier_percentage", 0) > (1 - threshold) * 100:
+                        field_anomalies.append({
                             "type": "high_outliers",
-                            "value": column_profile["outlier_percentage"],
-                            "description": f"High percentage of outliers: {column_profile['outlier_percentage']:.2f}%"
+                            "value": field_profile["outlier_percentage"],
+                            "description": f"High percentage of outliers: {field_profile['outlier_percentage']:.2f}%"
                         })
                 
-                if column_anomalies:
-                    anomalies["columns"][column_name] = column_anomalies
+                if field_anomalies:
+                    anomalies["fields"][field_name] = field_anomalies
             
-            # Record-level anomalies - in a real implementation, these would
-            # be actual records that have anomalous values
-            # For the simulation, we'll generate mock anomalous records
-            anomalies["records"] = self._generate_mock_anomalous_records(table_name, profile)
+            # Item-level anomalies - in a real implementation, these would
+            # be actual items that have anomalous values
+            # For the simulation, we'll generate mock anomalous items
+            anomalies["items"] = self._generate_mock_anomalous_records(collection_name, profile)
             
             return anomalies
             
         except Exception as e:
-            self.logger.error(f"Error detecting anomalies in {table_name}: {str(e)}")
+            self.logger.error(f"Error detecting anomalies in {collection_name}: {str(e)}")
             return {
                 "error": str(e),
-                "table_name": table_name,
+                "collection_name": collection_name,
                 "timestamp": datetime.datetime.now().isoformat()
             }
     
-    def get_quality_score(self, table_name: str) -> Dict[str, Any]:
+    def get_quality_score(self, collection_name: str) -> Dict[str, Any]:
         """
-        Get the quality score for a table
+        Get the quality score for a collection
         
         Args:
-            table_name: Name of the table
+            collection_name: Name of the collection
             
         Returns:
             Dictionary with quality score information
         """
-        self.logger.info(f"Getting quality score for {table_name}")
+        self.logger.info(f"Getting quality score for {collection_name}")
         
         try:
             # Get the score from cache or calculate
-            if table_name in self.quality_scores:
-                score = self.quality_scores[table_name]
+            if collection_name in self.quality_scores:
+                score = self.quality_scores[collection_name]
             else:
-                profile = self.profile_table(table_name)
+                profile = self.profile_collection(collection_name)
                 score = profile["overall_quality_score"]
             
             return {
-                "table_name": table_name,
+                "collection_name": collection_name,
                 "quality_score": score,
                 "timestamp": datetime.datetime.now().isoformat(),
                 "score_interpretation": self._interpret_quality_score(score)
             }
             
         except Exception as e:
-            self.logger.error(f"Error getting quality score for {table_name}: {str(e)}")
+            self.logger.error(f"Error getting quality score for {collection_name}: {str(e)}")
             return {
                 "error": str(e),
-                "table_name": table_name,
+                "collection_name": collection_name,
                 "timestamp": datetime.datetime.now().isoformat()
             }
     
-    def compare_quality(self, source_table: str, target_table: str) -> Dict[str, Any]:
+    def compare_quality(self, source_collection: str, target_collection: str) -> Dict[str, Any]:
         """
-        Compare data quality between source and target tables
+        Compare data quality between source and target collections
         
         Args:
-            source_table: Name of the source table
-            target_table: Name of the target table
+            source_collection: Name of the source collection
+            target_collection: Name of the target collection
             
         Returns:
             Dictionary with quality comparison information
         """
-        self.logger.info(f"Comparing quality between {source_table} and {target_table}")
+        self.logger.info(f"Comparing quality between {source_collection} and {target_collection}")
         
         try:
-            # Get profiles for both tables
-            source_profile = self.profiles.get(source_table)
+            # Get profiles for both collections
+            source_profile = self.profiles.get(source_collection)
             if not source_profile:
-                source_profile = self.profile_table(source_table)
+                source_profile = self.profile_collection(source_collection)
                 
-            target_profile = self.profiles.get(target_table)
+            target_profile = self.profiles.get(target_collection)
             if not target_profile:
-                target_profile = self.profile_table(target_table)
+                target_profile = self.profile_collection(target_collection)
             
             # Compare quality metrics
             comparison = {
-                "source_table": source_table,
-                "target_table": target_table,
+                "source_collection": source_collection,
+                "target_collection": target_collection,
                 "timestamp": datetime.datetime.now().isoformat(),
                 "quality_diff": source_profile["overall_quality_score"] - target_profile["overall_quality_score"],
-                "column_metrics": {},
+                "field_metrics": {},
                 "summary": {}
             }
             
-            # Compare common columns
-            source_columns = set(source_profile["columns"].keys())
-            target_columns = set(target_profile["columns"].keys())
-            common_columns = source_columns.intersection(target_columns)
+            # Compare common fields
+            source_fields = set(source_profile["fields"].keys())
+            target_fields = set(target_profile["fields"].keys())
+            common_fields = source_fields.intersection(target_fields)
             
-            for column in common_columns:
-                source_col = source_profile["columns"][column]
-                target_col = target_profile["columns"][column]
+            for field in common_fields:
+                source_field = source_profile["fields"][field]
+                target_field = target_profile["fields"][field]
                 
                 # Calculate metric differences
-                column_diff = {
-                    "null_percentage_diff": source_col.get("null_percentage", 0) - target_col.get("null_percentage", 0),
-                    "unique_percentage_diff": source_col.get("unique_percentage", 0) - target_col.get("unique_percentage", 0),
-                    "quality_score_diff": source_col.get("quality_score", 0) - target_col.get("quality_score", 0)
+                field_diff = {
+                    "null_percentage_diff": source_field.get("null_percentage", 0) - target_field.get("null_percentage", 0),
+                    "unique_percentage_diff": source_field.get("unique_percentage", 0) - target_field.get("unique_percentage", 0),
+                    "quality_score_diff": source_field.get("quality_score", 0) - target_field.get("quality_score", 0)
                 }
                 
                 # Add type-specific comparisons
-                if source_col.get("type") == "numeric" and target_col.get("type") == "numeric":
-                    column_diff.update({
-                        "min_diff": source_col.get("min", 0) - target_col.get("min", 0),
-                        "max_diff": source_col.get("max", 0) - target_col.get("max", 0),
-                        "mean_diff": source_col.get("mean", 0) - target_col.get("mean", 0),
-                        "std_dev_diff": source_col.get("std_dev", 0) - target_col.get("std_dev", 0)
+                if source_field.get("type") == "numeric" and target_field.get("type") == "numeric":
+                    field_diff.update({
+                        "min_diff": source_field.get("min", 0) - target_field.get("min", 0),
+                        "max_diff": source_field.get("max", 0) - target_field.get("max", 0),
+                        "mean_diff": source_field.get("mean", 0) - target_field.get("mean", 0),
+                        "std_dev_diff": source_field.get("std_dev", 0) - target_field.get("std_dev", 0)
                     })
                 
-                comparison["column_metrics"][column] = column_diff
+                comparison["field_metrics"][field] = field_diff
             
             # Generate summary statistics
-            column_count = len(common_columns)
-            improved_columns = sum(1 for col, diff in comparison["column_metrics"].items() 
+            field_count = len(common_fields)
+            improved_fields = sum(1 for field, diff in comparison["field_metrics"].items() 
                                if diff["quality_score_diff"] > 0)
-            degraded_columns = sum(1 for col, diff in comparison["column_metrics"].items() 
+            degraded_fields = sum(1 for field, diff in comparison["field_metrics"].items() 
                                if diff["quality_score_diff"] < 0)
             
             comparison["summary"] = {
-                "common_columns": column_count,
-                "source_only_columns": len(source_columns - target_columns),
-                "target_only_columns": len(target_columns - source_columns),
-                "improved_columns": improved_columns,
-                "degraded_columns": degraded_columns,
-                "unchanged_columns": column_count - improved_columns - degraded_columns
+                "common_fields": field_count,
+                "source_only_fields": len(source_fields - target_fields),
+                "target_only_fields": len(target_fields - source_fields),
+                "improved_fields": improved_fields,
+                "degraded_fields": degraded_fields,
+                "unchanged_fields": field_count - improved_fields - degraded_fields
             }
             
             return comparison
@@ -2219,8 +2219,8 @@ class DataQualityProfiler:
             self.logger.error(f"Error comparing quality: {str(e)}")
             return {
                 "error": str(e),
-                "source_table": source_table,
-                "target_table": target_table,
+                "source_collection": source_collection,
+                "target_collection": target_collection,
                 "timestamp": datetime.datetime.now().isoformat()
             }
     
@@ -8695,7 +8695,7 @@ class SyncService:
                 "timestamp": datetime.datetime.now().isoformat()
             }
     
-    def analyze_performance_trends(self, metric_name: str = "query_time", days: int = 30) -> Dict[str, Any]:
+    def analyze_performance_trends(self, metric_name: str = "execution_time", days: int = 30) -> Dict[str, Any]:
         """
         Analyze historical trends for a specific performance metric
         
@@ -8761,29 +8761,29 @@ class SyncService:
                 "timestamp": datetime.datetime.now().isoformat()
             }
     
-    def analyze_data_quality(self, table_name: str) -> Dict[str, Any]:
+    def analyze_data_quality(self, collection_name: str) -> Dict[str, Any]:
         """
-        Analyze data quality for a specific table
+        Analyze data quality for a specific collection
         
         Args:
-            table_name: Name of the table to analyze
+            collection_name: Name of the collection to analyze
             
         Returns:
             Dictionary with data quality analysis results
         """
-        self.logger.info(f"Analyzing data quality for table {table_name}")
+        self.logger.info(f"Analyzing data quality for collection {collection_name}")
         
         try:
-            profile = self.data_quality_profiler.profile_table(table_name)
+            profile = self.data_quality_profiler.profile_collection(collection_name)
             
             # Check for anomalies
-            anomalies = self.data_quality_profiler.detect_anomalies(table_name)
+            anomalies = self.data_quality_profiler.detect_anomalies(collection_name)
             
             # Get quality score
-            quality_score = self.data_quality_profiler.get_quality_score(table_name)
+            quality_score = self.data_quality_profiler.get_quality_score(collection_name)
             
             return {
-                "table_name": table_name,
+                "collection_name": collection_name,
                 "profile": profile,
                 "anomalies": anomalies,
                 "quality_score": quality_score,
@@ -8793,7 +8793,7 @@ class SyncService:
         except Exception as e:
             self.logger.error(f"Error analyzing data quality: {str(e)}")
             return {
-                "table_name": table_name,
+                "collection_name": collection_name,
                 "error": str(e),
                 "timestamp": datetime.datetime.now().isoformat()
             }
