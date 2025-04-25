@@ -7474,8 +7474,9 @@ class SyncService:
     """
     Main service class that provides the API for the SyncService.
     """
-    def __init__(self):
+    def __init__(self, config: Dict[str, Any] = None):
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.config = config or {}
         
         # Initialize database connections
         pacs_connection_string = os.environ.get(
@@ -7489,6 +7490,13 @@ class SyncService:
         
         self.source_connection = DatabaseConnection(pacs_connection_string, "PACS")
         self.target_connection = DatabaseConnection(cama_connection_string, "CAMA")
+        
+        # Initialize system resource monitor
+        self.resource_monitor = ResourceMonitor(
+            poll_interval_seconds=self.config.get("resource_poll_interval", 5.0)
+        )
+        self.resource_monitor.start_monitoring()
+        self.logger.info("Resource monitoring started")
         
         # Initialize the schema comparison tool
         self.schema_comparison_tool = SchemaComparisonTool(
@@ -7523,68 +7531,230 @@ class SyncService:
             target_connection=self.target_connection
         )
         
+        # Initialize batch processor with advanced dynamic sizing
+        batch_config = BatchConfiguration(
+            batch_size=self.config.get("batch_size", 100),
+            max_retries=self.config.get("max_retries", 3),
+            dynamic_sizing=self.config.get("dynamic_sizing", True),
+            adaptive_learning=self.config.get("adaptive_learning", True),
+            workload_specific_sizing=self.config.get("workload_specific_sizing", True),
+            resource_aware_sizing=self.config.get("resource_aware_sizing", True),
+            target_batch_duration_seconds=self.config.get("target_batch_duration", 2.0)
+        )
+        self.batch_processor = BatchProcessor(configuration=batch_config, logger=self.logger)
+        
+        # Configure parallel processor
+        self.parallel_processor = ParallelProcessor(
+            thread_pool_size=self.config.get("thread_pool_size", None),
+            process_pool_size=self.config.get("process_pool_size", None),
+            io_bound=True,
+            logger=self.logger
+        )
+        
         # Track sync history
         self.last_sync_time = None
         self.sync_history = []
     
     def full_sync(self) -> Dict[str, Any]:
         """
-        Perform a full sync from PACS to CAMA.
+        Perform a full sync from PACS to CAMA with optimized batch processing
+        based on system resources and database performance.
         
         Returns:
             Dictionary with sync results
         """
-        self.logger.info("Full sync requested")
+        self.logger.info("Full sync requested with dynamic batch sizing")
         
-        result = self.orchestrator.full_sync()
+        # Get performance metrics to optimize batch sizing
+        metrics = self.get_performance_metrics()
+        
+        # Configure batch processor with dynamic batch sizing based on current metrics
+        operation_specific_batch_sizes = metrics.get("optimal_batch_sizes", {}).get("optimal_batch_sizes", {})
+        
+        # Update batch configuration with operation-specific settings
+        if hasattr(self, 'batch_processor') and self.batch_processor:
+            self.logger.info("Applying dynamic batch sizing based on current system state")
+            # Initialize with default settings first
+            batch_config = BatchConfiguration(
+                batch_size=operation_specific_batch_sizes.get("database_read", 200),
+                dynamic_sizing=True,
+                adaptive_learning=True,
+                workload_specific_sizing=True,
+                resource_aware_sizing=True
+            )
+            self.batch_processor.config = batch_config
+            
+            # Log the optimization decisions
+            if "adjustment_explanations" in metrics.get("optimal_batch_sizes", {}):
+                for explanation in metrics["optimal_batch_sizes"]["adjustment_explanations"]:
+                    self.logger.info(f"Batch optimization: {explanation}")
+        
+        # Perform the full sync with optimized configuration
+        self.logger.info("Starting full sync with optimized batch configuration")
+        result = self.orchestrator.full_sync(
+            batch_processor=self.batch_processor,
+            resource_monitor=self.resource_monitor
+        )
         
         # Store sync information
         if result.success:
             self.last_sync_time = result.end_time
             
-        self.sync_history.append({
+        # Capture performance metrics from this sync
+        batch_metrics = {}
+        if hasattr(self, 'batch_processor') and self.batch_processor:
+            batch_metrics = self.batch_processor.get_metrics()
+            
+        # Add enhanced metrics to sync history
+        sync_record = {
             "type": "full",
             "timestamp": result.end_time,
             "success": result.success,
             "records_processed": result.records_processed,
-            "records_succeeded": result.records_succeeded
-        })
+            "records_succeeded": result.records_succeeded,
+            "performance": {
+                "batch_processing_rate": batch_metrics.get("processing_rate", 0),
+                "optimal_batch_size": self._get_optimal_batch_size_for_next_sync(result, batch_metrics)
+            }
+        }
+        self.sync_history.append(sync_record)
         
-        return result.to_dict()
+        # Include the enhanced metrics in the result
+        result_dict = result.to_dict()
+        result_dict["performance_metrics"] = batch_metrics
+        
+        return result_dict
     
     def incremental_sync(self) -> Dict[str, Any]:
         """
-        Perform an incremental sync from PACS to CAMA.
+        Perform an incremental sync from PACS to CAMA with dynamic batch sizing
+        based on system resources and database performance.
         
         Returns:
             Dictionary with sync results
         """
-        self.logger.info("Incremental sync requested")
+        self.logger.info("Incremental sync requested with dynamic batch sizing")
         
         # If no last sync time, do a full sync
         if self.last_sync_time is None:
             self.logger.info("No last sync time, performing full sync instead")
             return self.full_sync()
         
-        result = self.orchestrator.incremental_sync(self.last_sync_time)
+        # Get performance metrics to optimize batch sizing
+        metrics = self.get_performance_metrics()
+        
+        # Configure batch processor with dynamic batch sizing based on current metrics
+        operation_specific_batch_sizes = metrics.get("optimal_batch_sizes", {}).get("optimal_batch_sizes", {})
+        
+        # Update batch configuration with operation-specific settings
+        if hasattr(self, 'batch_processor') and self.batch_processor:
+            self.logger.info("Applying dynamic batch sizing based on current system state")
+            # Initialize with default settings first
+            batch_config = BatchConfiguration(
+                batch_size=operation_specific_batch_sizes.get("data_transform", 100),
+                dynamic_sizing=True,
+                adaptive_learning=True,
+                workload_specific_sizing=True,
+                resource_aware_sizing=True
+            )
+            self.batch_processor.config = batch_config
+            
+            # Log the optimization decisions
+            if "adjustment_explanations" in metrics.get("optimal_batch_sizes", {}):
+                for explanation in metrics["optimal_batch_sizes"]["adjustment_explanations"]:
+                    self.logger.info(f"Batch optimization: {explanation}")
+        
+        # Perform the incremental sync with optimized configuration
+        self.logger.info("Starting incremental sync with optimized batch configuration")
+        result = self.orchestrator.incremental_sync(
+            self.last_sync_time, 
+            batch_processor=self.batch_processor,
+            resource_monitor=self.resource_monitor
+        )
         
         # Store sync information
         if result.success:
             self.last_sync_time = result.end_time
             
-        self.sync_history.append({
+        # Capture performance metrics from this sync
+        batch_metrics = {}
+        if hasattr(self, 'batch_processor') and self.batch_processor:
+            batch_metrics = self.batch_processor.get_metrics()
+            
+        # Add enhanced metrics to sync history
+        sync_record = {
             "type": "incremental",
             "timestamp": result.end_time,
             "success": result.success,
             "records_processed": result.records_processed,
-            "records_succeeded": result.records_succeeded
-        })
+            "records_succeeded": result.records_succeeded,
+            "performance": {
+                "batch_processing_rate": batch_metrics.get("processing_rate", 0),
+                "optimal_batch_size": self._get_optimal_batch_size_for_next_sync(result, batch_metrics)
+            }
+        }
+        self.sync_history.append(sync_record)
         
-        return result.to_dict()
+        # Include the enhanced metrics in the result
+        result_dict = result.to_dict()
+        result_dict["performance_metrics"] = batch_metrics
+        
+        return result_dict
+        
+    def _get_optimal_batch_size_for_next_sync(
+        self, 
+        sync_result: Any, 
+        batch_metrics: Dict[str, Any]
+    ) -> int:
+        """
+        Calculate the optimal batch size for the next sync operation
+        based on the performance of the current sync.
+        
+        Args:
+            sync_result: Result of the sync operation
+            batch_metrics: Metrics from the batch processing
+            
+        Returns:
+            Recommended batch size for the next sync
+        """
+        # Default to a reasonable batch size
+        default_batch_size = 100
+        
+        if not batch_metrics or "batch_sizes" not in batch_metrics:
+            return default_batch_size
+            
+        # If we have batch processing metrics with throughput information
+        if "processing_rate" in batch_metrics and batch_metrics["processing_rate"] > 0:
+            # Check if we have batch metrics history
+            if "batch_sizes" in batch_metrics and "batch_durations" in batch_metrics:
+                # Calculate throughput for each batch
+                throughputs = []
+                for size, duration in zip(batch_metrics["batch_sizes"], batch_metrics["batch_durations"]):
+                    if duration > 0:
+                        throughput = size / duration  # records per second
+                        throughputs.append((size, throughput))
+                
+                # Find the batch size with the best throughput
+                if throughputs:
+                    # Sort by throughput (highest first)
+                    throughputs.sort(key=lambda x: x[1], reverse=True)
+                    optimal_size = throughputs[0][0]
+                    self.logger.info(
+                        f"Optimal batch size from performance history: {optimal_size} "
+                        f"(throughput: {throughputs[0][1]:.2f} records/sec)"
+                    )
+                    return optimal_size
+        
+        # If no clear optimal size from metrics, use the last configured batch size
+        if hasattr(self, 'batch_processor') and self.batch_processor:
+            return self.batch_processor.config.batch_size
+            
+        return default_batch_size
     
     def selective_sync(self, tables: List[str], filter_conditions: Dict[str, str] = None) -> Dict[str, Any]:
         """
-        Perform a selective sync for specific tables with optional filtering.
+        Perform a selective sync for specific tables with optional filtering
+        and optimized batch processing based on system resources and database performance.
         
         Args:
             tables: List of table names to synchronize
@@ -7593,7 +7763,7 @@ class SyncService:
         Returns:
             Dictionary with sync results
         """
-        self.logger.info(f"Selective sync requested for tables: {tables}")
+        self.logger.info(f"Selective sync requested for tables: {tables} with dynamic batch sizing")
         
         if not tables:
             self.logger.warning("No tables specified for selective sync")
@@ -7612,23 +7782,68 @@ class SyncService:
         filter_conditions = filter_conditions or {}
         
         try:
-            # In a real implementation, we would pass the filter conditions to the orchestrator
-            result = self.orchestrator.selective_sync(tables, filter_conditions)
+            # Get performance metrics to optimize batch sizing
+            metrics = self.get_performance_metrics()
+            
+            # Configure batch processor with dynamic batch sizing based on current metrics
+            operation_specific_batch_sizes = metrics.get("optimal_batch_sizes", {}).get("optimal_batch_sizes", {})
+            
+            # Update batch configuration with operation-specific settings
+            if hasattr(self, 'batch_processor') and self.batch_processor:
+                self.logger.info("Applying dynamic batch sizing based on current system state")
+                # Initialize with default settings first
+                batch_config = BatchConfiguration(
+                    batch_size=operation_specific_batch_sizes.get("database_read", 150),
+                    dynamic_sizing=True,
+                    adaptive_learning=True,
+                    workload_specific_sizing=True,
+                    resource_aware_sizing=True
+                )
+                self.batch_processor.config = batch_config
+                
+                # Log the optimization decisions
+                if "adjustment_explanations" in metrics.get("optimal_batch_sizes", {}):
+                    for explanation in metrics["optimal_batch_sizes"]["adjustment_explanations"]:
+                        self.logger.info(f"Batch optimization: {explanation}")
+            
+            # Perform the selective sync with optimized configuration
+            self.logger.info("Starting selective sync with optimized batch configuration")
+            result = self.orchestrator.selective_sync(
+                tables, 
+                filter_conditions,
+                batch_processor=self.batch_processor,
+                resource_monitor=self.resource_monitor
+            )
             
             # Store sync information
             if result.success:
                 self.last_sync_time = result.end_time
                 
-            self.sync_history.append({
+            # Capture performance metrics from this sync
+            batch_metrics = {}
+            if hasattr(self, 'batch_processor') and self.batch_processor:
+                batch_metrics = self.batch_processor.get_metrics()
+                
+            # Add enhanced metrics to sync history
+            sync_record = {
                 "type": "selective",
                 "tables": tables,
                 "timestamp": result.end_time,
                 "success": result.success,
                 "records_processed": result.records_processed,
-                "records_succeeded": result.records_succeeded
-            })
+                "records_succeeded": result.records_succeeded,
+                "performance": {
+                    "batch_processing_rate": batch_metrics.get("processing_rate", 0),
+                    "optimal_batch_size": self._get_optimal_batch_size_for_next_sync(result, batch_metrics)
+                }
+            }
+            self.sync_history.append(sync_record)
             
-            return result.to_dict()
+            # Include the enhanced metrics in the result
+            result_dict = result.to_dict()
+            result_dict["performance_metrics"] = batch_metrics
+            
+            return result_dict
             
         except Exception as e:
             self.logger.error(f"Selective sync failed: {str(e)}")
@@ -7743,28 +7958,51 @@ class SyncService:
             
     def get_performance_metrics(self) -> Dict[str, Any]:
         """
-        Get database performance metrics and recommendations.
+        Get comprehensive performance metrics, including system resources,
+        database performance, and dynamic batch processing recommendations.
         
         Returns:
-            Dictionary with performance metrics and recommendations
+            Dictionary with integrated performance metrics and recommendations
         """
-        self.logger.info("Getting database performance metrics")
+        self.logger.info("Getting comprehensive performance metrics")
         
         try:
-            performance_summary = self.performance_monitor.get_performance_summary()
+            # Get database performance metrics
+            db_performance_summary = self.performance_monitor.get_performance_summary()
+            
+            # Get system resource metrics
+            system_resources = self.resource_monitor.current_metrics
+            
+            # Get batch processing metrics if available
+            batch_metrics = {}
+            if hasattr(self, 'batch_processor') and self.batch_processor:
+                batch_metrics = self.batch_processor.get_metrics()
+            
+            # Calculate optimal batch sizes based on all available metrics
+            optimal_batch_sizes = self._calculate_optimal_batch_sizes(
+                system_resources, 
+                db_performance_summary
+            )
             
             # Add additional context for easier interpretation
-            performance_summary["interpretation"] = {
-                "source_db_health": self._interpret_db_health(
-                    performance_summary["metrics"]["source"]
-                ),
-                "target_db_health": self._interpret_db_health(
-                    performance_summary["metrics"]["target"]
-                ),
-                "risk_factors": self._identify_risk_factors(performance_summary),
-                "optimization_priority": self._determine_optimization_priority(
-                    performance_summary["recommendations"]
-                )
+            performance_summary = {
+                "database": db_performance_summary,
+                "system_resources": system_resources,
+                "batch_processing": batch_metrics,
+                "optimal_batch_sizes": optimal_batch_sizes,
+                "interpretation": {
+                    "source_db_health": self._interpret_db_health(
+                        db_performance_summary["metrics"]["source"]
+                    ),
+                    "target_db_health": self._interpret_db_health(
+                        db_performance_summary["metrics"]["target"]
+                    ),
+                    "system_health": self._interpret_system_health(system_resources),
+                    "risk_factors": self._identify_risk_factors(db_performance_summary),
+                    "optimization_priority": self._determine_optimization_priority(
+                        db_performance_summary["recommendations"]
+                    )
+                }
             }
             
             return performance_summary
@@ -7828,6 +8066,225 @@ class SyncService:
             return "low"
         else:
             return "none"
+            
+    def _interpret_system_health(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Interpret system health based on resource metrics
+        
+        Args:
+            metrics: Dictionary with system metrics
+            
+        Returns:
+            Dictionary with health assessments
+        """
+        # Default metrics if not available
+        cpu_percent = metrics.get("cpu_percent", 0)
+        memory_percent = metrics.get("memory_percent", 0)
+        memory_used_mb = metrics.get("memory_used_mb", 0)
+        disk_io_percent = metrics.get("disk_io_percent", 0)
+        
+        # Calculate overall system status
+        if cpu_percent > 90 or memory_percent > 90:
+            overall_status = "critical"
+        elif cpu_percent > 75 or memory_percent > 80:
+            overall_status = "warning"
+        elif cpu_percent > 60 or memory_percent > 65:
+            overall_status = "elevated"
+        else:
+            overall_status = "healthy"
+            
+        # Calculate specific component status
+        cpu_status = "healthy"
+        if cpu_percent > 90:
+            cpu_status = "critical"
+        elif cpu_percent > 75:
+            cpu_status = "warning"
+        elif cpu_percent > 60:
+            cpu_status = "elevated"
+            
+        memory_status = "healthy"
+        if memory_percent > 90:
+            memory_status = "critical"
+        elif memory_percent > 80:
+            memory_status = "warning"
+        elif memory_percent > 65:
+            memory_status = "elevated"
+            
+        disk_status = "healthy"
+        if disk_io_percent > 85:
+            disk_status = "warning"
+        elif disk_io_percent > 70:
+            disk_status = "elevated"
+            
+        # Generate resource usage interpretations
+        resource_interpretations = []
+        
+        if cpu_percent > 85:
+            resource_interpretations.append(
+                "CPU usage is extremely high - reduce parallel processing"
+            )
+        elif cpu_percent > 70:
+            resource_interpretations.append(
+                "CPU usage is high - consider reducing batch processing load"
+            )
+            
+        if memory_percent > 85:
+            resource_interpretations.append(
+                "Memory usage is extremely high - reduce batch sizes to prevent swapping"
+            )
+        elif memory_percent > 75:
+            resource_interpretations.append(
+                "Memory usage is high - monitor for potential issues"
+            )
+            
+        if disk_io_percent > 80:
+            resource_interpretations.append(
+                "Disk I/O is very high - database operations may be slowed"
+            )
+            
+        return {
+            "overall_status": overall_status,
+            "components": {
+                "cpu": cpu_status,
+                "memory": memory_status,
+                "disk_io": disk_status
+            },
+            "resource_interpretations": resource_interpretations
+        }
+        
+    def _calculate_optimal_batch_sizes(
+        self, 
+        system_resources: Dict[str, Any], 
+        db_performance: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Calculate optimal batch sizes for different operations based on
+        system resources and database performance.
+        
+        Args:
+            system_resources: Dictionary with system resource metrics
+            db_performance: Dictionary with database performance metrics
+            
+        Returns:
+            Dictionary with optimal batch sizes for different operations
+        """
+        # Extract key metrics
+        cpu_percent = system_resources.get("cpu_percent", 0)
+        memory_percent = system_resources.get("memory_percent", 0)
+        
+        # Extract database metrics
+        source_metrics = db_performance.get("metrics", {}).get("source", {})
+        target_metrics = db_performance.get("metrics", {}).get("target", {})
+        
+        source_cpu = source_metrics.get("cpu_utilization", 0)
+        source_memory = source_metrics.get("memory_utilization", 0)
+        target_cpu = target_metrics.get("cpu_utilization", 0)
+        target_memory = target_metrics.get("memory_utilization", 0)
+        
+        # Base batch sizes for different operations
+        base_batch_sizes = {
+            "data_transform": 200,   # CPU-intensive operations
+            "data_validation": 500,  # Less resource-intensive
+            "database_write": 100,   # I/O-bound operations
+            "database_read": 300,    # I/O-bound but usually faster than writes
+            "api_request": 50        # Network-bound operations
+        }
+        
+        # System resource adjustment factors
+        system_factors = {}
+        
+        # CPU adjustments - reduce batch size under high CPU load
+        if cpu_percent > 85:
+            system_factors["cpu"] = 0.5  # Significant reduction
+        elif cpu_percent > 70:
+            system_factors["cpu"] = 0.7  # Moderate reduction
+        elif cpu_percent > 50:
+            system_factors["cpu"] = 0.9  # Slight reduction
+        elif cpu_percent < 20:
+            system_factors["cpu"] = 1.2  # Increase if CPU is underutilized
+        else:
+            system_factors["cpu"] = 1.0  # No change
+            
+        # Memory adjustments - reduce batch size under high memory pressure
+        if memory_percent > 85:
+            system_factors["memory"] = 0.5  # Significant reduction
+        elif memory_percent > 75:
+            system_factors["memory"] = 0.7  # Moderate reduction
+        elif memory_percent > 60:
+            system_factors["memory"] = 0.9  # Slight reduction
+        elif memory_percent < 30:
+            system_factors["memory"] = 1.1  # Slight increase if memory is available
+        else:
+            system_factors["memory"] = 1.0  # No change
+            
+        # Database adjustment factors
+        db_factors = {}
+        
+        # Source database adjustments
+        if source_cpu > 80 or source_memory > 85:
+            db_factors["source"] = 0.6  # Significant reduction
+        elif source_cpu > 65 or source_memory > 70:
+            db_factors["source"] = 0.8  # Moderate reduction
+        else:
+            db_factors["source"] = 1.0  # No change
+            
+        # Target database adjustments
+        if target_cpu > 80 or target_memory > 85:
+            db_factors["target"] = 0.6  # Significant reduction
+        elif target_cpu > 65 or target_memory > 70:
+            db_factors["target"] = 0.8  # Moderate reduction
+        else:
+            db_factors["target"] = 1.0  # No change
+            
+        # Calculate optimal batch sizes for each operation type
+        optimal_batch_sizes = {}
+        adjustment_explanations = []
+        
+        for op_type, base_size in base_batch_sizes.items():
+            # Apply different factors based on operation type
+            if op_type == "data_transform":
+                # CPU-intensive operations - CPU is the limiting factor
+                factor = min(system_factors["cpu"], system_factors["memory"])
+                adjustment_explanations.append(
+                    f"{op_type}: Using {factor:.2f} factor based on CPU/memory constraints"
+                )
+            elif op_type in ["database_write", "database_read"]:
+                # Database operations - consider both system and DB factors
+                if op_type == "database_write":
+                    # Writes primarily affect target database
+                    factor = min(system_factors["memory"], db_factors["target"])
+                else:
+                    # Reads primarily affect source database
+                    factor = min(system_factors["memory"], db_factors["source"])
+                adjustment_explanations.append(
+                    f"{op_type}: Using {factor:.2f} factor based on system/database constraints"
+                )
+            elif op_type == "data_validation":
+                # Validation is typically less intensive
+                factor = min(system_factors["cpu"] * 1.1, system_factors["memory"])
+                adjustment_explanations.append(
+                    f"{op_type}: Using {factor:.2f} factor (validation is less intensive)"
+                )
+            else:
+                # Default for other operations
+                factor = min(system_factors["cpu"], system_factors["memory"])
+                adjustment_explanations.append(
+                    f"{op_type}: Using {factor:.2f} factor based on system constraints"
+                )
+                
+            # Calculate adjusted batch size
+            adjusted_size = int(base_size * factor)
+            
+            # Set reasonable limits
+            optimal_batch_sizes[op_type] = max(10, min(1000, adjusted_size))
+            
+        return {
+            "optimal_batch_sizes": optimal_batch_sizes,
+            "base_batch_sizes": base_batch_sizes,
+            "system_factors": system_factors,
+            "database_factors": db_factors,
+            "adjustment_explanations": adjustment_explanations
+        }
     
     def resolve_data_conflicts(self, change_record: Dict[str, Any]) -> Dict[str, Any]:
         """
