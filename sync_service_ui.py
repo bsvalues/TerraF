@@ -258,7 +258,7 @@ with st.expander("About this Dashboard", expanded=False):
     """)
 
 # Performance Metrics Tabs
-tab1, tab2, tab3 = st.tabs(["System Resources", "Database Performance", "Batch Processing"])
+tab1, tab2, tab3 = st.tabs(["System Resources", "Repository Performance", "Batch Processing"])
 
 with tab1:
     st.header("System Resource Monitoring")
@@ -340,7 +340,7 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
-    st.header("Database Performance")
+    st.header("Repository Performance")
     
     # Get current database metrics
     db_metrics = metrics.get("database", {}).get("metrics", {})
@@ -348,14 +348,14 @@ with tab2:
     target_metrics = db_metrics.get("target", {})
     
     # Create columns for source and target
-    st.subheader("Database Health Status")
+    st.subheader("Repository Health Status")
     db_col1, db_col2 = st.columns(2)
     
     with db_col1:
         st.markdown("#### Source Repository")
         source_cpu = source_metrics.get("cpu_utilization", 0)
         source_memory = source_metrics.get("memory_utilization", 0)
-        source_health = metrics.get("interpretation", {}).get("source_db_health", "healthy")
+        source_health = metrics.get("interpretation", {}).get("source_repo_health", "healthy")
         
         s_col1, s_col2 = st.columns(2)
         with s_col1:
@@ -394,7 +394,7 @@ with tab2:
         st.markdown("#### Target Repository")
         target_cpu = target_metrics.get("cpu_utilization", 0)
         target_memory = target_metrics.get("memory_utilization", 0)
-        target_health = metrics.get("interpretation", {}).get("target_db_health", "healthy")
+        target_health = metrics.get("interpretation", {}).get("target_repo_health", "healthy")
         
         t_col1, t_col2 = st.columns(2)
         with t_col1:
