@@ -377,10 +377,10 @@ with tab2:
         if show_advanced:
             s_col3, s_col4 = st.columns(2)
             with s_col3:
-                process_time = source_metrics.get("avg_process_time_ms", 0)
+                execution_time = source_metrics.get("avg_execution_time_ms", 0)
                 st.markdown(create_metric_card(
-                    "Average Process Time", 
-                    f"{process_time:.2f}", 
+                    "Average Execution Time", 
+                    f"{execution_time:.2f}", 
                     unit="ms"
                 ), unsafe_allow_html=True)
             with s_col4:
@@ -416,10 +416,10 @@ with tab2:
         if show_advanced:
             t_col3, t_col4 = st.columns(2)
             with t_col3:
-                process_time = target_metrics.get("avg_process_time_ms", 0)
+                execution_time = target_metrics.get("avg_execution_time_ms", 0)
                 st.markdown(create_metric_card(
-                    "Average Process Time", 
-                    f"{process_time:.2f}", 
+                    "Average Execution Time", 
+                    f"{execution_time:.2f}", 
                     unit="ms"
                 ), unsafe_allow_html=True)
             with t_col4:
