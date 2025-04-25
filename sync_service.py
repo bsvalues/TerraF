@@ -8061,7 +8061,7 @@ class SyncService:
             try:
                 optimal_batch_sizes = self._calculate_optimal_batch_sizes(
                     system_resources, 
-                    db_performance_summary
+                    repo_performance_summary
                 )
             except Exception as batch_size_err:
                 self.logger.warning(f"Error calculating optimal batch sizes: {str(batch_size_err)}")
@@ -8081,21 +8081,21 @@ class SyncService:
             
             # Add additional context for easier interpretation
             performance_summary = {
-                "database": db_performance_summary,
+                "repository": repo_performance_summary,
                 "system_resources": system_resources,
                 "batch_processing": batch_metrics,
                 "optimal_batch_sizes": optimal_batch_sizes,
                 "interpretation": {
-                    "source_db_health": self._interpret_db_health(
-                        db_performance_summary["metrics"]["source"]
+                    "source_repo_health": self._interpret_repo_health(
+                        repo_performance_summary["metrics"]["source"]
                     ),
-                    "target_db_health": self._interpret_db_health(
-                        db_performance_summary["metrics"]["target"]
+                    "target_repo_health": self._interpret_repo_health(
+                        repo_performance_summary["metrics"]["target"]
                     ),
                     "system_health": self._interpret_system_health(system_resources),
-                    "risk_factors": self._identify_risk_factors(db_performance_summary),
+                    "risk_factors": self._identify_risk_factors(repo_performance_summary),
                     "optimization_priority": self._determine_optimization_priority(
-                        db_performance_summary["recommendations"]
+                        repo_performance_summary["recommendations"]
                     )
                 }
             }
@@ -8114,18 +8114,18 @@ class SyncService:
                     "memory_used_mb": 2048,
                     "disk_io_percent": 30
                 },
-                "database": {
+                "repository": {
                     "metrics": {
                         "source": {
                             "cpu_utilization": 30,
                             "memory_utilization": 40,
-                            "avg_query_time_ms": 25,
+                            "avg_execution_time_ms": 25,
                             "operations_executed": 100
                         },
                         "target": {
                             "cpu_utilization": 35,
                             "memory_utilization": 45,
-                            "avg_query_time_ms": 30,
+                            "avg_execution_time_ms": 30,
                             "operations_executed": 120
                         }
                     },
@@ -8141,8 +8141,8 @@ class SyncService:
                     }
                 },
                 "interpretation": {
-                    "source_db_health": "healthy",
-                    "target_db_health": "healthy",
+                    "source_repo_health": "healthy",
+                    "target_repo_health": "healthy",
                     "system_health": {
                         "overall_status": "healthy",
                         "components": {
@@ -8157,8 +8157,8 @@ class SyncService:
                 }
             }
     
-    def _interpret_db_health(self, metrics: Dict[str, Any]) -> str:
-        """Interpret database health based on metrics"""
+    def _interpret_repo_health(self, metrics: Dict[str, Any]) -> str:
+        """Interpret repository health based on metrics"""
         if metrics.get("cpu_utilization", 0) > 80 or metrics.get("memory_utilization", 0) > 85:
             return "critical"
         elif metrics.get("cpu_utilization", 0) > 70 or metrics.get("memory_utilization", 0) > 75:
@@ -8174,28 +8174,28 @@ class SyncService:
         source_metrics = performance_summary["metrics"]["source"]
         target_metrics = performance_summary["metrics"]["target"]
         
-        if source_metrics.get("max_query_time_ms", 0) > 5000:
-            risk_factors.append("Very slow queries in source database")
+        if source_metrics.get("max_execution_time_ms", 0) > 5000:
+            risk_factors.append("Very slow operations in source repository")
             
-        if target_metrics.get("max_query_time_ms", 0) > 5000:
-            risk_factors.append("Very slow queries in target database")
+        if target_metrics.get("max_execution_time_ms", 0) > 5000:
+            risk_factors.append("Very slow operations in target repository")
             
         if source_metrics.get("cpu_utilization", 0) > 85:
-            risk_factors.append("Source database CPU near capacity")
+            risk_factors.append("Source repository CPU near capacity")
             
         if source_metrics.get("memory_utilization", 0) > 90:
-            risk_factors.append("Source database memory near capacity")
+            risk_factors.append("Source repository memory near capacity")
             
         if target_metrics.get("cpu_utilization", 0) > 85:
-            risk_factors.append("Target database CPU near capacity")
+            risk_factors.append("Target repository CPU near capacity")
             
         if target_metrics.get("memory_utilization", 0) > 90:
-            risk_factors.append("Target database memory near capacity")
+            risk_factors.append("Target repository memory near capacity")
             
         trends = performance_summary.get("historical_trends", {})
-        for db_type, trend_data in trends.items():
+        for repo_type, trend_data in trends.items():
             if trend_data.get("performance_trend") == "degrading":
-                risk_factors.append(f"Performance degradation trend in {db_type} database")
+                risk_factors.append(f"Performance degradation trend in {repo_type} repository")
                 
         return risk_factors
     
@@ -8282,7 +8282,7 @@ class SyncService:
             
         if disk_io_percent > 80:
             resource_interpretations.append(
-                "Disk I/O is very high - database operations may be slowed"
+                "Disk I/O is very high - repository operations may be slowed"
             )
             
         return {
@@ -8298,15 +8298,15 @@ class SyncService:
     def _calculate_optimal_batch_sizes(
         self, 
         system_resources: Dict[str, Any], 
-        db_performance: Dict[str, Any]
+        repo_performance: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Calculate optimal batch sizes for different operations based on
-        system resources and database performance.
+        system resources and repository performance.
         
         Args:
             system_resources: Dictionary with system resource metrics
-            db_performance: Dictionary with database performance metrics
+            repo_performance: Dictionary with repository performance metrics
             
         Returns:
             Dictionary with optimal batch sizes for different operations
@@ -8315,9 +8315,9 @@ class SyncService:
         cpu_percent = system_resources.get("cpu_percent", 0)
         memory_percent = system_resources.get("memory_percent", 0)
         
-        # Extract database metrics
-        source_metrics = db_performance.get("metrics", {}).get("source", {})
-        target_metrics = db_performance.get("metrics", {}).get("target", {})
+        # Extract repository metrics
+        source_metrics = repo_performance.get("metrics", {}).get("source", {})
+        target_metrics = repo_performance.get("metrics", {}).get("target", {})
         
         source_cpu = source_metrics.get("cpu_utilization", 0)
         source_memory = source_metrics.get("memory_utilization", 0)
@@ -8360,24 +8360,24 @@ class SyncService:
         else:
             system_factors["memory"] = 1.0  # No change
             
-        # Database adjustment factors
-        db_factors = {}
+        # Repository adjustment factors
+        repo_factors = {}
         
-        # Source database adjustments
+        # Source repository adjustments
         if source_cpu > 80 or source_memory > 85:
-            db_factors["source"] = 0.6  # Significant reduction
+            repo_factors["source"] = 0.6  # Significant reduction
         elif source_cpu > 65 or source_memory > 70:
-            db_factors["source"] = 0.8  # Moderate reduction
+            repo_factors["source"] = 0.8  # Moderate reduction
         else:
-            db_factors["source"] = 1.0  # No change
+            repo_factors["source"] = 1.0  # No change
             
-        # Target database adjustments
+        # Target repository adjustments
         if target_cpu > 80 or target_memory > 85:
-            db_factors["target"] = 0.6  # Significant reduction
+            repo_factors["target"] = 0.6  # Significant reduction
         elif target_cpu > 65 or target_memory > 70:
-            db_factors["target"] = 0.8  # Moderate reduction
+            repo_factors["target"] = 0.8  # Moderate reduction
         else:
-            db_factors["target"] = 1.0  # No change
+            repo_factors["target"] = 1.0  # No change
             
         # Calculate optimal batch sizes for each operation type
         optimal_batch_sizes = {}
@@ -8392,15 +8392,15 @@ class SyncService:
                     f"{op_type}: Using {factor:.2f} factor based on CPU/memory constraints"
                 )
             elif op_type in ["repository_write", "repository_read"]:
-                # Database operations - consider both system and DB factors
+                # Repository operations - consider both system and repository factors
                 if op_type == "repository_write":
-                    # Writes primarily affect target database
-                    factor = min(system_factors["memory"], db_factors["target"])
+                    # Writes primarily affect target repository
+                    factor = min(system_factors["memory"], repo_factors["target"])
                 else:
-                    # Reads primarily affect source database
-                    factor = min(system_factors["memory"], db_factors["source"])
+                    # Reads primarily affect source repository
+                    factor = min(system_factors["memory"], repo_factors["source"])
                 adjustment_explanations.append(
-                    f"{op_type}: Using {factor:.2f} factor based on system/database constraints"
+                    f"{op_type}: Using {factor:.2f} factor based on system/repository constraints"
                 )
             elif op_type == "data_validation":
                 # Validation is typically less intensive
@@ -8425,7 +8425,7 @@ class SyncService:
             "optimal_batch_sizes": optimal_batch_sizes,
             "base_batch_sizes": base_batch_sizes,
             "system_factors": system_factors,
-            "repository_factors": db_factors,
+            "repository_factors": repo_factors,
             "adjustment_explanations": adjustment_explanations
         }
     
