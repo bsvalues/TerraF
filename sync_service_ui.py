@@ -133,6 +133,9 @@ sync_type = st.sidebar.selectbox(
     ["Full Sync", "Incremental Sync", "Selective Sync"]
 )
 
+# Initialize tables variable
+tables = ["patients"]  # Default to patients table
+
 if sync_type == "Selective Sync":
     tables = st.sidebar.multiselect(
         "Select Tables",
