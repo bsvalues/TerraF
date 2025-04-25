@@ -4975,11 +4975,15 @@ class SyncOrchestrator:
         
         self.logger = logging.getLogger(self.__class__.__name__)
         
-    def full_sync(self) -> SyncResult:
+    def full_sync(self, batch_processor=None, resource_monitor=None) -> SyncResult:
         """
         Perform a full synchronization of all data from source to target.
         Enhanced with batch processing and parallel execution for improved performance.
         
+        Args:
+            batch_processor: Optional batch processor to use for this operation
+            resource_monitor: Optional resource monitor to use for this operation
+            
         Returns:
             SyncResult with details of the operation
         """
@@ -5109,12 +5113,14 @@ class SyncOrchestrator:
                 end_time=datetime.datetime.now().isoformat()
             )
     
-    def incremental_sync(self, last_sync_time: str) -> SyncResult:
+    def incremental_sync(self, last_sync_time: str, batch_processor=None, resource_monitor=None) -> SyncResult:
         """
         Perform an incremental synchronization of changes since last_sync_time.
         
         Args:
             last_sync_time: ISO-formatted timestamp of the last successful sync
+            batch_processor: Optional batch processor to use for this operation
+            resource_monitor: Optional resource monitor to use for this operation
             
         Returns:
             SyncResult with details of the operation
@@ -5164,13 +5170,16 @@ class SyncOrchestrator:
                 end_time=datetime.datetime.now().isoformat()
             )
     
-    def selective_sync(self, tables: List[str], filter_conditions: Dict[str, str] = None) -> SyncResult:
+    def selective_sync(self, tables: List[str], filter_conditions: Dict[str, str] = None, 
+                       batch_processor=None, resource_monitor=None) -> SyncResult:
         """
-        Perform a selective synchronization of specific tables with optional filtering.
+        Perform a selective synchronization of specific repositories with optional filtering.
         
         Args:
-            tables: List of table names to synchronize
-            filter_conditions: Optional dictionary mapping table names to filter conditions
+            tables: List of repository names to synchronize
+            filter_conditions: Optional dictionary mapping repository names to filter conditions
+            batch_processor: Optional batch processor to use for this operation
+            resource_monitor: Optional resource monitor to use for this operation
             
         Returns:
             SyncResult with details of the operation
@@ -7555,11 +7564,15 @@ class SyncService:
         self.last_sync_time = None
         self.sync_history = []
     
-    def full_sync(self) -> Dict[str, Any]:
+    def full_sync(self, batch_processor=None, resource_monitor=None) -> Dict[str, Any]:
         """
-        Perform a full sync from PACS to CAMA with optimized batch processing
-        based on system resources and database performance.
+        Perform a full sync between source and target repositories with optimized batch processing
+        based on system resources and repository performance.
         
+        Args:
+            batch_processor: Optional batch processor to use for this operation
+            resource_monitor: Optional resource monitor to use for this operation
+            
         Returns:
             Dictionary with sync results
         """
@@ -7625,11 +7638,15 @@ class SyncService:
         
         return result_dict
     
-    def incremental_sync(self) -> Dict[str, Any]:
+    def incremental_sync(self, batch_processor=None, resource_monitor=None) -> Dict[str, Any]:
         """
-        Perform an incremental sync from PACS to CAMA with dynamic batch sizing
-        based on system resources and database performance.
+        Perform an incremental sync between source and target repositories with dynamic batch sizing
+        based on system resources and repository performance.
         
+        Args:
+            batch_processor: Optional batch processor to use for this operation
+            resource_monitor: Optional resource monitor to use for this operation
+            
         Returns:
             Dictionary with sync results
         """
@@ -7751,14 +7768,17 @@ class SyncService:
             
         return default_batch_size
     
-    def selective_sync(self, tables: List[str], filter_conditions: Dict[str, str] = None) -> Dict[str, Any]:
+    def selective_sync(self, tables: List[str], filter_conditions: Dict[str, str] = None, 
+                       batch_processor=None, resource_monitor=None) -> Dict[str, Any]:
         """
-        Perform a selective sync for specific tables with optional filtering
-        and optimized batch processing based on system resources and database performance.
+        Perform a selective sync for specific repositories with optional filtering
+        and optimized batch processing based on system resources and repository performance.
         
         Args:
-            tables: List of table names to synchronize
-            filter_conditions: Optional dictionary mapping table names to filter conditions
+            tables: List of repository names to synchronize
+            filter_conditions: Optional dictionary mapping repository names to filter conditions
+            batch_processor: Optional batch processor to use for this operation
+            resource_monitor: Optional resource monitor to use for this operation
             
         Returns:
             Dictionary with sync results
