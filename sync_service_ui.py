@@ -250,7 +250,7 @@ with st.expander("About this Dashboard", expanded=False):
     This dashboard demonstrates the SyncService's advanced resource monitoring and dynamic batch sizing capabilities. The system automatically adjusts batch sizes based on:
     
     * **System Resources**: CPU, memory, and disk I/O utilization
-    * **Database Performance**: Query times, connection pools, and database load
+    * **Repository Performance**: Processing times, connection efficiency, and storage load
     * **Workload Type**: Different operation types receive specialized batch sizing
     * **Historical Performance**: Learning from past operations for continuous optimization
     
@@ -342,8 +342,8 @@ with tab1:
 with tab2:
     st.header("Repository Performance")
     
-    # Get current database metrics
-    db_metrics = metrics.get("database", {}).get("metrics", {})
+    # Get current repository metrics
+    db_metrics = metrics.get("repository", {}).get("metrics", {})
     source_metrics = db_metrics.get("source", {})
     target_metrics = db_metrics.get("target", {})
     
@@ -377,10 +377,10 @@ with tab2:
         if show_advanced:
             s_col3, s_col4 = st.columns(2)
             with s_col3:
-                query_time = source_metrics.get("avg_query_time_ms", 0)
+                process_time = source_metrics.get("avg_query_time_ms", 0)
                 st.markdown(create_metric_card(
-                    "Average Query Time", 
-                    f"{query_time:.2f}", 
+                    "Average Process Time", 
+                    f"{process_time:.2f}", 
                     unit="ms"
                 ), unsafe_allow_html=True)
             with s_col4:
@@ -437,7 +437,7 @@ with tab2:
             st.warning(risk)
             
     # Recommendations
-    recommendations = metrics.get("database", {}).get("recommendations", [])
+    recommendations = metrics.get("repository", {}).get("recommendations", [])
     if recommendations:
         st.subheader("Performance Recommendations")
         for rec in recommendations:
