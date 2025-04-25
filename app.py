@@ -18,106 +18,206 @@ st.set_page_config(
 # Define custom CSS
 st.markdown("""
 <style>
+    /* TerraFusion color palette */
+    :root {
+        --tf-primary: #2E7D32;
+        --tf-primary-light: #4CAF50;
+        --tf-primary-dark: #1B5E20;
+        --tf-secondary: #3949AB;
+        --tf-secondary-light: #5C6BC0;
+        --tf-accent: #FF6F00;
+        --tf-background: #F5F7FA;
+        --tf-card: #FFFFFF;
+        --tf-text: #263238;
+        --tf-text-light: #78909C;
+        --tf-success: #00C853;
+        --tf-warning: #FFD600;
+        --tf-error: #D50000;
+    }
+    
+    /* Global styles */
+    .stApp {
+        background-color: var(--tf-background);
+    }
+    
+    /* Header styles */
     .main-header {
-        font-size: 2.5rem;
+        font-size: 2.8rem;
+        font-weight: 700;
+        color: var(--tf-primary-dark);
         margin-bottom: 0;
+        padding-bottom: 0;
     }
     .sub-header {
-        font-size: 1.1rem;
-        color: #888;
+        font-size: 1.2rem;
+        color: var(--tf-text-light);
         margin-top: 0;
+        padding-top: 0;
+        margin-bottom: 2rem;
     }
+    
+    /* Status card styles */
     .status-card {
         padding: 20px;
-        border-radius: 10px;
-        background-color: #f8f9fa;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        margin-bottom: 20px;
+        border-radius: 12px;
+        background-color: var(--tf-card);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        margin-bottom: 24px;
+        border-top: 4px solid var(--tf-primary);
     }
     .status-header {
-        font-size: 1.2rem;
-        font-weight: bold;
-        margin-bottom: 10px;
+        font-size: 1.3rem;
+        font-weight: 600;
+        color: var(--tf-primary-dark);
+        margin-bottom: 12px;
     }
     .status-online {
-        color: #4CAF50;
-        font-weight: bold;
+        color: var(--tf-success);
+        font-weight: 600;
     }
     .status-offline {
-        color: #F44336;
-        font-weight: bold;
+        color: var(--tf-error);
+        font-weight: 600;
     }
+    
+    /* Feature card styles */
     .feature-card {
-        border-radius: 10px;
-        background-color: white;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        transition: transform 0.3s ease;
+        border-radius: 12px;
+        background-color: var(--tf-card);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        transition: all 0.3s ease;
         height: 100%;
+        border-left: 4px solid var(--tf-primary);
     }
     .feature-card:hover {
-        transform: translateY(-5px);
+        transform: translateY(-6px);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
     }
     .feature-content {
-        padding: 20px;
+        padding: 24px;
     }
     .feature-icon {
-        font-size: 2rem;
-        margin-bottom: 10px;
+        font-size: 2.5rem;
+        margin-bottom: 16px;
+        color: var(--tf-primary);
     }
     .feature-title {
-        font-size: 1.2rem;
-        font-weight: bold;
-        margin-bottom: 10px;
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--tf-primary-dark);
+        margin-bottom: 12px;
     }
     .feature-description {
-        font-size: 0.9rem;
-        color: #555;
+        font-size: 1rem;
+        color: var(--tf-text-light);
+        line-height: 1.5;
     }
+    
+    /* Activity & alert card styles */
     .activity-card {
-        padding: 10px 15px;
+        padding: 16px;
         border-radius: 8px;
-        background-color: #f0f0f0;
-        margin-bottom: 10px;
+        background-color: var(--tf-card);
+        margin-bottom: 12px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        border-left: 3px solid var(--tf-secondary);
     }
     .activity-time {
-        font-size: 0.8rem;
-        color: #666;
+        font-size: 0.85rem;
+        color: var(--tf-text-light);
+        margin-bottom: 4px;
     }
     .activity-text {
-        font-size: 0.9rem;
+        font-size: 1rem;
+        color: var(--tf-text);
     }
+    
+    /* Metric box styles */
     .metric-box {
-        border-radius: 8px;
-        padding: 15px;
-        background-color: #f0f0f0;
+        border-radius: 12px;
+        padding: 20px;
+        background-color: var(--tf-card);
         text-align: center;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        height: 100%;
+        border-top: 4px solid var(--tf-primary-light);
     }
     .metric-value {
-        font-size: 1.8rem;
-        font-weight: bold;
+        font-size: 2.2rem;
+        font-weight: 700;
+        color: var(--tf-primary-dark);
+        margin: 10px 0;
     }
     .metric-label {
-        font-size: 0.9rem;
-        color: #555;
+        font-size: 1rem;
+        color: var(--tf-text-light);
+        font-weight: 500;
     }
+    
+    /* Alert styles */
     .alert-card {
-        padding: 10px 15px;
+        padding: 16px;
         border-radius: 8px;
-        background-color: #fff8e1;
-        border-left: 4px solid #ffc107;
-        margin-bottom: 10px;
+        margin-bottom: 12px;
+        background-color: var(--tf-card);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
     }
     .alert-high {
-        background-color: #ffebee;
-        border-left: 4px solid #f44336;
+        border-left: 3px solid var(--tf-error);
     }
     .alert-medium {
-        background-color: #fff8e1;
-        border-left: 4px solid #ffc107;
+        border-left: 3px solid var(--tf-warning);
     }
     .alert-low {
-        background-color: #e8f5e9;
-        border-left: 4px solid #4caf50;
+        border-left: 3px solid var(--tf-success);
+    }
+    
+    /* Button styling */
+    .stButton > button {
+        background-color: var(--tf-primary);
+        color: white;
+        font-weight: 500;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 6px;
+        transition: all 0.2s ease;
+        width: 100%;
+    }
+    .stButton > button:hover {
+        background-color: var(--tf-primary-dark);
+        color: white;
+    }
+    
+    /* Section headers */
+    h2 {
+        color: var(--tf-primary-dark);
+        font-weight: 600;
+        margin-top: 2rem;
+        margin-bottom: 1.5rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 2px solid var(--tf-primary-light);
+    }
+    
+    /* Footer */
+    .footer {
+        margin-top: 40px;
+        padding-top: 20px;
+        border-top: 1px solid #ECEFF1;
+        text-align: center;
+        color: var(--tf-text-light);
+        font-size: 0.9rem;
+    }
+    
+    /* Navigation improvements */
+    .nav-section {
+        margin-top: 30px;
+        margin-bottom: 40px;
+    }
+    .nav-title {
+        font-size: 1.2rem;
+        font-weight: 600;
+        color: var(--tf-primary-dark);
+        margin-bottom: 15px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -156,11 +256,14 @@ def get_active_alerts():
     ]
     return alerts
 
-# Main dashboard
-st.markdown('<h1 class="main-header">TerraFusion AI Platform</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Advanced AI-powered code analysis and optimization platform</p>', unsafe_allow_html=True)
+# Main dashboard header
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.markdown('<h1 class="main-header">TerraFusion AI Platform</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Advanced AI-powered code analysis and optimization platform</p>', unsafe_allow_html=True)
 
 # AI Services Status
+st.subheader("AI Services Status")
 col1, col2 = st.columns(2)
 
 with col1:
@@ -236,8 +339,9 @@ with col4:
     )
 
 # Features Section
-st.subheader("Platform Features")
+st.subheader("Platform Tools")
 
+# First row of features
 col1, col2, col3 = st.columns(3)
 
 with col1:
@@ -287,6 +391,7 @@ with col3:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
+# Second row of features
 col1, col2, col3 = st.columns(3)
 
 with col1:
@@ -335,6 +440,7 @@ with col3:
         st.switch_page("pages/6_AI_Chat_Interface.py")
 
 # System Activity and Alerts
+st.markdown("<br>", unsafe_allow_html=True)
 col1, col2 = st.columns([2, 1])
 
 with col1:
@@ -375,6 +481,28 @@ with col2:
                 unsafe_allow_html=True
             )
 
+# Quick Start Guide
+st.markdown("<br>", unsafe_allow_html=True)
+st.subheader("Quick Start Guide")
+
+with st.expander("Getting Started with TerraFusion AI Platform", expanded=False):
+    st.markdown("""
+    ### First Steps with TerraFusion AI Platform
+    
+    1. **Connect AI Services** - Ensure your OpenAI and/or Anthropic API keys are configured
+    2. **Analyze a Repository** - Use the Repository Analysis tool to evaluate your codebase
+    3. **Optimize Workflows** - Identify and fix bottlenecks with the Workflow Visualization
+    4. **Monitor Performance** - Track system performance with the Sync Service Dashboard
+    
+    ### Key Features
+    
+    - **Multi-Model AI Analysis** - Leverage both OpenAI and Anthropic models for comprehensive code insights
+    - **Adaptive Performance** - Dynamic batch sizing automatically adjusts based on system resources
+    - **Specialized Agents** - Domain-specific AI agents focus on different aspects of your codebase
+    - **Interactive Visualizations** - Visual representations of code workflows and architecture
+    """)
+
 # Footer
-st.markdown("<hr>", unsafe_allow_html=True)
+st.markdown('<div class="footer">', unsafe_allow_html=True)
 st.markdown("© 2025 TerraFusion AI Platform | Advanced Code Analysis and Optimization", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)

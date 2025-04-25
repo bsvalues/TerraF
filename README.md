@@ -1,111 +1,155 @@
 # TerraFusion AI Platform
 
-An advanced AI-powered code analysis and optimization platform that provides intelligent workflow management through multi-agent AI orchestration and interactive development insights.
+Advanced AI-powered code analysis and optimization platform with multi-agent orchestration and interactive development insights.
 
 ![TerraFusion AI Platform](generated-icon.png)
 
 ## Overview
 
-TerraFusion AI Platform integrates advanced AI capabilities from OpenAI and Anthropic to provide comprehensive code analysis, workflow optimization, and development insights. The platform uses a multi-agent architecture where specialized AI agents focus on different aspects of software analysis and optimization.
+The TerraFusion AI Platform is a comprehensive suite of AI-powered tools designed to enhance code quality, optimize workflows, and provide deep insights into software development processes. By leveraging cutting-edge AI models from both OpenAI and Anthropic, the platform offers a unified interface for various code analysis and optimization tasks.
 
-## Core Features
+## Features
 
-- **Sync Service Dashboard**: Monitor and manage synchronization operations with real-time metrics and dynamic batch sizing
-- **Code Analysis Dashboard**: AI-powered analysis of code quality, architecture, performance, and security
-- **Agent Orchestration**: Management interface for specialized AI agents with different capabilities
-- **Workflow Visualization**: Analysis and optimization of code workflows with bottleneck identification
-- **Repository Analysis**: In-depth analysis of entire code repositories to evaluate structure and quality
-- **AI Chat Interface**: Interactive communication with specialized AI agents for development assistance
+### 1. Sync Service
 
-## Technologies
+- **Real-time metrics monitoring** for synchronization operations
+- **Dynamic batch sizing** that automatically adjusts based on system resources
+- **Performance optimization** to maximize throughput and efficiency
+- **Detailed error tracking** and resolution capabilities
 
-- **Python & Streamlit**: Interactive web application framework
-- **OpenAI API**: GPT-4o integration for advanced code analysis
-- **Anthropic API**: Claude integration for alternative model capabilities
-- **NetworkX & Plotly**: Graph visualization for code and workflow analysis
-- **Pandas & NumPy**: Data processing and analysis
+### 2. Code Analysis
+
+- **Quality assessment** for code style, organization, and best practices
+- **Architecture analysis** to evaluate design patterns and component relationships
+- **Performance evaluation** to identify bottlenecks and optimization opportunities
+- **Security scanning** to detect vulnerabilities and weaknesses
+
+### 3. Agent Orchestration
+
+- **Multi-agent system** with specialized AI agents for different tasks
+- **Coordination framework** to manage agent interactions and collaborations
+- **Task distribution** based on agent capabilities and expertise
+- **Continuous learning** across the agent network
+
+### 4. Workflow Visualization
+
+- **Interactive workflow mapping** to visualize code and data flows
+- **Bottleneck identification** to highlight performance issues
+- **Optimization suggestions** to improve workflow efficiency
+- **Process simulation** to evaluate changes before implementation
+
+### 5. Repository Analysis
+
+- **Codebase health assessment** to evaluate overall quality
+- **Technical debt identification** to prioritize improvements
+- **Architecture visualization** to understand system design
+- **Trending analysis** to track improvement over time
+
+### 6. AI Chat Interface
+
+- **Interactive communication** with specialized AI agents
+- **Context-aware responses** based on repository knowledge
+- **Code generation and explanation** capabilities
+- **Multilingual support** for diverse development teams
+
+## Technology Stack
+
+- **AI Integration:** OpenAI GPT-4o and Anthropic Claude 3.5 models
+- **Frontend:** Streamlit for interactive UI components
+- **Visualization:** Matplotlib, Plotly for data visualization
+- **Analysis:** Custom code analysis modules powered by AI
+- **Performance Monitoring:** Real-time metrics collection and analysis
 
 ## Installation & Setup
 
 ### Prerequisites
 
 - Python 3.10+
-- Streamlit
-- OpenAI API key (optional but recommended)
-- Anthropic API key (optional but recommended)
+- API keys for OpenAI and/or Anthropic (optional, but recommended)
 
 ### Installation
 
 1. Clone the repository:
-   ```bash
-   git clone https://github.com/username/terrafusion-ai-platform.git
-   cd terrafusion-ai-platform
+   ```
+   git clone https://github.com/terrafusion/ai-platform.git
+   cd ai-platform
    ```
 
 2. Install dependencies:
-   ```bash
+   ```
    pip install -r requirements.txt
    ```
 
-3. Set up environment variables:
-   ```bash
+3. Set up environment variables for API keys:
+   ```
    export OPENAI_API_KEY="your_openai_api_key"
    export ANTHROPIC_API_KEY="your_anthropic_api_key"
    ```
 
-### Running the Application
+### Running the Platform
 
-Start the Streamlit server:
-
-```bash
+Launch the application:
+```
 streamlit run app.py
 ```
 
 The application will be available at http://localhost:5000
 
-## Module Structure
+## Usage
 
-- **app.py**: Main application entry point and dashboard
-- **model_interface.py**: Unified interface for AI model interactions
-- **pages/**: Directory containing all specialized dashboard pages
-  - **1_Sync_Service_Dashboard.py**: Sync service monitoring and management
-  - **2_Code_Analysis_Dashboard.py**: Code quality analysis interface
-  - **3_Agent_Orchestration.py**: AI agent management dashboard 
-  - **4_Workflow_Visualization.py**: Workflow analysis and optimization
-  - **5_Repository_Analysis.py**: Code repository analysis
-  - **6_AI_Chat_Interface.py**: Interactive AI chat interface
+### Main Dashboard
 
-## AI Service Integration
+The main dashboard provides an overview of system performance, AI service status, and access to all specialized tools.
 
-The platform integrates both OpenAI and Anthropic APIs for AI capabilities, with automatic fallback between services if one is unavailable. The `ModelInterface` class provides a unified interface for:
+### Analyzing Code
 
-- Text generation
-- Embeddings creation
-- Image analysis
+1. Navigate to the Code Analysis dashboard
+2. Upload a file or paste code directly
+3. Select the type of analysis (quality, architecture, performance, security)
+4. Choose your preferred AI provider
+5. View detailed analysis results and recommendations
 
-## Multi-Agent System
+### Optimizing Workflows
 
-The platform uses a multi-agent architecture where specialized AI agents focus on different aspects:
+1. Navigate to the Workflow Visualization dashboard
+2. Import or create a workflow diagram
+3. Analyze for bottlenecks and inefficiencies
+4. View optimization suggestions
+5. Export optimized workflow
 
-- **CodeQualityAgent**: Code quality, style, and readability
-- **ArchitectureAgent**: Software architecture and design patterns
-- **DatabaseAgent**: Database schema and query optimization
-- **DocumentationAgent**: Documentation completeness and quality
-- **SecurityAgent**: Security vulnerability identification
-- **PerformanceAgent**: Performance analysis and optimization
+## AI Integration
 
-## Deployment
+The platform integrates with both OpenAI and Anthropic models:
 
-The application is configured for deployment on Replit with proper port binding to 0.0.0.0:5000 and headless mode enabled.
+- **OpenAI:** Utilizes GPT-4o for advanced code analysis and generation
+- **Anthropic:** Leverages Claude 3.5 for additional insights and perspectives
 
-## License
+The `ModelInterface` class provides a unified API for both providers, allowing seamless switching between models and fallback options if one provider is unavailable.
 
-This project is released under the MIT License. See the LICENSE file for details.
+## Architecture
+
+The platform follows a modular architecture:
+
+- **Core Services:** Foundational services for AI integration and basic functionality
+- **Specialized Modules:** Purpose-built modules for specific analysis tasks
+- **UI Components:** Streamlit-based UI for interactive user experience
+- **Agent Framework:** Infrastructure for multi-agent coordination and communication
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+We welcome contributions to the TerraFusion AI Platform! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to submit pull requests, report issues, and suggest improvements.
 
-## Support
+## License
 
-For support, please open an issue in the GitHub repository or contact the development team.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- The OpenAI team for their powerful API
+- The Anthropic team for their Claude models
+- The Streamlit team for their excellent UI framework
+- All contributors who have helped improve this platform
+
+---
+
+© 2025 TerraFusion AI Platform | Advanced Code Analysis and Optimization
