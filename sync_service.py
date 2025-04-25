@@ -6903,7 +6903,7 @@ class HistoricalTrendAnalyzer:
 
 class RepositoryPerformanceMonitor:
     """
-    Monitors database performance during synchronization operations
+    Monitors repository performance during synchronization operations
     and provides metrics and optimization recommendations.
     """
     def __init__(self, source_connection: DatabaseConnection, target_connection: DatabaseConnection):
@@ -6928,8 +6928,8 @@ class RepositoryPerformanceMonitor:
         self.max_history_size = 100  # samples
         
     def start_monitoring(self) -> None:
-        """Start monitoring database performance"""
-        self.logger.info("Starting database performance monitoring")
+        """Start monitoring repository performance"""
+        self.logger.info("Starting repository performance monitoring")
         
         # Reset current metrics
         self.current_metrics = {
@@ -6938,24 +6938,24 @@ class RepositoryPerformanceMonitor:
                 "operations_executed": 0,
                 "rows_processed": 0,
                 "execution_time_ms": 0,
-                "avg_query_time_ms": 0,
-                "max_query_time_ms": 0,
+                "avg_execution_time_ms": 0,
+                "max_execution_time_ms": 0,
                 "cpu_utilization": 0,
                 "memory_utilization": 0,
                 "io_operations": 0,
-                "connections": 1
+                "active_connections": 1
             },
             "target": {
                 "start_time": datetime.datetime.now().isoformat(),
                 "operations_executed": 0,
                 "rows_processed": 0,
                 "execution_time_ms": 0,
-                "avg_query_time_ms": 0,
-                "max_query_time_ms": 0,
+                "avg_execution_time_ms": 0,
+                "max_execution_time_ms": 0,
                 "cpu_utilization": 0,
                 "memory_utilization": 0,
                 "io_operations": 0,
-                "connections": 1
+                "active_connections": 1
             }
         }
     
@@ -6970,43 +6970,43 @@ class RepositoryPerformanceMonitor:
         end_time = datetime.datetime.now().isoformat()
         
         # Finalize metrics
-        for db in ["source", "target"]:
-            self.current_metrics[db]["end_time"] = end_time
-            if self.current_metrics[db]["operations_executed"] > 0:
-                self.current_metrics[db]["avg_query_time_ms"] = (
-                    self.current_metrics[db]["execution_time_ms"] / 
-                    self.current_metrics[db]["operations_executed"]
+        for repo in ["source", "target"]:
+            self.current_metrics[repo]["end_time"] = end_time
+            if self.current_metrics[repo]["operations_executed"] > 0:
+                self.current_metrics[repo]["avg_execution_time_ms"] = (
+                    self.current_metrics[repo]["execution_time_ms"] / 
+                    self.current_metrics[repo]["operations_executed"]
                 )
             
             # Add to history
-            self.metrics_history[db].append(self.current_metrics[db].copy())
+            self.metrics_history[repo].append(self.current_metrics[repo].copy())
             
             # Trim history if needed
-            if len(self.metrics_history[db]) > self.max_history_size:
-                self.metrics_history[db] = self.metrics_history[db][-self.max_history_size:]
+            if len(self.metrics_history[repo]) > self.max_history_size:
+                self.metrics_history[repo] = self.metrics_history[repo][-self.max_history_size:]
         
-        self.logger.info("Database performance monitoring stopped")
+        self.logger.info("Repository performance monitoring stopped")
         return self.get_performance_summary()
     
-    def record_query_metrics(self, db_type: str, query_time_ms: float, rows_affected: int) -> None:
+    def record_query_metrics(self, repo_type: str, execution_time_ms: float, rows_affected: int) -> None:
         """
-        Record metrics for a single query
+        Record metrics for a single operation
         
         Args:
-            db_type: "source" or "target"
-            query_time_ms: Execution time in milliseconds
+            repo_type: "source" or "target"
+            execution_time_ms: Execution time in milliseconds
             rows_affected: Number of rows affected/returned
         """
-        if db_type not in self.current_metrics:
+        if repo_type not in self.current_metrics:
             return
             
-        metrics = self.current_metrics[db_type]
+        metrics = self.current_metrics[repo_type]
         metrics["operations_executed"] += 1
         metrics["rows_processed"] += rows_affected
-        metrics["execution_time_ms"] += query_time_ms
+        metrics["execution_time_ms"] += execution_time_ms
         
-        if query_time_ms > metrics["max_query_time_ms"]:
-            metrics["max_query_time_ms"] = query_time_ms
+        if execution_time_ms > metrics.get("max_execution_time_ms", 0):
+            metrics["max_execution_time_ms"] = execution_time_ms
     
     def simulate_system_metrics(self, db_type: str) -> None:
         """
