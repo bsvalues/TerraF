@@ -1,242 +1,354 @@
-"""
-Model Interface Module
-
-This module provides a unified interface for interacting with different AI models and services.
-"""
-
 import os
+import json
 import logging
 import time
-from typing import List, Dict, Any, Optional, Union
+from typing import Optional, Dict, Any, List, Union
+import openai
+from openai import OpenAI
+import anthropic
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('model_interface')
 
 class ModelInterface:
     """
-    Interface for interacting with AI models.
+    Interface for interacting with multiple AI models (OpenAI and Anthropic).
     
-    This class abstracts away the differences between different model providers
-    and provides a unified interface for the application to use.
+    This class provides a unified interface for text generation, embedding creation,
+    and other AI functionalities, regardless of the underlying model provider.
     """
-    def __init__(self, model_id: Optional[str] = None, capability: Optional[str] = None):
-        """
-        Initialize the model interface.
+    
+    def __init__(self):
+        """Initialize the model interface with API clients."""
+        self.openai_client = None
+        self.anthropic_client = None
         
-        Args:
-            model_id: Optional specific model ID to use
-            capability: Optional capability to select model for
-        """
-        self.model_id = model_id
-        self.capability = capability
-        self.clients = {}
-        
-        # Initialize provider-specific clients
-        self._initialize_clients()
-        
-    def _initialize_clients(self):
-        """Initialize provider-specific clients"""
-        # Initialize OpenAI client
-        try:
-            openai_key = os.environ.get("OPENAI_API_KEY")
-            if openai_key:
-                import openai
-                from openai import OpenAI
-                self.clients["openai"] = OpenAI(api_key=openai_key)
+        # Initialize OpenAI client if API key is available
+        openai_api_key = os.environ.get("OPENAI_API_KEY")
+        if openai_api_key:
+            try:
+                self.openai_client = OpenAI(api_key=openai_api_key)
                 logger.info("OpenAI client initialized successfully.")
-            else:
-                logger.warning("OpenAI API key not found.")
-        except Exception as e:
-            logger.error(f"Error initializing OpenAI client: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error initializing OpenAI client: {str(e)}")
         
-        # Initialize Anthropic client
-        try:
-            anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
-            if anthropic_key:
-                import anthropic
-                self.clients["anthropic"] = anthropic.Anthropic(api_key=anthropic_key)
+        # Initialize Anthropic client if API key is available
+        anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if anthropic_api_key:
+            try:
+                self.anthropic_client = anthropic.Anthropic(api_key=anthropic_api_key)
                 logger.info("Anthropic client initialized successfully.")
-            else:
-                logger.warning("Anthropic API key not found.")
-        except Exception as e:
-            logger.error(f"Error initializing Anthropic client: {str(e)}")
-            
+            except Exception as e:
+                logger.error(f"Error initializing Anthropic client: {str(e)}")
+    
     def check_openai_status(self) -> bool:
-        """
-        Check if OpenAI API is available and properly configured.
+        """Check if OpenAI API is available and operational."""
+        if not self.openai_client:
+            return False
         
-        Returns:
-            True if available, False otherwise
-        """
-        return "openai" in self.clients
-        
+        try:
+            # Make a simple API call to test connectivity
+            models = self.openai_client.models.list()
+            return True
+        except Exception as e:
+            logger.error(f"OpenAI API check failed: {str(e)}")
+            return False
+    
     def check_anthropic_status(self) -> bool:
-        """
-        Check if Anthropic API is available and properly configured.
+        """Check if Anthropic API is available and operational."""
+        if not self.anthropic_client:
+            return False
         
-        Returns:
-            True if available, False otherwise
+        try:
+            # Make a simple API call to test connectivity
+            # Anthropic doesn't have a simple status check API, so we use a minimal query
+            response = self.anthropic_client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=10,
+                messages=[{"role": "user", "content": "Hi"}]
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Anthropic API check failed: {str(e)}")
+            return False
+    
+    def generate_text(
+        self,
+        prompt: str,
+        system_message: Optional[str] = None,
+        provider: str = "openai",
+        max_tokens: int = 1000,
+        temperature: float = 0.7,
+        options: Optional[Dict[str, Any]] = None
+    ) -> str:
         """
-        return "anthropic" in self.clients
-        
-    def generate_text(self, prompt: str, system_message: Optional[str] = None,
-                    max_tokens: Optional[int] = None, provider: str = "auto") -> str:
-        """
-        Generate text using the configured model.
+        Generate text using the specified provider.
         
         Args:
-            prompt: The user prompt to send to the model
-            system_message: Optional system message for chat models
+            prompt: The user prompt or question
+            system_message: Optional system message for context
+            provider: AI provider to use ('openai' or 'anthropic')
             max_tokens: Maximum tokens to generate
-            provider: Which provider to use ("openai", "anthropic", or "auto")
-        
+            temperature: Temperature for generation (randomness)
+            options: Additional provider-specific options
+            
         Returns:
-            The generated text
+            Generated text response
+        
+        Raises:
+            Exception: If generation fails or provider is not available
         """
-        if provider == "auto":
-            # Try OpenAI first, then fall back to Anthropic
-            if "openai" in self.clients:
-                provider = "openai"
-            elif "anthropic" in self.clients:
+        if not options:
+            options = {}
+        
+        # Use fallback provider if requested one is not available
+        if provider == "openai" and not self.openai_client:
+            if self.anthropic_client:
+                logger.warning("OpenAI not available, falling back to Anthropic")
                 provider = "anthropic"
             else:
-                raise ValueError("No AI providers available. Please configure API keys.")
-        
-        if provider == "openai":
-            if "openai" not in self.clients:
-                raise ValueError("OpenAI client not initialized. Please configure API key.")
-            return self._generate_text_openai(prompt, system_message, max_tokens or 1000)
-        elif provider == "anthropic":
-            if "anthropic" not in self.clients:
-                raise ValueError("Anthropic client not initialized. Please configure API key.")
-            return self._generate_text_anthropic(prompt, system_message, max_tokens or 1000)
-        else:
-            raise ValueError(f"Unknown provider: {provider}")
-    
-    def _generate_text_openai(self, prompt: str, system_message: Optional[str], max_tokens: int) -> str:
-        """Generate text using OpenAI models"""
-        try:
-            # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
-            # do not change this unless explicitly requested by the user
-            messages = []
-            
-            if system_message:
-                messages.append({"role": "system", "content": system_message})
-                
-            messages.append({"role": "user", "content": prompt})
-            
-            response = self.clients["openai"].chat.completions.create(
-                model="gpt-4o",
-                messages=messages,
-                max_tokens=max_tokens
-            )
-            
-            return response.choices[0].message.content
-        except Exception as e:
-            logger.error(f"Error generating text with OpenAI: {str(e)}")
-            return f"Error: {str(e)}"
-    
-    def _generate_text_anthropic(self, prompt: str, system_message: Optional[str], max_tokens: int) -> str:
-        """Generate text using Anthropic models"""
-        try:
-            # the newest Anthropic model is "claude-3-5-sonnet-20241022" which was released October 22, 2024.
-            # do not change this unless explicitly requested by the user
-            
-            # Prepare messages
-            if system_message:
-                system = system_message
+                raise Exception("No AI providers are available")
+        elif provider == "anthropic" and not self.anthropic_client:
+            if self.openai_client:
+                logger.warning("Anthropic not available, falling back to OpenAI")
+                provider = "openai"
             else:
-                system = "You are a helpful AI assistant."
-                
-            response = self.clients["anthropic"].messages.create(
-                model="claude-3-5-sonnet-20241022",
-                system=system,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=max_tokens
-            )
-            
-            return response.content[0].text
-        except Exception as e:
-            logger.error(f"Error generating text with Anthropic: {str(e)}")
-            return f"Error: {str(e)}"
-            
-    def analyze_code(self, code: str, language: str, query: str) -> Dict[str, Any]:
+                raise Exception("No AI providers are available")
+        
+        # Generate with requested provider
+        if provider == "openai":
+            return self._generate_openai(prompt, system_message, max_tokens, temperature, options)
+        elif provider == "anthropic":
+            return self._generate_anthropic(prompt, system_message, max_tokens, temperature, options)
+        else:
+            raise ValueError(f"Unsupported provider: {provider}")
+    
+    def _generate_openai(
+        self,
+        prompt: str,
+        system_message: Optional[str],
+        max_tokens: int,
+        temperature: float,
+        options: Dict[str, Any]
+    ) -> str:
         """
-        Analyze code using the configured model.
+        Generate text using OpenAI.
         
         Args:
-            code: The code to analyze
-            language: The programming language of the code
-            query: What to analyze about the code
-        
+            prompt: The user prompt or question
+            system_message: Optional system message for context
+            max_tokens: Maximum tokens to generate
+            temperature: Temperature for generation
+            options: Additional OpenAI-specific options
+            
         Returns:
-            Analysis results
+            Generated text response
         """
-        prompt = f"""
-        I'd like you to analyze the following {language} code:
+        if not self.openai_client:
+            raise Exception("OpenAI client not initialized")
         
-        ```{language}
-        {code}
-        ```
+        # Prepare messages
+        messages = []
+        if system_message:
+            messages.append({"role": "system", "content": system_message})
+        messages.append({"role": "user", "content": prompt})
         
-        {query}
+        # Set up parameters
+        params = {
+            "model": options.get("model", "gpt-4o"),  # the newest OpenAI model is "gpt-4o" which was released May 13, 2024
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
         
-        Please provide your analysis with the following structure:
-        1. Summary of the code's purpose and functionality
-        2. Specific response to the query
-        3. Any potential issues or improvement suggestions
-        4. Code quality assessment (1-10 scale)
+        # Add any additional parameters
+        for key, value in options.items():
+            if key != "model":  # Model already handled
+                params[key] = value
         
-        Format your response as JSON with these keys: "summary", "query_response", "issues", "quality_score"
+        # Generate response
+        response = self.openai_client.chat.completions.create(**params)
+        return response.choices[0].message.content
+    
+    def _generate_anthropic(
+        self,
+        prompt: str,
+        system_message: Optional[str],
+        max_tokens: int,
+        temperature: float,
+        options: Dict[str, Any]
+    ) -> str:
         """
+        Generate text using Anthropic.
         
-        system_message = "You are an expert code analysis AI. Provide detailed, accurate analysis of code with actionable insights."
+        Args:
+            prompt: The user prompt or question
+            system_message: Optional system message for context
+            max_tokens: Maximum tokens to generate
+            temperature: Temperature for generation
+            options: Additional Anthropic-specific options
+            
+        Returns:
+            Generated text response
+        """
+        if not self.anthropic_client:
+            raise Exception("Anthropic client not initialized")
         
-        try:
-            if "openai" in self.clients:
-                response = self.clients["openai"].chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": system_message},
-                        {"role": "user", "content": prompt}
-                    ],
-                    response_format={"type": "json_object"}
-                )
-                import json
-                return json.loads(response.choices[0].message.content)
-            elif "anthropic" in self.clients:
-                response = self.clients["anthropic"].messages.create(
-                    model="claude-3-5-sonnet-20241022",
-                    system=system_message,
-                    messages=[
-                        {"role": "user", "content": prompt}
-                    ],
-                    max_tokens=2000
-                )
-                import json
-                # Try to extract JSON from the response
-                content = response.content[0].text
-                try:
-                    # Try direct JSON parsing
-                    return json.loads(content)
-                except:
-                    # Try to extract JSON from markdown code blocks
-                    import re
-                    json_match = re.search(r"```json\n(.*?)\n```", content, re.DOTALL)
-                    if json_match:
-                        return json.loads(json_match.group(1))
-                    else:
-                        raise ValueError("Could not extract JSON from response")
+        # Prepare messages
+        messages = [{"role": "user", "content": prompt}]
+        
+        # Set up parameters
+        params = {
+            "model": options.get("model", "claude-3-5-sonnet-20241022"),  # the newest Anthropic model is "claude-3-5-sonnet-20241022" which was released October 22, 2024
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        
+        # Add system prompt if provided
+        if system_message:
+            params["system"] = system_message
+        
+        # Add any additional parameters
+        for key, value in options.items():
+            if key != "model":  # Model already handled
+                params[key] = value
+        
+        # Generate response
+        response = self.anthropic_client.messages.create(**params)
+        return response.content[0].text
+    
+    def create_embeddings(
+        self,
+        texts: List[str],
+        provider: str = "openai",
+        options: Optional[Dict[str, Any]] = None
+    ) -> List[List[float]]:
+        """
+        Create embeddings for the given texts.
+        
+        Args:
+            texts: List of texts to create embeddings for
+            provider: AI provider to use ('openai' or 'anthropic')
+            options: Additional provider-specific options
+            
+        Returns:
+            List of embedding vectors
+        
+        Raises:
+            Exception: If embedding creation fails or provider is not available
+        """
+        if not options:
+            options = {}
+        
+        # Use fallback provider if requested one is not available
+        if provider == "openai" and not self.openai_client:
+            if self.anthropic_client:
+                logger.warning("OpenAI not available, falling back to Anthropic")
+                provider = "anthropic"
             else:
-                raise ValueError("No AI providers available. Please configure API keys.")
-        except Exception as e:
-            logger.error(f"Error analyzing code: {str(e)}")
-            return {
-                "summary": f"Error analyzing code: {str(e)}",
-                "query_response": "Analysis failed",
-                "issues": ["Analysis service unavailable"],
-                "quality_score": 0
+                raise Exception("No AI providers are available")
+        elif provider == "anthropic" and not self.anthropic_client:
+            if self.openai_client:
+                logger.warning("Anthropic not available, falling back to OpenAI")
+                provider = "openai"
+            else:
+                raise Exception("No AI providers are available")
+        
+        # Create embeddings with requested provider
+        if provider == "openai":
+            return self._create_embeddings_openai(texts, options)
+        else:
+            raise ValueError(f"Embeddings not supported for provider: {provider}")
+    
+    def _create_embeddings_openai(
+        self,
+        texts: List[str],
+        options: Dict[str, Any]
+    ) -> List[List[float]]:
+        """
+        Create embeddings using OpenAI.
+        
+        Args:
+            texts: List of texts to create embeddings for
+            options: Additional OpenAI-specific options
+            
+        Returns:
+            List of embedding vectors
+        """
+        if not self.openai_client:
+            raise Exception("OpenAI client not initialized")
+        
+        # Set up parameters
+        params = {
+            "model": options.get("model", "text-embedding-3-large"),
+            "input": texts,
+        }
+        
+        # Add any additional parameters
+        for key, value in options.items():
+            if key != "model":  # Model already handled
+                params[key] = value
+        
+        # Create embeddings
+        response = self.openai_client.embeddings.create(**params)
+        return [data.embedding for data in response.data]
+    
+    def analyze_image(
+        self,
+        image_data: Union[str, bytes],
+        prompt: str = "Analyze this image in detail",
+        provider: str = "openai"
+    ) -> str:
+        """
+        Analyze the given image using vision capabilities.
+        
+        Args:
+            image_data: Image data as base64 string or bytes
+            prompt: The prompt for image analysis
+            provider: AI provider to use (currently only 'openai' is supported)
+            
+        Returns:
+            Analysis text
+        
+        Raises:
+            Exception: If image analysis fails or provider is not available
+        """
+        if provider != "openai":
+            raise ValueError(f"Image analysis not supported for provider: {provider}")
+        
+        if not self.openai_client:
+            raise Exception("OpenAI client not initialized")
+        
+        # Prepare image data
+        if isinstance(image_data, bytes):
+            # Convert bytes to base64
+            import base64
+            base64_image = base64.b64encode(image_data).decode('utf-8')
+        else:
+            # Assume it's already a base64 string
+            base64_image = image_data
+        
+        # Create the message content with text and image
+        content = [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
             }
+        ]
+        
+        # Create the response
+        response = self.openai_client.chat.completions.create(
+            model="gpt-4o",  # the newest OpenAI model is "gpt-4o" which was released May 13, 2024
+            messages=[
+                {"role": "user", "content": content}
+            ],
+            max_tokens=500
+        )
+        
+        return response.choices[0].message.content
