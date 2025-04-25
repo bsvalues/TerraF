@@ -512,7 +512,7 @@ function updateLastLoginTimestamp(userId) {
 }
     """,
     
-    "Data Processing Pipeline": ("""
+    "Data Processing Pipeline": """
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
