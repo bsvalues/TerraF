@@ -1,378 +1,478 @@
-"""
-SyncService UI
-
-This module provides a Streamlit UI for the SyncService component.
-"""
-
-import json
-import time
-import datetime
-import requests
-import pandas as pd
 import streamlit as st
-from typing import Dict, Any, List, Optional
+import time
+import plotly.graph_objects as go
+import plotly.express as px
+import pandas as pd
+import numpy as np
+from sync_service import SyncService
 
-# Define constants
-API_BASE_URL = "http://localhost:5001"  # The FastAPI service URL
+# Set page configuration
+st.set_page_config(
+    page_title="SyncService Performance Monitor",
+    page_icon="🔄",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
+# Define custom CSS
+st.markdown("""
+<style>
+    .metric-card {
+        border-radius: 5px;
+        padding: 15px;
+        margin-bottom: 10px;
+        border: 1px solid #ddd;
+        background-color: #f8f9fa;
+    }
+    .metric-title {
+        font-size: 14px;
+        font-weight: bold;
+        color: #555;
+    }
+    .metric-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #333;
+    }
+    .metric-unit {
+        font-size: 12px;
+        color: #777;
+    }
+    .metric-trend {
+        font-size: 12px;
+        margin-left: 5px;
+    }
+    .health-critical {
+        background-color: #ffebee;
+        border-left: 5px solid #f44336;
+    }
+    .health-warning {
+        background-color: #fff8e1;
+        border-left: 5px solid #ffc107;
+    }
+    .health-moderate {
+        background-color: #e8f5e9;
+        border-left: 5px solid #4caf50;
+    }
+    .health-healthy {
+        background-color: #e8f5e9;
+        border-left: 5px solid #4caf50;
+    }
+    .sidebar-header {
+        font-size: 20px;
+        font-weight: bold;
+        margin-bottom: 20px;
+    }
+    .sync-history-item {
+        padding: 10px;
+        border-radius: 5px;
+        margin-bottom: 10px;
+        background-color: #f0f0f0;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-def init_session_state():
-    """Initialize session state variables."""
-    if "sync_history" not in st.session_state:
-        st.session_state.sync_history = []
-    if "last_sync_time" not in st.session_state:
-        st.session_state.last_sync_time = None
-    if "sync_in_progress" not in st.session_state:
-        st.session_state.sync_in_progress = False
-    if "error_message" not in st.session_state:
-        st.session_state.error_message = None
+# Initialize session state
+if 'sync_service' not in st.session_state:
+    st.session_state.sync_service = SyncService()
+    
+if 'sync_history' not in st.session_state:
+    st.session_state.sync_history = []
+    
+if 'performance_metrics' not in st.session_state:
+    st.session_state.performance_metrics = []
+    
+if 'show_advanced' not in st.session_state:
+    st.session_state.show_advanced = False
 
+# Helper functions
+def format_size(size_bytes):
+    """Format bytes to a readable string"""
+    for unit in ['B', 'KB', 'MB', 'GB']:
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.2f} {unit}"
+        size_bytes /= 1024.0
+    return f"{size_bytes:.2f} TB"
 
-def fetch_sync_status():
-    """Fetch sync status from the API."""
-    try:
-        response = requests.get(f"{API_BASE_URL}/sync/status", timeout=5)
-        response.raise_for_status()
-        status_data = response.json()
-        
-        st.session_state.last_sync_time = status_data.get("last_sync_time")
-        st.session_state.sync_history = status_data.get("sync_history", [])
-        
-        return status_data
-    except Exception as e:
-        st.session_state.error_message = f"Failed to fetch sync status: {str(e)}"
-        # For demo, use mock data when API is not available
-        return {
-            "last_sync_time": datetime.datetime.now().isoformat(),
-            "sync_history": [
-                {
-                    "type": "incremental",
-                    "timestamp": datetime.datetime.now().isoformat(),
-                    "success": True,
-                    "records_processed": 5,
-                    "records_succeeded": 5
-                },
-                {
-                    "type": "full",
-                    "timestamp": (datetime.datetime.now() - datetime.timedelta(days=1)).isoformat(),
-                    "success": True,
-                    "records_processed": 42,
-                    "records_succeeded": 42
-                }
-            ],
-            "active": True,
-            "version": "1.0.0 (Demo)"
-        }
+def get_health_class(health_status):
+    """Get the CSS class based on health status"""
+    if health_status == "critical":
+        return "health-critical"
+    elif health_status == "warning":
+        return "health-warning"
+    elif health_status == "moderate" or health_status == "elevated":
+        return "health-moderate"
+    else:
+        return "health-healthy"
 
-
-def perform_sync(sync_type: str) -> Dict[str, Any]:
+def create_metric_card(title, value, unit="", trend=None, health_status="healthy"):
+    """Create a styled metric card"""
+    health_class = get_health_class(health_status)
+    trend_html = ""
+    if trend:
+        trend_icon = "↑" if trend > 0 else "↓"
+        trend_color = "red" if trend > 0 and "cpu" in title.lower() else "green"
+        trend_html = f'<span class="metric-trend" style="color: {trend_color}">{trend_icon} {abs(trend):.1f}%</span>'
+    
+    html = f"""
+    <div class="metric-card {health_class}">
+        <div class="metric-title">{title}</div>
+        <div class="metric-value">{value} <span class="metric-unit">{unit}</span> {trend_html}</div>
+    </div>
     """
-    Perform a sync operation.
-    
-    Args:
-        sync_type: Either "full" or "incremental"
-        
-    Returns:
-        Dictionary with sync results
-    """
-    st.session_state.sync_in_progress = True
-    st.session_state.error_message = None
-    
-    # Show progress
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    try:
-        status_text.text(f"Starting {sync_type} sync...")
-        progress_bar.progress(10)
-        time.sleep(0.5)  # Simulate network delay
-        
-        # Make API request
-        url = f"{API_BASE_URL}/sync/{sync_type}"
-        response = requests.post(url, timeout=30)
-        response.raise_for_status()
-        
-        # Parse results
-        result = response.json()
-        
-        # Update progress
-        progress_bar.progress(100)
-        status_text.text(f"{sync_type.capitalize()} sync completed successfully!")
-        
-        # Update session state
-        st.session_state.last_sync_time = result.get("end_time")
-        
-        # Get updated sync history
-        fetch_sync_status()
-        
-        return result
-    except Exception as e:
-        st.session_state.error_message = f"Sync failed: {str(e)}"
-        progress_bar.progress(100)
-        status_text.text("Sync failed!")
-        
-        # For demo, return mock data when API is not available
-        return {
-            "success": False,
-            "records_processed": 0,
-            "records_succeeded": 0,
-            "records_failed": 0,
-            "error_details": [{"error": str(e), "type": "Exception"}],
-            "warnings": [],
-            "start_time": datetime.datetime.now().isoformat(),
-            "end_time": datetime.datetime.now().isoformat(),
-            "duration_seconds": 0.1
-        }
-    finally:
-        st.session_state.sync_in_progress = False
+    return html
 
+# Sidebar
+st.sidebar.markdown('<div class="sidebar-header">SyncService Control Panel</div>', unsafe_allow_html=True)
 
-def display_sync_history(history: List[Dict[str, Any]]):
-    """Display sync history as a table."""
-    if not history:
-        st.info("No sync history available.")
-        return
-    
-    # Convert to DataFrame for display
-    df = pd.DataFrame(history)
-    
-    # Format timestamps
-    df['timestamp'] = pd.to_datetime(df['timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')
-    
-    # Add success icons
-    df['status'] = df['success'].apply(lambda x: "✅" if x else "❌")
-    
-    # Reorder and rename columns
-    df = df[['timestamp', 'type', 'records_processed', 'records_succeeded', 'status']]
-    df.columns = ['Timestamp', 'Type', 'Processed', 'Succeeded', 'Status']
-    
-    # Display the table
-    st.dataframe(df, use_container_width=True)
+# Sync Operations
+st.sidebar.markdown("### Sync Operations")
 
+sync_type = st.sidebar.selectbox(
+    "Select Sync Type",
+    ["Full Sync", "Incremental Sync", "Selective Sync"]
+)
 
-def display_sync_details(result: Dict[str, Any]):
-    """Display detailed sync results."""
-    if not result:
-        return
+if sync_type == "Selective Sync":
+    tables = st.sidebar.multiselect(
+        "Select Tables",
+        ["patients", "appointments", "medical_records", "billing", "insurance"],
+        ["patients"]
+    )
+
+advanced_options = st.sidebar.expander("Advanced Options")
+with advanced_options:
+    batch_size = st.slider("Initial Batch Size", 10, 500, 100)
+    dynamic_sizing = st.checkbox("Enable Dynamic Batch Sizing", value=True)
+    resource_aware = st.checkbox("Enable Resource-Aware Sizing", value=True)
+    adaptive_learning = st.checkbox("Enable Adaptive Learning", value=True)
     
-    with st.expander("Sync Details", expanded=True):
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric(
-                "Records Processed",
-                result.get("records_processed", 0)
-            )
-        with col2:
-            st.metric(
-                "Records Succeeded",
-                result.get("records_succeeded", 0)
-            )
-        with col3:
-            st.metric(
-                "Duration (seconds)",
-                f"{result.get('duration_seconds', 0):.2f}"
-            )
-        
-        # Show warnings
-        warnings = result.get("warnings", [])
-        if warnings:
-            st.subheader("Warnings")
-            for warning in warnings:
-                st.warning(warning)
-        
-        # Show errors
-        errors = result.get("error_details", [])
-        if errors:
-            st.subheader("Errors")
-            for error in errors:
-                error_msg = error.get("error", "Unknown error")
-                error_type = error.get("type", "Error")
-                record_id = error.get("record_id", "N/A")
-                
-                st.error(f"**{error_type}** (Record ID: {record_id}): {error_msg}")
-
-
-def display_api_health():
-    """Display API health status."""
-    try:
-        response = requests.get(f"{API_BASE_URL}/health", timeout=2)
-        response.raise_for_status()
-        
-        health_data = response.json()
-        status = health_data.get("status", "unknown")
-        components = health_data.get("components", {})
-        
-        if status == "ok":
-            st.success("SyncService API is healthy")
-        else:
-            st.warning(f"SyncService API status: {status}")
-        
-        for component, details in components.items():
-            component_status = details.get("status", "unknown")
-            if component_status == "ok":
-                st.success(f"{component.upper()}: Healthy")
-            else:
-                st.warning(f"{component.upper()}: {component_status}")
-    except Exception as e:
-        st.error(f"SyncService API is unavailable: {str(e)}")
-        st.info("Demo mode: showing mock data")
-
-
-def render_sync_service_tab():
-    """Render the SyncService UI tab."""
-    st.header("SyncService: PACS to CAMA Synchronization")
+# Run sync button
+if st.sidebar.button("Run Sync Operation"):
+    # Prepare configuration based on advanced options
+    config = {
+        "batch_size": batch_size,
+        "dynamic_sizing": dynamic_sizing,
+        "resource_aware_sizing": resource_aware,
+        "adaptive_learning": adaptive_learning,
+        "workload_specific_sizing": True
+    }
     
-    # Initialize session state
-    init_session_state()
+    # Update the sync service with the new configuration
+    st.session_state.sync_service = SyncService(config)
     
-    # Display API health status
-    with st.sidebar:
-        st.subheader("API Status")
-        display_api_health()
+    # Run the selected sync operation
+    with st.spinner(f"Running {sync_type}..."):
+        if sync_type == "Full Sync":
+            result = st.session_state.sync_service.full_sync()
+        elif sync_type == "Incremental Sync":
+            result = st.session_state.sync_service.incremental_sync()
+        else:  # Selective Sync
+            result = st.session_state.sync_service.selective_sync(tables)
         
-        st.markdown("---")
+        # Add to history
+        st.session_state.sync_history.append({
+            "type": sync_type,
+            "timestamp": result.get("end_time", ""),
+            "records_processed": result.get("records_processed", 0),
+            "success": result.get("success", False),
+            "performance": result.get("performance_metrics", {})
+        })
         
-        sync_status = fetch_sync_status()
-        st.subheader("Sync Status")
-        if sync_status.get("active"):
-            st.success("SyncService is active")
-        else:
-            st.warning("SyncService is inactive")
+        # Get latest performance metrics
+        st.session_state.performance_metrics.append(
+            st.session_state.sync_service.get_performance_metrics()
+        )
         
-        last_sync = sync_status.get("last_sync_time")
-        if last_sync:
-            try:
-                last_sync_dt = datetime.datetime.fromisoformat(last_sync)
-                st.info(f"Last sync: {last_sync_dt.strftime('%Y-%m-%d %H:%M:%S')}")
-            except:
-                st.info(f"Last sync: {last_sync}")
-        else:
-            st.info("No previous sync recorded")
-        
-        version = sync_status.get("version", "unknown")
-        st.text(f"Version: {version}")
+        st.success(f"{sync_type} completed successfully!")
+
+# Toggle advanced view
+st.sidebar.markdown("### Display Options")
+show_advanced = st.sidebar.checkbox("Show Advanced Metrics", value=st.session_state.show_advanced)
+st.session_state.show_advanced = show_advanced
+
+# Main content
+st.title("SyncService Performance Dashboard")
+
+# Performance Metrics Tabs
+tab1, tab2, tab3 = st.tabs(["System Resources", "Database Performance", "Batch Processing"])
+
+with tab1:
+    st.header("System Resource Monitoring")
     
-    # Main content
-    col1, col2 = st.columns(2)
+    # Get current metrics
+    metrics = st.session_state.sync_service.get_performance_metrics()
+    system_resources = metrics.get("system_resources", {})
+    system_health = metrics.get("interpretation", {}).get("system_health", {})
+    
+    # Create metrics grid
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        # Incremental sync button
-        st.button(
-            "Perform Incremental Sync",
-            on_click=lambda: perform_sync("incremental"),
-            disabled=st.session_state.sync_in_progress,
-            use_container_width=True
-        )
-    
+        cpu_percent = system_resources.get("cpu_percent", 0)
+        cpu_status = system_health.get("components", {}).get("cpu", "healthy")
+        st.markdown(create_metric_card(
+            "CPU Usage", 
+            f"{cpu_percent:.1f}", 
+            unit="%", 
+            health_status=cpu_status
+        ), unsafe_allow_html=True)
+        
     with col2:
-        # Full sync button
-        st.button(
-            "Perform Full Sync",
-            on_click=lambda: perform_sync("full"),
-            disabled=st.session_state.sync_in_progress,
-            use_container_width=True,
-            type="primary"
-        )
+        memory_percent = system_resources.get("memory_percent", 0)
+        memory_status = system_health.get("components", {}).get("memory", "healthy")
+        st.markdown(create_metric_card(
+            "Memory Usage", 
+            f"{memory_percent:.1f}", 
+            unit="%", 
+            health_status=memory_status
+        ), unsafe_allow_html=True)
+        
+    with col3:
+        memory_used = system_resources.get("memory_used_mb", 0)
+        st.markdown(create_metric_card(
+            "Memory Used", 
+            f"{memory_used:.1f}", 
+            unit="MB"
+        ), unsafe_allow_html=True)
+        
+    with col4:
+        disk_io = system_resources.get("disk_io_percent", 0)
+        disk_status = system_health.get("components", {}).get("disk_io", "healthy")
+        st.markdown(create_metric_card(
+            "Disk I/O", 
+            f"{disk_io:.1f}", 
+            unit="%", 
+            health_status=disk_status
+        ), unsafe_allow_html=True)
     
-    # Show error message if any
-    if st.session_state.error_message:
-        st.error(st.session_state.error_message)
+    # Resource interpretations
+    if system_health.get("resource_interpretations"):
+        st.subheader("Resource Insights")
+        for interpretation in system_health.get("resource_interpretations", []):
+            st.info(interpretation)
     
-    # Sync history section
-    st.subheader("Sync History")
-    display_sync_history(st.session_state.sync_history)
-    
-    # System architecture diagram
-    st.subheader("SyncService Architecture")
-    with st.expander("Architecture Diagram", expanded=False):
-        st.markdown("""
-        ```
-        +---------------------+      +------------------------+      +---------------------+
-        |                     |      |                        |      |                     |
-        |  Legacy PACS System |      |  TerraFusion Platform  |      |  Modern CAMA System |
-        |                     |      |     (SyncService)      |      |                     |
-        |  +---------------+  |      |   +-----------------+  |      |  +---------------+  |
-        |  |               |  |      |   |                 |  |      |  |               |  |
-        |  | Property Data |<---------->| Change Detector  |  |      |  | Property Data |  |
-        |  |               |  |      |   |                 |  |      |  |               |  |
-        |  +---------------+  |      |   +-----------------+  |      |  +---------------+  |
-        |                     |      |           |            |      |                     |
-        |  +---------------+  |      |   +-----------------+  |      |  +---------------+  |
-        |  |               |  |      |   |                 |  |      |  |               |  |
-        |  | Change Log    |<---------->| Data Transformer |<---------->| Property      |  |
-        |  |               |  |      |   |                 |  |      |  | Valuations    |  |
-        |  +---------------+  |      |   +-----------------+  |      |  |               |  |
-        |                     |      |           |            |      |  +---------------+  |
-        |  +---------------+  |      |   +-----------------+  |      |                     |
-        |  |               |  |      |   |                 |  |      |  +---------------+  |
-        |  | Valuations    |<---------->| Data Validator   |<---------->| Audit Trail   |  |
-        |  |               |  |      |   |                 |  |      |  |               |  |
-        |  +---------------+  |      |   +-----------------+  |      |  +---------------+  |
-        |                     |      |           |            |      |                     |
-        +---------------------+      |   +-----------------+  |      +---------------------+
-                                     |   |                 |  |
-                                     |   | Self-Healing    |  |
-                                     |   | Orchestrator    |  |
-                                     |   |                 |  |
-                                     |   +-----------------+  |
-                                     |                        |
-                                     +------------------------+
-        ```
+    # Resource usage over time chart (simulated)
+    if st.session_state.performance_metrics:
+        st.subheader("Resource Usage Over Time")
         
-        The SyncService consists of several key components:
+        # Prepare data
+        timestamps = [i for i in range(len(st.session_state.performance_metrics))]
+        cpu_values = [m.get("system_resources", {}).get("cpu_percent", 0) for m in st.session_state.performance_metrics]
+        memory_values = [m.get("system_resources", {}).get("memory_percent", 0) for m in st.session_state.performance_metrics]
+        disk_values = [m.get("system_resources", {}).get("disk_io_percent", 0) for m in st.session_state.performance_metrics]
         
-        1. **Change Detector** - Monitors the PACS system for changes in property data
-        2. **Data Transformer** - Converts PACS data format to CAMA format with enrichment
-        3. **Data Validator** - Ensures data integrity and consistency
-        4. **Self-Healing Orchestrator** - Manages the sync process and handles errors
+        # Create dataframe
+        df = pd.DataFrame({
+            "Time": timestamps,
+            "CPU Usage (%)": cpu_values,
+            "Memory Usage (%)": memory_values,
+            "Disk I/O (%)": disk_values
+        })
         
-        The service supports both **full** and **incremental** synchronization modes.
-        """)
-    
-    # Component details
-    with st.expander("Component Details", expanded=False):
-        st.markdown("""
-        ### Change Detector
-        - Monitors changes in the source PACS system through CDC (Change Data Capture)
-        - Identifies new, updated, and deleted records
-        - Optimizes change detection with timestamp-based tracking
-        
-        ### Data Transformer
-        - Maps fields between source and target schemas
-        - Transforms data formats (e.g., date formats, number formats)
-        - Enriches data with AI-driven valuation insights
-        - Handles nested data structures
-        
-        ### Data Validator
-        - Validates data against business rules
-        - Ensures referential integrity
-        - Performs range checks and format validation
-        - Identifies potential data quality issues
-        
-        ### Self-Healing Orchestrator
-        - Manages the overall sync process
-        - Handles error recovery and retries
-        - Maintains sync state and transaction consistency
-        - Provides monitoring and alerting
-        """)
-    
-    # API endpoints
-    with st.expander("API Endpoints", expanded=False):
-        st.markdown("""
-        The SyncService exposes the following API endpoints:
-        
-        - `POST /sync/full` - Perform a full sync of all data
-        - `POST /sync/incremental` - Perform an incremental sync of changes
-        - `GET /sync/status` - Get current sync status and history
-        - `GET /health` - Check API health
-        
-        See the API documentation for details on request/response formats.
-        """)
+        # Create chart
+        fig = px.line(df, x="Time", y=["CPU Usage (%)", "Memory Usage (%)", "Disk I/O (%)"],
+                     title="Resource Usage Over Time")
+        fig.update_layout(height=400, legend_title="Resource")
+        st.plotly_chart(fig, use_container_width=True)
 
+with tab2:
+    st.header("Database Performance")
+    
+    # Get current database metrics
+    db_metrics = metrics.get("database", {}).get("metrics", {})
+    source_metrics = db_metrics.get("source", {})
+    target_metrics = db_metrics.get("target", {})
+    
+    # Create columns for source and target
+    st.subheader("Database Health Status")
+    db_col1, db_col2 = st.columns(2)
+    
+    with db_col1:
+        st.markdown("#### Source Database (PACS)")
+        source_cpu = source_metrics.get("cpu_utilization", 0)
+        source_memory = source_metrics.get("memory_utilization", 0)
+        source_health = metrics.get("interpretation", {}).get("source_db_health", "healthy")
+        
+        s_col1, s_col2 = st.columns(2)
+        with s_col1:
+            st.markdown(create_metric_card(
+                "CPU Utilization", 
+                f"{source_cpu:.1f}", 
+                unit="%", 
+                health_status=source_health
+            ), unsafe_allow_html=True)
+        with s_col2:
+            st.markdown(create_metric_card(
+                "Memory Utilization", 
+                f"{source_memory:.1f}", 
+                unit="%", 
+                health_status=source_health
+            ), unsafe_allow_html=True)
+            
+        # Additional metrics for advanced view
+        if show_advanced:
+            s_col3, s_col4 = st.columns(2)
+            with s_col3:
+                query_time = source_metrics.get("avg_query_time_ms", 0)
+                st.markdown(create_metric_card(
+                    "Average Query Time", 
+                    f"{query_time:.2f}", 
+                    unit="ms"
+                ), unsafe_allow_html=True)
+            with s_col4:
+                active_connections = source_metrics.get("active_connections", 0)
+                st.markdown(create_metric_card(
+                    "Active Connections", 
+                    f"{active_connections}"
+                ), unsafe_allow_html=True)
+    
+    with db_col2:
+        st.markdown("#### Target Database (CAMA)")
+        target_cpu = target_metrics.get("cpu_utilization", 0)
+        target_memory = target_metrics.get("memory_utilization", 0)
+        target_health = metrics.get("interpretation", {}).get("target_db_health", "healthy")
+        
+        t_col1, t_col2 = st.columns(2)
+        with t_col1:
+            st.markdown(create_metric_card(
+                "CPU Utilization", 
+                f"{target_cpu:.1f}", 
+                unit="%", 
+                health_status=target_health
+            ), unsafe_allow_html=True)
+        with t_col2:
+            st.markdown(create_metric_card(
+                "Memory Utilization", 
+                f"{target_memory:.1f}", 
+                unit="%", 
+                health_status=target_health
+            ), unsafe_allow_html=True)
+            
+        # Additional metrics for advanced view
+        if show_advanced:
+            t_col3, t_col4 = st.columns(2)
+            with t_col3:
+                query_time = target_metrics.get("avg_query_time_ms", 0)
+                st.markdown(create_metric_card(
+                    "Average Query Time", 
+                    f"{query_time:.2f}", 
+                    unit="ms"
+                ), unsafe_allow_html=True)
+            with t_col4:
+                active_connections = target_metrics.get("active_connections", 0)
+                st.markdown(create_metric_card(
+                    "Active Connections", 
+                    f"{active_connections}"
+                ), unsafe_allow_html=True)
+    
+    # Risk factors
+    risk_factors = metrics.get("interpretation", {}).get("risk_factors", [])
+    if risk_factors:
+        st.subheader("Risk Factors")
+        for risk in risk_factors:
+            st.warning(risk)
+            
+    # Recommendations
+    recommendations = metrics.get("database", {}).get("recommendations", [])
+    if recommendations:
+        st.subheader("Performance Recommendations")
+        for rec in recommendations:
+            st.info(f"{rec.get('description')} (Priority: {rec.get('severity', 'low')})")
 
-def add_sync_service_tab():
-    """
-    Add the SyncService tab to the main application.
-    """
-    return render_sync_service_tab
+with tab3:
+    st.header("Batch Processing Optimization")
+    
+    # Get batch configuration and metrics
+    batch_metrics = metrics.get("batch_processing", {})
+    optimal_batch_sizes = metrics.get("optimal_batch_sizes", {}).get("optimal_batch_sizes", {})
+    
+    # Display optimal batch sizes
+    st.subheader("Optimal Batch Sizes by Operation Type")
+    
+    # Create a bar chart for optimal batch sizes
+    if optimal_batch_sizes:
+        operation_types = list(optimal_batch_sizes.keys())
+        batch_sizes = list(optimal_batch_sizes.values())
+        
+        df = pd.DataFrame({
+            "Operation Type": operation_types,
+            "Optimal Batch Size": batch_sizes
+        })
+        
+        fig = px.bar(df, x="Operation Type", y="Optimal Batch Size",
+                    title="Optimal Batch Sizes by Operation Type",
+                    color="Optimal Batch Size",
+                    color_continuous_scale=px.colors.sequential.Viridis)
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No batch size optimization data available yet. Run a sync operation to generate this data.")
+    
+    # Display batch adjustment explanations
+    adjustment_explanations = metrics.get("optimal_batch_sizes", {}).get("adjustment_explanations", [])
+    if adjustment_explanations:
+        st.subheader("Batch Size Adjustment Logic")
+        for explanation in adjustment_explanations:
+            st.info(explanation)
+    
+    # Advanced batch metrics
+    if show_advanced and batch_metrics:
+        st.subheader("Batch Processing Performance")
+        
+        a_col1, a_col2, a_col3 = st.columns(3)
+        
+        with a_col1:
+            processing_rate = batch_metrics.get("processing_rate", 0)
+            st.markdown(create_metric_card(
+                "Processing Rate", 
+                f"{processing_rate:.2f}", 
+                unit="records/sec"
+            ), unsafe_allow_html=True)
+            
+        with a_col2:
+            avg_batch_duration = batch_metrics.get("avg_batch_duration", 0)
+            st.markdown(create_metric_card(
+                "Average Batch Duration", 
+                f"{avg_batch_duration:.2f}", 
+                unit="seconds"
+            ), unsafe_allow_html=True)
+            
+        with a_col3:
+            avg_batch_size = batch_metrics.get("avg_batch_size", 0)
+            st.markdown(create_metric_card(
+                "Average Batch Size", 
+                f"{avg_batch_size:.0f}", 
+                unit="records"
+            ), unsafe_allow_html=True)
+
+# Sync History Section
+st.header("Sync Operation History")
+
+if st.session_state.sync_history:
+    for i, history_item in enumerate(reversed(st.session_state.sync_history)):
+        with st.expander(f"{history_item['type']} - {history_item['timestamp']}", expanded=(i==0)):
+            h_col1, h_col2, h_col3 = st.columns(3)
+            
+            with h_col1:
+                st.metric("Records Processed", history_item.get("records_processed", 0))
+                
+            with h_col2:
+                status = "✅ Success" if history_item.get("success", False) else "❌ Failed"
+                st.write("Status:", status)
+                
+            with h_col3:
+                if "performance" in history_item and "batch_processing_rate" in history_item["performance"]:
+                    st.metric("Processing Rate", f"{history_item['performance']['batch_processing_rate']:.2f} records/sec")
+                    
+            if "performance" in history_item and show_advanced:
+                st.write("Optimal batch size for next sync:", history_item["performance"].get("optimal_batch_size", "N/A"))
+else:
+    st.info("No sync operations have been performed yet.")
+
+# Refresh data
+if st.button("Refresh Metrics"):
+    st.session_state.performance_metrics.append(
+        st.session_state.sync_service.get_performance_metrics()
+    )
+    st.rerun()
