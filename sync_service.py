@@ -7008,25 +7008,25 @@ class RepositoryPerformanceMonitor:
         if execution_time_ms > metrics.get("max_execution_time_ms", 0):
             metrics["max_execution_time_ms"] = execution_time_ms
     
-    def simulate_system_metrics(self, db_type: str) -> None:
+    def simulate_system_metrics(self, repo_type: str) -> None:
         """
         Simulate system-level metrics for demo purposes
         
         Args:
-            db_type: "source" or "target"
+            repo_type: "source" or "target"
         """
-        if db_type not in self.current_metrics:
+        if repo_type not in self.current_metrics:
             return
             
-        metrics = self.current_metrics[db_type]
+        metrics = self.current_metrics[repo_type]
         
-        # Simulate CPU, memory, and IO based on query activity
-        query_activity = min(100, metrics["operations_executed"] * 2)
+        # Simulate CPU, memory, and IO based on operation activity
+        operation_activity = min(100, metrics.get("operations_executed", 0) * 2)
         
         # Generate realistic metrics
-        metrics["cpu_utilization"] = min(90, 30 + query_activity / 3 + random.randint(-5, 5))
-        metrics["memory_utilization"] = min(90, 40 + query_activity / 4 + random.randint(-3, 3))
-        metrics["io_operations"] = metrics["operations_executed"] * 3 + metrics["rows_processed"] / 10
+        metrics["cpu_utilization"] = min(90, 30 + operation_activity / 3 + random.randint(-5, 5))
+        metrics["memory_utilization"] = min(90, 40 + operation_activity / 4 + random.randint(-3, 3))
+        metrics["io_operations"] = metrics.get("operations_executed", 0) * 3 + metrics.get("rows_processed", 0) / 10
     
     def get_performance_summary(self) -> Dict[str, Any]:
         """
@@ -7055,53 +7055,53 @@ class RepositoryPerformanceMonitor:
         """
         recommendations = []
         
-        # Source database recommendations
+        # Source repository recommendations
         source_metrics = self.current_metrics["source"]
-        if source_metrics.get("max_query_time_ms", 0) > 1000:
+        if source_metrics.get("max_execution_time_ms", 0) > 1000:
             recommendations.append({
-                "database": "source",
-                "type": "query_optimization",
+                "repository": "source",
+                "type": "operation_optimization",
                 "severity": "high",
-                "description": "Long-running queries detected in source database",
-                "action": "Analyze slow queries and optimize with appropriate indexes"
+                "description": "Long-running operations detected in source repository",
+                "action": "Analyze slow operations and optimize with appropriate indexes"
             })
             
         if source_metrics.get("cpu_utilization", 0) > 80:
             recommendations.append({
-                "database": "source",
+                "repository": "source",
                 "type": "resource_allocation",
                 "severity": "high",
-                "description": "High CPU utilization in source database",
-                "action": "Increase CPU allocation or optimize query execution"
+                "description": "High CPU utilization in source repository",
+                "action": "Increase CPU allocation or optimize execution patterns"
             })
             
-        # Target database recommendations  
+        # Target repository recommendations  
         target_metrics = self.current_metrics["target"]
         if target_metrics.get("io_operations", 0) > 1000:
             recommendations.append({
-                "database": "target",
+                "repository": "target",
                 "type": "io_optimization",
                 "severity": "medium",
-                "description": "High I/O operations detected in target database",
+                "description": "High I/O operations detected in target repository",
                 "action": "Consider batch operations and optimize write patterns"
             })
             
-        if source_metrics.get("avg_query_time_ms", 0) > 500:
+        if source_metrics.get("avg_execution_time_ms", 0) > 500:
             recommendations.append({
-                "database": "source",
+                "repository": "source",
                 "type": "index_recommendation",
                 "severity": "medium",
-                "description": "Queries average execution time is high",
-                "action": "Add indexes on frequently queried columns"
+                "description": "Operations average execution time is high",
+                "action": "Add indexes on frequently accessed data"
             })
             
         # General recommendations
         if len(self.metrics_history["source"]) >= 3:
             recommendations.append({
-                "database": "both",
+                "repository": "both",
                 "type": "sync_schedule",
                 "severity": "low",
-                "description": "Consider optimizing sync schedule based on database load",
+                "description": "Consider optimizing sync schedule based on repository load",
                 "action": "Schedule syncs during low-activity periods"
             })
             
@@ -7119,33 +7119,46 @@ class RepositoryPerformanceMonitor:
             "target": {}
         }
         
-        for db_type in ["source", "target"]:
-            if len(self.metrics_history[db_type]) < 2:
+        for repo_type in ["source", "target"]:
+            if len(self.metrics_history[repo_type]) < 2:
                 continue
                 
             # Analyze last 5 samples or all if less than 5
-            samples = self.metrics_history[db_type][-5:]
+            samples = self.metrics_history[repo_type][-5:]
             
             # Extract metrics for trending
             cpu_trend = [s.get("cpu_utilization", 0) for s in samples]
-            query_time_trend = [s.get("avg_query_time_ms", 0) for s in samples]
+            execution_time_trend = [s.get("avg_execution_time_ms", 0) for s in samples]
             
             # Calculate trends (positive = increasing, negative = decreasing)
             if len(cpu_trend) >= 2:
-                trends[db_type]["cpu_trend"] = self._calculate_trend(cpu_trend)
+                trends[repo_type]["cpu_trend"] = self._calculate_trend(cpu_trend)
             
-            if len(query_time_trend) >= 2:
-                trends[db_type]["query_time_trend"] = self._calculate_trend(query_time_trend)
+            if len(execution_time_trend) >= 2:
+                trends[repo_type]["execution_time_trend"] = self._calculate_trend(execution_time_trend)
                 
             # Add qualitative assessment
-            trends[db_type]["performance_trend"] = "stable"
-            if db_type in trends and "query_time_trend" in trends[db_type]:
-                if trends[db_type]["query_time_trend"] > 0.1:
-                    trends[db_type]["performance_trend"] = "degrading"
-                elif trends[db_type]["query_time_trend"] < -0.1:
-                    trends[db_type]["performance_trend"] = "improving"
+            trends[repo_type]["performance_trend"] = "stable"
+            if repo_type in trends and "execution_time_trend" in trends[repo_type]:
+                if trends[repo_type]["execution_time_trend"] > 0.1:
+                    trends[repo_type]["performance_trend"] = "degrading"
+                elif trends[repo_type]["execution_time_trend"] < -0.1:
+                    trends[repo_type]["performance_trend"] = "improving"
         
         return trends
+        
+    def get_current_metrics(self) -> Dict[str, Any]:
+        """
+        Get current performance metrics
+        
+        Returns:
+            Dictionary with current metrics for source and target repositories
+        """
+        # Ensure we have some metrics to return by simulating if needed
+        self.simulate_system_metrics("source")
+        self.simulate_system_metrics("target")
+        
+        return self.current_metrics
     
     def _calculate_trend(self, values: List[float]) -> float:
         """
