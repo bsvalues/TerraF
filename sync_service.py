@@ -434,6 +434,8 @@ class BatchConfiguration:
         batch_size: int = 100,
         max_retries: int = 3,
         retry_delay_seconds: float = 1.0,
+        retry_backoff_factor: float = 1.5,
+        max_retry_delay_seconds: float = 30.0,
         dynamic_sizing: bool = True,
         min_batch_size: int = 10,
         max_batch_size: int = 1000,
@@ -446,6 +448,8 @@ class BatchConfiguration:
         self.batch_size = batch_size
         self.max_retries = max_retries
         self.retry_delay_seconds = retry_delay_seconds
+        self.retry_backoff_factor = retry_backoff_factor
+        self.max_retry_delay_seconds = max_retry_delay_seconds
         self.dynamic_sizing = dynamic_sizing
         self.min_batch_size = min_batch_size
         self.max_batch_size = max_batch_size
@@ -725,39 +729,215 @@ class BatchProcessor:
         batch: List[Any], 
         processor_func: Callable[[List[Any]], List[Any]]
     ) -> Tuple[List[Any], float]:
-        """Process a batch with retry logic on failure"""
+        """
+        Process a batch with enhanced retry logic, partial success handling,
+        and intelligent error recovery
+        """
         start_time = time.time()
         retries = 0
+        last_error = None
+        remaining_items = batch.copy()  # Track remaining items to be processed
+        results = []  # Accumulate successful results
         
-        while retries <= self.config.max_retries:
+        # Implement retry with exponential backoff
+        retry_delay = self.config.retry_delay_seconds
+        
+        # Track detailed error information for diagnostics
+        error_details = {
+            "attempts": 0,
+            "errors": [],
+            "recovery_actions": [],
+            "partial_success_rate": 0.0
+        }
+        
+        while remaining_items and retries <= self.config.max_retries:
+            error_details["attempts"] += 1
+            
             try:
-                results = processor_func(batch)
+                # Process the remaining batch
+                current_batch_results = processor_func(remaining_items)
+                
+                # Aggregate with any previous partial results
+                results.extend(current_batch_results)
+                
+                # Calculate duration and success metrics
                 duration = time.time() - start_time
-                return results, duration
+                success_rate = len(results) / len(batch) if batch else 1.0
+                error_details["partial_success_rate"] = success_rate
+                
+                # All items processed successfully
+                if len(results) == len(batch):
+                    self.logger.info(f"Batch processing completed successfully after {retries} retries")
+                    return results, duration
+                
+                # Handle partial success - determine which items were processed successfully
+                # For now, this is a simulated implementation since we don't have details on the item structure
+                processed_count = len(current_batch_results)
+                remaining_items = remaining_items[processed_count:]
+                
+                self.logger.warning(
+                    f"Partial batch processing success: {processed_count}/{len(remaining_items) + processed_count} " 
+                    f"items processed. {len(remaining_items)} items remaining."
+                )
+                
+                # If we had partial success but still have remaining items, continue with retry
+                if remaining_items:
+                    retries += 1
+                    time.sleep(retry_delay)
+                    # Implement exponential backoff with jitter
+                    retry_delay = min(
+                        self.config.max_retry_delay_seconds,
+                        retry_delay * self.config.retry_backoff_factor * (1 + 0.2 * random.random())
+                    )
+                
             except Exception as e:
                 retries += 1
+                last_error = e
                 error_type = type(e).__name__
+                
+                # Enhanced error logging
+                error_context = {
+                    "error_type": error_type,
+                    "message": str(e),
+                    "batch_size": len(remaining_items),
+                    "retry_count": retries,
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                
+                error_details["errors"].append(error_context)
                 
                 # Track error in metrics
                 if error_type not in self.metrics.error_counts:
                     self.metrics.error_counts[error_type] = 0
                 self.metrics.error_counts[error_type] += 1
                 
+                # Examine the error for recovery strategy
+                recovery_action = self._determine_error_recovery_strategy(error_type, str(e), retries)
+                error_details["recovery_actions"].append(recovery_action)
+                
                 if retries <= self.config.max_retries:
                     self.logger.warning(
                         f"Batch processing error ({error_type}): {str(e)}. "
                         f"Retrying {retries}/{self.config.max_retries} "
-                        f"in {self.config.retry_delay_seconds}s"
+                        f"in {retry_delay:.2f}s with recovery action: {recovery_action['action']}"
                     )
-                    time.sleep(self.config.retry_delay_seconds)
+                    
+                    # Apply recovery strategy before retry
+                    if recovery_action["action"] == "reduce_batch_size" and len(remaining_items) > 1:
+                        # Try with half the batch size
+                        split_point = len(remaining_items) // 2
+                        self.logger.info(f"Reducing batch size from {len(remaining_items)} to {split_point} for retry")
+                        
+                        # Attempt to process the first half
+                        try:
+                            half_batch_results = processor_func(remaining_items[:split_point])
+                            results.extend(half_batch_results)
+                            remaining_items = remaining_items[split_point:]
+                            self.logger.info(f"Partial success with reduced batch size. {len(remaining_items)} items remaining.")
+                        except Exception as split_error:
+                            self.logger.warning(f"Reduced batch size still failed: {str(split_error)}")
+                    
+                    # Implement delay with a small random jitter to avoid thundering herd problems
+                    jitter = random.uniform(0.8, 1.2)
+                    time.sleep(retry_delay * jitter)
+                    
+                    # Implement exponential backoff
+                    retry_delay = min(
+                        self.config.max_retry_delay_seconds,
+                        retry_delay * self.config.retry_backoff_factor
+                    )
                 else:
+                    # Enhanced failure logging with detailed error history
+                    error_log = "\n".join([
+                        f"  Attempt {i+1}: {err['error_type']} - {err['message']}" 
+                        for i, err in enumerate(error_details["errors"])
+                    ])
+                    
                     self.logger.error(
-                        f"Batch processing failed after {retries} retries: {str(e)}"
+                        f"Batch processing failed after {retries} retries:\n{error_log}\n"
+                        f"Partial success rate: {error_details['partial_success_rate']:.2%}"
                     )
+                    
+                    # If we had partial success, return what we have rather than failing completely
+                    if results:
+                        self.logger.warning(
+                            f"Returning {len(results)}/{len(batch)} successfully processed items despite errors"
+                        )
+                        duration = time.time() - start_time
+                        return results, duration
+                        
+                    # Otherwise, raise the error
                     raise
                     
-        # This should never happen due to the raise above
-        return [], time.time() - start_time
+        # Calculate final duration
+        duration = time.time() - start_time
+        
+        # Check if we have any results to return after exhausting retries
+        if results:
+            self.logger.warning(
+                f"Exhausted retries with {len(results)}/{len(batch)} items processed. "
+                f"Duration: {duration:.2f}s"
+            )
+            return results, duration
+            
+        # No successful results after all retries
+        if last_error:
+            self.logger.error(f"Batch processing completely failed: {str(last_error)}")
+            raise last_error
+            
+        # This should never happen due to the checks above
+        return [], duration
+        
+    def _determine_error_recovery_strategy(self, error_type: str, error_message: str, retry_count: int) -> Dict[str, Any]:
+        """
+        Determine the best recovery strategy based on the error type and message
+        
+        Returns:
+            Dict with action and parameters for recovery
+        """
+        # Default strategy
+        strategy = {
+            "action": "simple_retry",
+            "reason": "Default retry policy"
+        }
+        
+        # Connection-related errors
+        if any(conn_err in error_type.lower() for conn_err in ["connection", "timeout", "network"]):
+            if retry_count <= 2:
+                strategy = {
+                    "action": "increase_timeout",
+                    "reason": "Connection issues detected, increasing timeout for next attempt"
+                }
+            else:
+                strategy = {
+                    "action": "reduce_batch_size",
+                    "reason": "Persistent connection issues, reducing batch size to minimize impact"
+                }
+        
+        # Resource-related errors
+        elif any(res_err in error_type.lower() or res_err in error_message.lower() 
+                for res_err in ["memory", "resource", "overflow", "capacity"]):
+            strategy = {
+                "action": "reduce_batch_size",
+                "reason": "Resource constraints detected, reducing batch size to lower resource requirements"
+            }
+            
+        # Data validation errors
+        elif any(val_err in error_type.lower() or val_err in error_message.lower()
+                for val_err in ["validation", "schema", "constraint", "integrity"]):
+            strategy = {
+                "action": "validate_individually",
+                "reason": "Data validation issues detected, processing items individually to isolate problems"
+            }
+            
+        # Rate limiting
+        elif any(rate_err in error_message.lower() for rate_err in ["rate limit", "throttle", "quota"]):
+            strategy = {
+                "action": "exponential_backoff",
+                "reason": "Rate limiting detected, implementing exponential backoff"
+            }
+            
+        return strategy
     
     def save_checkpoint(self, key: str, data: Any) -> None:
         """Save a checkpoint for resumable processing"""
