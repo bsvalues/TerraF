@@ -134,13 +134,13 @@ sync_type = st.sidebar.selectbox(
 )
 
 # Initialize tables variable
-tables = ["patients"]  # Default to patients table
+tables = ["code_repositories"]  # Default to code repositories
 
 if sync_type == "Selective Sync":
     tables = st.sidebar.multiselect(
-        "Select Tables",
-        ["patients", "appointments", "medical_records", "billing", "insurance"],
-        ["patients"]
+        "Select Repositories",
+        ["code_repositories", "workflow_patterns", "architecture_templates", "code_metrics", "performance_data"],
+        ["code_repositories"]
     )
 
 advanced_options = st.sidebar.expander("Advanced Options")
@@ -149,6 +149,22 @@ with advanced_options:
     dynamic_sizing = st.checkbox("Enable Dynamic Batch Sizing", value=True)
     resource_aware = st.checkbox("Enable Resource-Aware Sizing", value=True)
     adaptive_learning = st.checkbox("Enable Adaptive Learning", value=True)
+    
+# Resource simulation section
+st.sidebar.markdown("### Resource Simulation")
+simulate_load = st.sidebar.checkbox("Simulate System Load", value=False)
+if simulate_load:
+    simulated_cpu = st.sidebar.slider("Simulated CPU Load (%)", 10, 95, 40)
+    simulated_memory = st.sidebar.slider("Simulated Memory Load (%)", 10, 95, 50)
+    simulated_disk_io = st.sidebar.slider("Simulated Disk I/O (%)", 5, 90, 30)
+    
+    # Add description of simulation
+    st.sidebar.markdown("""
+    <div style="font-size: 0.8em; color: #888;">
+    This simulation allows you to test how batch sizes are adjusted under different system loads.
+    Higher values will result in smaller batch sizes to prevent system overload.
+    </div>
+    """, unsafe_allow_html=True)
     
 # Run sync button
 if st.sidebar.button("Run Sync Operation"):
@@ -160,6 +176,15 @@ if st.sidebar.button("Run Sync Operation"):
         "adaptive_learning": adaptive_learning,
         "workload_specific_sizing": True
     }
+    
+    # Add simulated resources if enabled
+    if simulate_load:
+        config["simulated_resources"] = {
+            "cpu_percent": simulated_cpu,
+            "memory_percent": simulated_memory,
+            "disk_io_percent": simulated_disk_io
+        }
+        st.sidebar.info(f"Using simulated load: CPU {simulated_cpu}%, Memory {simulated_memory}%, Disk I/O {simulated_disk_io}%")
     
     # Update the sync service with the new configuration
     st.session_state.sync_service = SyncService(config)
@@ -182,10 +207,30 @@ if st.sidebar.button("Run Sync Operation"):
             "performance": result.get("performance_metrics", {})
         })
         
-        # Get latest performance metrics
-        st.session_state.performance_metrics.append(
-            st.session_state.sync_service.get_performance_metrics()
-        )
+        # Get latest performance metrics with simulation values if enabled
+        metrics = st.session_state.sync_service.get_performance_metrics()
+        
+        # If simulation is enabled, override the system resource values
+        if simulate_load and "system_resources" in metrics:
+            metrics["system_resources"]["cpu_percent"] = simulated_cpu
+            metrics["system_resources"]["memory_percent"] = simulated_memory
+            metrics["system_resources"]["disk_io_percent"] = simulated_disk_io
+            metrics["interpretation"]["system_health"] = st.session_state.sync_service._interpret_system_health(metrics["system_resources"])
+            
+            # Recalculate optimal batch sizes based on simulated resources
+            metrics["optimal_batch_sizes"] = st.session_state.sync_service._calculate_optimal_batch_sizes(
+                metrics["system_resources"], 
+                metrics["database"]
+            )
+            
+            # Add explanation about simulation
+            if "adjustment_explanations" not in metrics["optimal_batch_sizes"]:
+                metrics["optimal_batch_sizes"]["adjustment_explanations"] = []
+            metrics["optimal_batch_sizes"]["adjustment_explanations"].insert(
+                0, f"Batch sizes calculated based on simulated resources: CPU {simulated_cpu}%, Memory {simulated_memory}%, Disk I/O {simulated_disk_io}%"
+            )
+        
+        st.session_state.performance_metrics.append(metrics)
         
         st.success(f"{sync_type} completed successfully!")
 
@@ -196,6 +241,21 @@ st.session_state.show_advanced = show_advanced
 
 # Main content
 st.title("SyncService Performance Dashboard")
+
+# Info box explaining the dashboard
+with st.expander("About this Dashboard", expanded=False):
+    st.markdown("""
+    ### Resource-Aware SyncService Dashboard
+    
+    This dashboard demonstrates the SyncService's advanced resource monitoring and dynamic batch sizing capabilities. The system automatically adjusts batch sizes based on:
+    
+    * **System Resources**: CPU, memory, and disk I/O utilization
+    * **Database Performance**: Query times, connection pools, and database load
+    * **Workload Type**: Different operation types receive specialized batch sizing
+    * **Historical Performance**: Learning from past operations for continuous optimization
+    
+    Try running different sync operations with various configurations to see how the system adapts batch sizes to maintain optimal performance.
+    """)
 
 # Performance Metrics Tabs
 tab1, tab2, tab3 = st.tabs(["System Resources", "Database Performance", "Batch Processing"])
@@ -292,7 +352,7 @@ with tab2:
     db_col1, db_col2 = st.columns(2)
     
     with db_col1:
-        st.markdown("#### Source Database (PACS)")
+        st.markdown("#### Source Repository")
         source_cpu = source_metrics.get("cpu_utilization", 0)
         source_memory = source_metrics.get("memory_utilization", 0)
         source_health = metrics.get("interpretation", {}).get("source_db_health", "healthy")
@@ -331,7 +391,7 @@ with tab2:
                 ), unsafe_allow_html=True)
     
     with db_col2:
-        st.markdown("#### Target Database (CAMA)")
+        st.markdown("#### Target Repository")
         target_cpu = target_metrics.get("cpu_utilization", 0)
         target_memory = target_metrics.get("memory_utilization", 0)
         target_health = metrics.get("interpretation", {}).get("target_db_health", "healthy")
