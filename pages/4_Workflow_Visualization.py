@@ -1052,7 +1052,7 @@ class EmailService {
         // Send email
     }
 }
-    """
+    """)
 }
 
 # Sidebar
