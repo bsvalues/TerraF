@@ -512,7 +512,7 @@ function updateLastLoginTimestamp(userId) {
 }
     """,
     
-    "Data Processing Pipeline": """
+    "Data Processing Pipeline": ("""
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
@@ -724,9 +724,9 @@ if __name__ == "__main__":
     print(f"Training data shape: {result['train_data'].shape}")
     print(f"Testing data shape: {result['test_data'].shape}")
     print(f"Data statistics: {result['statistics']}")
-    """,
+    """),
     
-    "E-commerce Order Processing": """
+    "E-commerce Order Processing": ("""
 class OrderProcessor {
     constructor(orderRepository, paymentService, inventoryService, emailService) {
         this.orderRepository = orderRepository;
