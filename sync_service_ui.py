@@ -133,11 +133,11 @@ sync_type = st.sidebar.selectbox(
     ["Full Sync", "Incremental Sync", "Selective Sync"]
 )
 
-# Initialize tables variable
-tables = ["code_repositories"]  # Default to code repositories
+# Initialize collections variable
+collections = ["code_repositories"]  # Default to code repositories
 
 if sync_type == "Selective Sync":
-    tables = st.sidebar.multiselect(
+    collections = st.sidebar.multiselect(
         "Select Repositories",
         ["code_repositories", "workflow_patterns", "architecture_templates", "code_metrics", "performance_data"],
         ["code_repositories"]
@@ -196,7 +196,7 @@ if st.sidebar.button("Run Sync Operation"):
         elif sync_type == "Incremental Sync":
             result = st.session_state.sync_service.incremental_sync()
         else:  # Selective Sync
-            result = st.session_state.sync_service.selective_sync(tables)
+            result = st.session_state.sync_service.selective_sync(collections)
         
         # Add to history
         st.session_state.sync_history.append({
