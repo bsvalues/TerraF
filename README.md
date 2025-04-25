@@ -1,124 +1,111 @@
-# TerraFusion Code Deep Dive Analyzer
+# TerraFusion AI Platform
 
-A comprehensive AI-powered code analysis platform that performs deep technical dives into codebases with detailed reports on improvement opportunities. Built on a microservices architecture with intelligent agent orchestration, this platform is specifically designed to analyze and optimize the TerraFusion codebase ecosystem.
+An advanced AI-powered code analysis and optimization platform that provides intelligent workflow management through multi-agent AI orchestration and interactive development insights.
+
+![TerraFusion AI Platform](generated-icon.png)
 
 ## Overview
 
-The TerraFusion Code Deep Dive Analyzer is an advanced tool for analyzing code repositories, providing insights into:
+TerraFusion AI Platform integrates advanced AI capabilities from OpenAI and Anthropic to provide comprehensive code analysis, workflow optimization, and development insights. The platform uses a multi-agent architecture where specialized AI agents focus on different aspects of software analysis and optimization.
 
-- **Code Quality**: Code complexity, potential bugs, style issues, and security vulnerabilities
-- **Database Structures**: Database models, potential redundancies, and consolidation opportunities
-- **Modularization**: Dependency analysis, modularization recommendations, and architecture patterns
-- **Agent Readiness**: Evaluation of how well ML components are prepared for AI agent integration
-- **Workflow Patterns**: Analysis of workflow patterns and standardization opportunities
-- **Architecture Analysis**: Deep evaluation of code architecture and design patterns
+## Core Features
 
-## What is TerraFusion?
+- **Sync Service Dashboard**: Monitor and manage synchronization operations with real-time metrics and dynamic batch sizing
+- **Code Analysis Dashboard**: AI-powered analysis of code quality, architecture, performance, and security
+- **Agent Orchestration**: Management interface for specialized AI agents with different capabilities
+- **Workflow Visualization**: Analysis and optimization of code workflows with bottleneck identification
+- **Repository Analysis**: In-depth analysis of entire code repositories to evaluate structure and quality
+- **AI Chat Interface**: Interactive communication with specialized AI agents for development assistance
 
-TerraFusion is a comprehensive code analysis ecosystem that replaces and enhances the older TerraFlow system. While TerraFlow focused on property valuation, TerraFusion focuses exclusively on code analysis, pattern recognition, and architecture optimization, leveraging state-of-the-art AI capabilities to provide deeper insights and assistance to developers.
+## Technologies
 
-## New Feature: AI Agent System
+- **Python & Streamlit**: Interactive web application framework
+- **OpenAI API**: GPT-4o integration for advanced code analysis
+- **Anthropic API**: Claude integration for alternative model capabilities
+- **NetworkX & Plotly**: Graph visualization for code and workflow analysis
+- **Pandas & NumPy**: Data processing and analysis
 
-The application now includes an advanced AI agent system with continuous learning capabilities:
-
-### Agent System Components
-
-1. **Protocol Server**: Central orchestration for agent communication and task management
-2. **Specialized Agents**: 
-   - Code Quality Agents (StyleEnforcer, BugHunter, PerformanceOptimizer, TestCoverage)
-   - Architecture Agents (PatternDetector, DependencyManager)
-   - Database Agents
-   - Documentation Agents
-   - Agent Readiness Agents
-   - Learning Coordinator Agent
-
-3. **Continuous Learning**: A sophisticated system that enables agents to learn from feedback and improve over time
-4. **Agent-to-Agent Protocol**: Communication framework for agents to collaborate, negotiate, and reach consensus
-
-### Enhanced Features
-
-- **Agent-Assisted Analysis**: Get deeper insights with specialized AI agents
-- **Agent Consultation**: Interact directly with expert agents for specific questions
-- **Agent Insights**: Visualized insights from agent analysis
-- **Collaborative Problem Solving**: Multiple agents working together to solve complex problems
-
-## Getting Started
-
-1. Launch the application by running `streamlit run combined_app.py`
-2. Use the tabs in the application to navigate between different features:
-   - **Original Version**: Simple repository analysis with basic features
-   - **Enhanced Version**: Advanced analysis with AI agent capabilities
-
-### Using the Enhanced Version
-
-1. In the Enhanced Version, navigate to the **Agent Orchestration** tab
-2. Choose from the available sample TerraFusion code examples in the dropdown
-3. Click **Analyze Code** to have the AI agents analyze the selected code
-4. Or click **Analyze TerraFusion Sample Repository** to see a full repository analysis
-5. View the detailed analysis with metrics, issues, suggestions, and good practices identified by the AI agents
+## Installation & Setup
 
 ### Prerequisites
 
-- Python 3.8+
-- OpenAI API Key (set as environment variable `OPENAI_API_KEY`)
-- Anthropic API Key (set as environment variable `ANTHROPIC_API_KEY`)
+- Python 3.10+
+- Streamlit
+- OpenAI API key (optional but recommended)
+- Anthropic API key (optional but recommended)
 
-All required Python packages are listed in `pyproject.toml` and can be installed with:
+### Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/username/terrafusion-ai-platform.git
+   cd terrafusion-ai-platform
+   ```
+
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Set up environment variables:
+   ```bash
+   export OPENAI_API_KEY="your_openai_api_key"
+   export ANTHROPIC_API_KEY="your_anthropic_api_key"
+   ```
+
+### Running the Application
+
+Start the Streamlit server:
 
 ```bash
-pip install -r requirements.txt
+streamlit run app.py
 ```
 
-## Implementation
+The application will be available at http://localhost:5000
 
-The implementation follows a comprehensive 12-month plan with these main phases:
+## Module Structure
 
-1. **Foundation**: Protocol server, agent infrastructure, communication framework
-2. **Agent Development**: Specialized agents for different analysis domains
-3. **Integration**: Bringing agents together in a unified system
-4. **Advanced Features**: Enhanced visualization, natural language interfaces
-5. **Ecosystem Development**: External integrations and enterprise features
+- **app.py**: Main application entry point and dashboard
+- **model_interface.py**: Unified interface for AI model interactions
+- **pages/**: Directory containing all specialized dashboard pages
+  - **1_Sync_Service_Dashboard.py**: Sync service monitoring and management
+  - **2_Code_Analysis_Dashboard.py**: Code quality analysis interface
+  - **3_Agent_Orchestration.py**: AI agent management dashboard 
+  - **4_Workflow_Visualization.py**: Workflow analysis and optimization
+  - **5_Repository_Analysis.py**: Code repository analysis
+  - **6_AI_Chat_Interface.py**: Interactive AI chat interface
 
-The system includes continuous learning capabilities where agents:
-- Learn from user feedback
-- Share knowledge with other agents
-- Improve their capabilities over time
-- Develop emergent behaviors through agent-to-agent interactions
+## AI Service Integration
 
-## Technical Components
+The platform integrates both OpenAI and Anthropic APIs for AI capabilities, with automatic fallback between services if one is unavailable. The `ModelInterface` class provides a unified interface for:
 
-- **Protocol Server**: Core infrastructure for agent communication and task orchestration
-- **Agent Base**: Foundation classes for all specialized agents
-- **Specialized Agents**: Domain-specific agent implementations
-- **Continuous Learning**: Knowledge management and model updating
-- **Agent Communication**: Advanced protocols for agent collaboration
+- Text generation
+- Embeddings creation
+- Image analysis
 
-## Microservices Architecture
+## Multi-Agent System
 
-TerraFusion is built on a modern microservices architecture for better scalability, maintainability, and extensibility:
+The platform uses a multi-agent architecture where specialized AI agents focus on different aspects:
 
-- **AI Models Service**: Manages access to AI models (OpenAI, Anthropic) for code analysis
-- **Agent Orchestrator**: Coordinates specialized agents and task allocation
-- **Knowledge Graph Service**: Maintains a graph of code knowledge and relationships
-- **Academic Research Service**: Integrates academic research on code analysis
-- **Multimodal Processing Service**: Handles text, code, and other modalities
-- **Continuous Learning Service**: Manages learning from feedback for model improvement
-- **Neuro-Symbolic Reasoning Service**: Combines neural and symbolic approaches
-- **SDK Service**: Provides developer tools for integration and extension
+- **CodeQualityAgent**: Code quality, style, and readability
+- **ArchitectureAgent**: Software architecture and design patterns
+- **DatabaseAgent**: Database schema and query optimization
+- **DocumentationAgent**: Documentation completeness and quality
+- **SecurityAgent**: Security vulnerability identification
+- **PerformanceAgent**: Performance analysis and optimization
 
-## Services Status Dashboard
+## Deployment
 
-The application includes a service status dashboard that displays the operational status of all microservices:
+The application is configured for deployment on Replit with proper port binding to 0.0.0.0:5000 and headless mode enabled.
 
-- **Active Services**: Currently operational and responding to requests
-- **Failed Services**: Services that are currently unavailable or in an error state
+## License
 
-## Sample Code Examples
+This project is released under the MIT License. See the LICENSE file for details.
 
-The application includes sample TerraFusion code examples to demonstrate the analysis capabilities:
+## Contributing
 
-1. **TerraFusion Data Processor**: Code for processing repository data
-2. **TerraFusion AI Integration**: Code that integrates with AI models for analysis
-3. **TerraFusion Repository Handler**: Code for handling repository cloning and structure analysis
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-These examples showcase the core functionality of TerraFusion and can be analyzed using the AI agents in the Agent Orchestration tab.
+## Support
+
+For support, please open an issue in the GitHub repository or contact the development team.
