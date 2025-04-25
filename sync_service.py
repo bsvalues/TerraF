@@ -428,7 +428,7 @@ class PerformanceMetrics:
 
 
 class BatchConfiguration:
-    """Configuration for batch processing operations"""
+    """Configuration for batch processing operations with advanced dynamic sizing"""
     def __init__(
         self, 
         batch_size: int = 100,
@@ -438,7 +438,10 @@ class BatchConfiguration:
         min_batch_size: int = 10,
         max_batch_size: int = 1000,
         target_batch_duration_seconds: float = 2.0,
-        prioritize_tables: Dict[str, int] = None  # Table name -> priority (lower is higher priority)
+        prioritize_tables: Dict[str, int] = None,  # Table name -> priority (lower is higher priority)
+        adaptive_learning: bool = True,
+        workload_specific_sizing: bool = True,
+        resource_aware_sizing: bool = True
     ):
         self.batch_size = batch_size
         self.max_retries = max_retries
@@ -448,27 +451,150 @@ class BatchConfiguration:
         self.max_batch_size = max_batch_size
         self.target_batch_duration_seconds = target_batch_duration_seconds
         self.prioritize_tables = prioritize_tables or {}
+        self.adaptive_learning = adaptive_learning
+        self.workload_specific_sizing = workload_specific_sizing
+        self.resource_aware_sizing = resource_aware_sizing
         
-    def adjust_batch_size(self, last_duration: float, current_batch_size: int) -> int:
+        # Historical performance tracking for adaptive learning
+        self.performance_history = {
+            "batch_sizes": [],
+            "durations": [],
+            "timestamps": [],
+            "operation_types": [],
+            "resource_metrics": []
+        }
+        
+        # Workload-specific batch size targets
+        self.workload_targets = {
+            "data_transform": 2.0,       # Target seconds for data transformation
+            "data_validation": 1.5,      # Target seconds for data validation
+            "database_write": 3.0,       # Target seconds for database writes
+            "api_request": 1.0,          # Target seconds for API requests
+            "default": 2.0               # Default target seconds
+        }
+        
+        # Adaptive learning parameters
+        self.learning_rate = 0.2         # How quickly to adapt to new performance data
+        self.sample_window_size = 5      # Number of recent samples to consider
+        
+    def adjust_batch_size(
+        self, 
+        last_duration: float, 
+        current_batch_size: int,
+        operation_type: str = "default",
+        resource_metrics: Dict[str, Any] = None
+    ) -> int:
         """
-        Dynamically adjust batch size based on performance
-        to hit the target batch duration.
+        Dynamically adjust batch size based on performance, system resources,
+        workload type, and historical performance data to optimize throughput.
+        
+        Args:
+            last_duration: Duration of the last batch in seconds
+            current_batch_size: Current batch size
+            operation_type: Type of operation being performed (transform, validate, etc.)
+            resource_metrics: Current system resource metrics (optional)
+            
+        Returns:
+            Recommended batch size for the next operation
         """
         if not self.dynamic_sizing:
             return self.batch_size
+        
+        # Record performance data for adaptive learning
+        if self.adaptive_learning:
+            self.performance_history["batch_sizes"].append(current_batch_size)
+            self.performance_history["durations"].append(last_duration)
+            self.performance_history["timestamps"].append(datetime.datetime.now().isoformat())
+            self.performance_history["operation_types"].append(operation_type)
+            self.performance_history["resource_metrics"].append(resource_metrics or {})
             
-        # If we're too slow, decrease batch size
-        if last_duration > self.target_batch_duration_seconds * 1.5:
-            new_size = int(current_batch_size * (self.target_batch_duration_seconds / max(0.001, last_duration)))
-            return max(self.min_batch_size, new_size)
+            # Keep history within window size
+            if len(self.performance_history["batch_sizes"]) > 100:  # Maximum history size
+                self.performance_history["batch_sizes"] = self.performance_history["batch_sizes"][-100:]
+                self.performance_history["durations"] = self.performance_history["durations"][-100:]
+                self.performance_history["timestamps"] = self.performance_history["timestamps"][-100:]
+                self.performance_history["operation_types"] = self.performance_history["operation_types"][-100:]
+                self.performance_history["resource_metrics"] = self.performance_history["resource_metrics"][-100:]
+        
+        # Get target duration based on workload type
+        target_duration = self.target_batch_duration_seconds
+        if self.workload_specific_sizing and operation_type in self.workload_targets:
+            target_duration = self.workload_targets[operation_type]
+        
+        # Apply resource-aware adjustments if available
+        resource_adjustment = 1.0
+        if self.resource_aware_sizing and resource_metrics:
+            # Adjust based on CPU usage
+            cpu_percent = resource_metrics.get("cpu_percent", 0)
+            if cpu_percent > 80:
+                resource_adjustment *= 0.7  # Significantly reduce batch size under high CPU load
+            elif cpu_percent > 60:
+                resource_adjustment *= 0.85  # Moderately reduce batch size under medium CPU load
             
-        # If we're too fast, increase batch size
-        if last_duration < self.target_batch_duration_seconds * 0.75:
-            new_size = int(current_batch_size * (self.target_batch_duration_seconds / max(0.001, last_duration)))
-            return min(self.max_batch_size, new_size)
+            # Adjust based on memory usage
+            memory_percent = resource_metrics.get("memory_percent", 0)
+            if memory_percent > 85:
+                resource_adjustment *= 0.75  # Reduce batch size under high memory pressure
+            elif memory_percent > 70:
+                resource_adjustment *= 0.9  # Slightly reduce batch size under medium memory pressure
             
-        # We're close enough to the target
-        return current_batch_size
+            # Adjust based on I/O pressure if available
+            io_percent = resource_metrics.get("disk_io_percent", 0)
+            if io_percent > 70:
+                resource_adjustment *= 0.8  # Reduce batch size under high I/O pressure
+        
+        # Apply adaptive learning based on recent performance
+        adaptive_adjustment = 1.0
+        if self.adaptive_learning and len(self.performance_history["batch_sizes"]) >= self.sample_window_size:
+            # Calculate performance trend in the recent window
+            recent_sizes = self.performance_history["batch_sizes"][-self.sample_window_size:]
+            recent_durations = self.performance_history["durations"][-self.sample_window_size:]
+            recent_ops = self.performance_history["operation_types"][-self.sample_window_size:]
+            
+            # Only consider same operation type
+            same_op_indices = [i for i, op in enumerate(recent_ops) if op == operation_type]
+            if same_op_indices:
+                same_op_sizes = [recent_sizes[i] for i in same_op_indices]
+                same_op_durations = [recent_durations[i] for i in same_op_indices]
+                
+                # Calculate average records processed per second
+                if same_op_durations:
+                    throughputs = [size / max(0.001, duration) for size, duration in zip(same_op_sizes, same_op_durations)]
+                    avg_throughput = sum(throughputs) / len(throughputs)
+                    
+                    # Calculate optimal batch size to hit target duration
+                    optimal_size = avg_throughput * target_duration
+                    
+                    # Apply learning rate to smooth adjustments
+                    current_throughput = current_batch_size / max(0.001, last_duration)
+                    if current_throughput > 0:
+                        adaptive_adjustment = (
+                            (1 - self.learning_rate) + 
+                            self.learning_rate * (optimal_size / current_batch_size)
+                        )
+        
+        # Calculate base adjustment from current performance
+        if last_duration > target_duration * 1.5:
+            # Too slow - decrease batch size
+            base_adjustment = target_duration / max(0.001, last_duration)
+        elif last_duration < target_duration * 0.75:
+            # Too fast - increase batch size
+            base_adjustment = target_duration / max(0.001, last_duration)
+        else:
+            # Close enough to target - minor adjustment
+            deviation = last_duration / target_duration
+            base_adjustment = 1.0 / max(0.5, min(1.5, deviation))
+        
+        # Combine all adjustment factors
+        combined_adjustment = base_adjustment * resource_adjustment * adaptive_adjustment
+        
+        # Apply combined adjustment to calculate new batch size
+        new_size = int(current_batch_size * combined_adjustment)
+        
+        # Ensure we stay within configured limits
+        new_size = max(self.min_batch_size, min(self.max_batch_size, new_size))
+        
+        return new_size
 
 
 class BatchProcessor:
@@ -492,15 +618,19 @@ class BatchProcessor:
         self, 
         records: List[Any], 
         processor_func: Callable[[List[Any]], List[Any]],
-        table_key: Callable[[Any], str] = None
+        table_key: Callable[[Any], str] = None,
+        operation_type: str = "default",
+        resource_monitor = None
     ) -> List[Any]:
         """
-        Process records in optimized batches
+        Process records in optimized batches with dynamic batch sizing
         
         Args:
             records: List of records to process
             processor_func: Function to process a batch of records
             table_key: Optional function to extract table name for priority
+            operation_type: Type of operation (transform, validate, etc.) for specialized sizing
+            resource_monitor: Optional ResourceMonitor instance for resource-aware batch sizing
             
         Returns:
             List of processed results
@@ -509,7 +639,7 @@ class BatchProcessor:
             return []
             
         self.metrics = PerformanceMetrics()
-        self.metrics.operation_type = "batch_processing"
+        self.metrics.operation_type = operation_type
         
         # Sort by priority if table_key is provided
         if table_key and self.config.prioritize_tables:
@@ -527,27 +657,68 @@ class BatchProcessor:
                 self.logger.warning("Shutdown requested, stopping batch processing")
                 break
                 
+            # Get current resource metrics if available
+            resource_metrics = None
+            if resource_monitor:
+                resource_metrics = resource_monitor.current_metrics
+                
             batch = records[i:i+batch_size]
             batch_results, duration = self._process_batch_with_retry(batch, processor_func)
             results.extend(batch_results)
             
-            # Record metrics and adjust batch size
+            # Record metrics and adjust batch size with enhanced parameters
             self.metrics.record_batch(len(batch), duration)
-            batch_size = self.config.adjust_batch_size(duration, batch_size)
+            batch_size = self.config.adjust_batch_size(
+                last_duration=duration, 
+                current_batch_size=batch_size,
+                operation_type=operation_type,
+                resource_metrics=resource_metrics
+            )
             
+            # Enhanced logging with more details
+            resource_info = ""
+            if resource_metrics:
+                resource_info = (f" (CPU: {resource_metrics.get('cpu_percent', 0):.1f}%, "
+                                 f"Mem: {resource_metrics.get('memory_percent', 0):.1f}%)")
+                
             self.logger.info(
                 f"Processed batch {len(self.metrics.batch_sizes)}: "
                 f"{len(batch)} records in {duration:.2f}s, "
-                f"next batch size: {batch_size}"
+                f"rate: {len(batch)/max(0.001, duration):.1f} records/sec, "
+                f"next batch size: {batch_size}{resource_info}"
             )
             
         self.metrics.complete()
+        
+        # Enhanced completion logging
         self.logger.info(
-            f"Completed batch processing: {self.metrics.records_processed} records "
-            f"at {self.metrics.processing_rate:.2f} records/sec"
+            f"Completed {operation_type} batch processing: {self.metrics.records_processed} records "
+            f"in {self.metrics.total_duration:.2f}s, "
+            f"avg rate: {self.metrics.processing_rate:.2f} records/sec, "
+            f"best batch size: {self._get_optimal_batch_size()}"
         )
         
         return results
+        
+    def _get_optimal_batch_size(self) -> int:
+        """Determine the optimal batch size based on performance metrics"""
+        if not self.metrics.batch_sizes or not self.metrics.batch_durations:
+            return self.config.batch_size
+            
+        # Calculate throughput for each batch
+        throughputs = []
+        for size, duration in zip(self.metrics.batch_sizes, self.metrics.batch_durations):
+            throughput = size / max(0.001, duration)  # records per second
+            throughputs.append((size, throughput))
+            
+        # Sort by throughput (highest first)
+        throughputs.sort(key=lambda x: x[1], reverse=True)
+        
+        # Return the batch size with the highest throughput
+        if throughputs:
+            return throughputs[0][0]
+        
+        return self.config.batch_size
     
     def _process_batch_with_retry(
         self, 
