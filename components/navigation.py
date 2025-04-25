@@ -56,9 +56,28 @@ def get_current_page_name() -> str:
 
 def render_sidebar_navigation():
     """
-    Render the sidebar navigation with the current page highlighted.
+    Render the sidebar navigation with futuristic cyberpunk styling.
     """
-    st.sidebar.markdown("## Navigation")
+    # Add the header with cyberpunk styling
+    st.sidebar.markdown(
+        """
+        <div class="tf-sidebar-header">
+            <h2 class="tf-sidebar-title">TerraFusion AI</h2>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+    
+    # Add the navigation label with cybertech styling
+    st.sidebar.markdown(
+        """
+        <div style="margin-bottom: 1.5rem; color: var(--tf-text-secondary); 
+                    font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px;">
+            Navigation
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
     
     current_page = get_current_page_name()
     
@@ -108,8 +127,16 @@ def render_sidebar_navigation():
                 unsafe_allow_html=True
             )
     
-    # Add a separator
-    st.sidebar.markdown("<hr style='border-color: rgba(0, 229, 255, 0.2); margin: 1.5rem 0;'>", unsafe_allow_html=True)
+    # Add a glowing separator with cyberpunk styling
+    st.sidebar.markdown(
+        """
+        <hr style="border: none; height: 1px; 
+                  background: linear-gradient(to right, 
+                  rgba(98, 0, 234, 0.05), rgba(98, 0, 234, 0.3), rgba(98, 0, 234, 0.05)); 
+                  margin: 2rem 0;">
+        """, 
+        unsafe_allow_html=True
+    )
 
 def render_breadcrumbs(additional_items=None):
     """
@@ -166,12 +193,42 @@ def render_page_header(title, subtitle=None, additional_breadcrumbs=None):
     # Render the breadcrumbs
     render_breadcrumbs(additional_breadcrumbs)
     
-    # Render the title
-    st.markdown(f'<h1 class="tf-page-title">{title}</h1>', unsafe_allow_html=True)
+    # Render the title with cyberpunk styling
+    st.markdown(
+        f'''
+        <div class="tf-header-container">
+            <h1 class="tf-page-title">
+                {title}
+                <span class="tf-title-accent"></span>
+            </h1>
+        </div>
+        ''', 
+        unsafe_allow_html=True
+    )
     
     # Render the subtitle if provided
     if subtitle is not None:
-        st.markdown(f'<p class="sub-header">{subtitle}</p>', unsafe_allow_html=True)
+        st.markdown(
+            f'''
+            <p class="tf-subtitle">
+                {subtitle}
+            </p>
+            ''', 
+            unsafe_allow_html=True
+        )
     
-    # Add a separator
-    st.markdown('<hr style="border-color: rgba(0, 229, 255, 0.2); margin: 1.5rem 0;">', unsafe_allow_html=True)
+    # Add a glowing separator with cyberpunk styling
+    st.markdown(
+        '''
+        <hr style="border: none; height: 1px; 
+                  background: linear-gradient(to right, 
+                  rgba(98, 0, 234, 0.05), 
+                  rgba(98, 0, 234, 0.3), 
+                  var(--tf-accent), 
+                  rgba(98, 0, 234, 0.3),
+                  rgba(98, 0, 234, 0.05)); 
+                  margin: 1.5rem 0; 
+                  box-shadow: 0 0 8px var(--tf-glow);">
+        ''', 
+        unsafe_allow_html=True
+    )
