@@ -220,7 +220,7 @@ if st.sidebar.button("Run Sync Operation"):
             # Recalculate optimal batch sizes based on simulated resources
             metrics["optimal_batch_sizes"] = st.session_state.sync_service._calculate_optimal_batch_sizes(
                 metrics["system_resources"], 
-                metrics["database"]
+                metrics.get("repository", {})
             )
             
             # Add explanation about simulation
@@ -343,15 +343,15 @@ with tab2:
     st.header("Repository Performance")
     
     # Get current repository metrics
-    db_metrics = metrics.get("repository", {}).get("metrics", {})
-    source_metrics = db_metrics.get("source", {})
-    target_metrics = db_metrics.get("target", {})
+    repo_metrics = metrics.get("repository", {}).get("metrics", {})
+    source_metrics = repo_metrics.get("source", {})
+    target_metrics = repo_metrics.get("target", {})
     
     # Create columns for source and target
     st.subheader("Repository Health Status")
-    db_col1, db_col2 = st.columns(2)
+    repo_col1, repo_col2 = st.columns(2)
     
-    with db_col1:
+    with repo_col1:
         st.markdown("#### Source Repository")
         source_cpu = source_metrics.get("cpu_utilization", 0)
         source_memory = source_metrics.get("memory_utilization", 0)
@@ -377,7 +377,7 @@ with tab2:
         if show_advanced:
             s_col3, s_col4 = st.columns(2)
             with s_col3:
-                process_time = source_metrics.get("avg_query_time_ms", 0)
+                process_time = source_metrics.get("avg_process_time_ms", 0)
                 st.markdown(create_metric_card(
                     "Average Process Time", 
                     f"{process_time:.2f}", 
@@ -390,7 +390,7 @@ with tab2:
                     f"{active_connections}"
                 ), unsafe_allow_html=True)
     
-    with db_col2:
+    with repo_col2:
         st.markdown("#### Target Repository")
         target_cpu = target_metrics.get("cpu_utilization", 0)
         target_memory = target_metrics.get("memory_utilization", 0)
@@ -416,7 +416,7 @@ with tab2:
         if show_advanced:
             t_col3, t_col4 = st.columns(2)
             with t_col3:
-                process_time = target_metrics.get("avg_query_time_ms", 0)
+                process_time = target_metrics.get("avg_process_time_ms", 0)
                 st.markdown(create_metric_card(
                     "Average Process Time", 
                     f"{process_time:.2f}", 
