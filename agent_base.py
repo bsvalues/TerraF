@@ -7,27 +7,18 @@ task execution, and continuous learning capabilities.
 """
 
 import os
-import json
 import time
-import uuid
 import logging
+import uuid
 import threading
 import queue
-from typing import Dict, List, Any, Optional, Union, Callable
 from enum import Enum
+from typing import Dict, List, Any, Optional, Union, TypeVar, Generic, Set, NamedTuple, Iterator
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, asdict
 
-# Import protocol server components
-from protocol_server import (
-    ProtocolMessage, MessageType, MessagePriority, AgentIdentity, AgentCategory,
-    Task, FeedbackRecord, LearningUpdate, ModelConfig, get_server
-)
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
 
 class AgentState(Enum):
     """Possible states for an agent"""
@@ -37,6 +28,186 @@ class AgentState(Enum):
     LEARNING = "learning"
     OFFLINE = "offline"
 
+class AgentCategory(Enum):
+    """Categories of agents in the system"""
+    CODE_QUALITY = "code_quality"
+    ARCHITECTURE = "architecture"
+    DATABASE = "database"
+    DOCUMENTATION = "documentation"
+    AGENT_READINESS = "agent_readiness"
+    LEARNING_COORDINATOR = "learning_coordinator"
+    AI_INTEGRATION = "ai_integration"
+
+class MessageType(Enum):
+    """Types of messages that can be exchanged between agents"""
+    REQUEST = "request"
+    RESPONSE = "response"
+    BROADCAST = "broadcast"
+    ALERT = "alert"
+    LEARNING_UPDATE = "learning_update"
+
+class MessagePriority(Enum):
+    """Priority levels for messages"""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+class ProtocolMessage:
+    """
+    Message for agent-to-agent communication.
+    
+    This class represents a message in the agent communication protocol.
+    """
+    def __init__(self, 
+               message_id: str,
+               sender_id: str,
+               recipients: List[str],
+               message_type: MessageType,
+               content: Dict[str, Any],
+               metadata: Optional[Dict[str, Any]] = None,
+               priority: MessagePriority = MessagePriority.MEDIUM,
+               timestamp: Optional[float] = None):
+        """
+        Initialize a new protocol message.
+        
+        Args:
+            message_id: Unique identifier for this message
+            sender_id: ID of the agent sending the message
+            recipients: List of recipient agent IDs
+            message_type: Type of message
+            content: Message content
+            metadata: Optional message metadata
+            priority: Message priority
+            timestamp: Optional message timestamp (defaults to current time)
+        """
+        self.message_id = message_id
+        self.sender_id = sender_id
+        self.recipients = recipients
+        self.message_type = message_type
+        self.content = content
+        self.metadata = metadata or {}
+        self.priority = priority
+        self.timestamp = timestamp or time.time()
+        
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert the message to a dictionary for serialization"""
+        return {
+            "message_id": self.message_id,
+            "sender_id": self.sender_id,
+            "recipients": self.recipients,
+            "message_type": self.message_type.value,
+            "content": self.content,
+            "metadata": self.metadata,
+            "priority": self.priority.value,
+            "timestamp": self.timestamp
+        }
+        
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ProtocolMessage':
+        """Create a message from a dictionary"""
+        return cls(
+            message_id=data["message_id"],
+            sender_id=data["sender_id"],
+            recipients=data["recipients"],
+            message_type=MessageType(data["message_type"]),
+            content=data["content"],
+            metadata=data.get("metadata", {}),
+            priority=MessagePriority(data["priority"]),
+            timestamp=data["timestamp"]
+        )
+
+class Task:
+    """
+    Task assigned to an agent.
+    
+    This class represents a task that can be assigned to and executed by an agent.
+    """
+    def __init__(self,
+               task_id: str,
+               agent_id: str,
+               capability: str,
+               parameters: Dict[str, Any],
+               priority: str = "medium",
+               deadline: Optional[float] = None,
+               created_at: Optional[float] = None):
+        """
+        Initialize a new task.
+        
+        Args:
+            task_id: Unique identifier for this task
+            agent_id: ID of the agent assigned to this task
+            capability: Capability required for this task
+            parameters: Task parameters
+            priority: Task priority
+            deadline: Optional deadline for task completion
+            created_at: Optional task creation timestamp
+        """
+        self.task_id = task_id
+        self.agent_id = agent_id
+        self.capability = capability
+        self.parameters = parameters
+        self.priority = priority
+        self.deadline = deadline
+        self.created_at = created_at or time.time()
+        self.started_at = None
+        self.completed_at = None
+        self.status = "pending"
+        self.result = None
+        self.error = None
+        
+    def start(self):
+        """Mark the task as started"""
+        self.started_at = time.time()
+        self.status = "in_progress"
+        
+    def complete(self, result: Dict[str, Any]):
+        """Mark the task as completed successfully"""
+        self.completed_at = time.time()
+        self.status = "completed"
+        self.result = result
+        
+    def fail(self, error: str):
+        """Mark the task as failed"""
+        self.completed_at = time.time()
+        self.status = "failed"
+        self.error = error
+        
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert the task to a dictionary for serialization"""
+        return {
+            "task_id": self.task_id,
+            "agent_id": self.agent_id,
+            "capability": self.capability,
+            "parameters": self.parameters,
+            "priority": self.priority,
+            "deadline": self.deadline,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "status": self.status,
+            "result": self.result,
+            "error": self.error
+        }
+        
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Task':
+        """Create a task from a dictionary"""
+        task = cls(
+            task_id=data["task_id"],
+            agent_id=data["agent_id"],
+            capability=data["capability"],
+            parameters=data["parameters"],
+            priority=data["priority"],
+            deadline=data.get("deadline"),
+            created_at=data["created_at"]
+        )
+        task.started_at = data.get("started_at")
+        task.completed_at = data.get("completed_at")
+        task.status = data["status"]
+        task.result = data.get("result")
+        task.error = data.get("error")
+        return task
 
 class Agent(ABC):
     """
@@ -61,357 +232,211 @@ class Agent(ABC):
         self.capabilities = capabilities
         self.preferred_model = preferred_model
         
-        # State management
         self.state = AgentState.INITIALIZING
-        self._state_lock = threading.Lock()
-        
-        # Communication
-        self.server = get_server()
         self.inbox = queue.Queue()
         self.outbox = queue.Queue()
+        self.task_queue = queue.Queue()
+        self.current_tasks = {}
+        self.task_history = {}
         
-        # Task management
-        self.current_tasks: Dict[str, Task] = {}
-        self.task_history: Dict[str, Dict[str, Any]] = {}
+        self.running = False
+        self.worker_thread = None
+        self.message_handler_thread = None
+        self.heartbeat_thread = None
         
-        # Learning system
-        self.knowledge_base: Dict[str, Any] = {}
-        self.learned_patterns: List[Dict[str, Any]] = []
+        self.logger = logging.getLogger(f"Agent-{agent_id}")
         
-        # Threading
-        self._should_stop = threading.Event()
-        self._worker_thread = None
-        self._message_handler_thread = None
-        self._heartbeat_thread = None
-    
     def start(self):
         """Start the agent's processing threads"""
-        # Register with protocol server
-        self._register_with_server()
-        
-        # Start worker thread
-        self._worker_thread = threading.Thread(target=self._worker_loop)
-        self._worker_thread.daemon = True
-        self._worker_thread.start()
-        
-        # Start message handler thread
-        self._message_handler_thread = threading.Thread(target=self._message_handler_loop)
-        self._message_handler_thread.daemon = True
-        self._message_handler_thread.start()
-        
-        # Start heartbeat thread
-        self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop)
-        self._heartbeat_thread.daemon = True
-        self._heartbeat_thread.start()
-        
-        # Change state to idle
+        if self.running:
+            return
+            
+        self.running = True
         self._update_state(AgentState.IDLE)
         
-        logger.info(f"Agent {self.agent_id} started")
+        # Start worker thread
+        self.worker_thread = threading.Thread(target=self._worker_loop)
+        self.worker_thread.daemon = True
+        self.worker_thread.start()
+        
+        # Start message handler thread
+        self.message_handler_thread = threading.Thread(target=self._message_handler_loop)
+        self.message_handler_thread.daemon = True
+        self.message_handler_thread.start()
+        
+        # Start heartbeat thread
+        self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop)
+        self.heartbeat_thread.daemon = True
+        self.heartbeat_thread.start()
+        
+        self.logger.info(f"Agent {self.agent_id} started")
     
     def stop(self):
         """Stop the agent's processing threads"""
-        logger.info(f"Stopping agent {self.agent_id}")
-        self._should_stop.set()
-        
-        # Wait for threads to terminate
-        if self._worker_thread:
-            self._worker_thread.join(timeout=2.0)
-        
-        if self._message_handler_thread:
-            self._message_handler_thread.join(timeout=2.0)
-        
-        if self._heartbeat_thread:
-            self._heartbeat_thread.join(timeout=2.0)
-        
-        # Change state to offline
+        if not self.running:
+            return
+            
+        self.running = False
         self._update_state(AgentState.OFFLINE)
         
-        logger.info(f"Agent {self.agent_id} stopped")
-    
-    def _register_with_server(self):
-        """Register this agent with the protocol server"""
-        from protocol_server import AgentConfig
-        
-        # Create agent configuration
-        agent_config = AgentConfig(
-            agent_id=self.agent_id,
-            agent_type=self.agent_type,
-            capabilities=self.capabilities,
-            preferred_model=self.preferred_model,
-            active=True,
-            max_concurrent_tasks=self._get_max_concurrent_tasks()
-        )
-        
-        # Register with server
-        self.server.register_agent(agent_config)
-    
-    def _get_max_concurrent_tasks(self) -> int:
-        """Get the maximum number of concurrent tasks this agent can handle"""
-        # Override this in subclasses if needed
-        return 1
+        # Wait for threads to terminate
+        if self.worker_thread:
+            self.worker_thread.join(timeout=1.0)
+            
+        if self.message_handler_thread:
+            self.message_handler_thread.join(timeout=1.0)
+            
+        if self.heartbeat_thread:
+            self.heartbeat_thread.join(timeout=1.0)
+            
+        self.logger.info(f"Agent {self.agent_id} stopped")
     
     def _update_state(self, new_state: AgentState):
         """Update the agent's state and notify the server"""
-        with self._state_lock:
-            old_state = self.state
-            self.state = new_state
-            
-            # If state has changed, notify server
-            if old_state != new_state:
-                self._send_status_update()
+        self.state = new_state
+        self._send_status_update()
     
     def _send_status_update(self):
         """Send a status update to the server"""
-        identity = AgentIdentity(
-            agent_id=self.agent_id,
-            agent_type=self.agent_type.value,
-            capabilities=self.capabilities,
-            status=self.state.value
-        )
-        
-        message = ProtocolMessage(
-            sender=identity,
-            recipients=["orchestrator"],
-            message_type=MessageType.STATUS_UPDATE,
-            priority=MessagePriority.LOW,
-            content={"status": self.state.value},
-            metadata={}
-        )
-        
-        self.server.send_message(message)
+        # In a real implementation, this would communicate with a server
+        # For this demo, we just log the status change
+        self.logger.info(f"Agent {self.agent_id} state updated to {self.state.value}")
     
     def _send_heartbeat(self):
         """Send a heartbeat to the server to indicate the agent is still alive"""
-        identity = AgentIdentity(
-            agent_id=self.agent_id,
-            agent_type=self.agent_type.value,
-            capabilities=self.capabilities,
-            status=self.state.value
-        )
-        
-        message = ProtocolMessage(
-            sender=identity,
-            recipients=["orchestrator"],
-            message_type=MessageType.STATUS_UPDATE,
-            priority=MessagePriority.LOW,
-            content={"heartbeat": time.time()},
-            metadata={}
-        )
-        
-        self.server.send_message(message)
+        # In a real implementation, this would communicate with a server
+        # For this demo, we just log the heartbeat periodically
+        self.logger.debug(f"Agent {self.agent_id} heartbeat")
     
     def _worker_loop(self):
         """Main worker loop that processes the agent's tasks"""
-        while not self._should_stop.is_set():
+        while self.running:
             try:
-                # Check for tasks from the protocol server
+                # Check for and process tasks
                 self._check_for_new_tasks()
-                
-                # Process any current tasks
                 self._process_current_tasks()
                 
-                # Sleep briefly to prevent CPU spinning
+                # Sleep to avoid busy waiting
                 time.sleep(0.1)
-            
             except Exception as e:
-                logger.error(f"Error in worker loop for agent {self.agent_id}: {str(e)}")
-                # Sleep longer after an error
-                time.sleep(1.0)
+                self.logger.error(f"Error in worker loop: {str(e)}")
     
     def _message_handler_loop(self):
         """Loop for processing incoming messages"""
-        while not self._should_stop.is_set():
+        while self.running:
             try:
-                # Check for new messages
+                # Check for and process messages
                 self._check_for_new_messages()
-                
-                # Process messages in the inbox
                 self._process_inbox()
-                
-                # Send messages in the outbox
                 self._process_outbox()
                 
-                # Sleep briefly to prevent CPU spinning
+                # Sleep to avoid busy waiting
                 time.sleep(0.1)
-            
             except Exception as e:
-                logger.error(f"Error in message handler loop for agent {self.agent_id}: {str(e)}")
-                # Sleep longer after an error
-                time.sleep(1.0)
+                self.logger.error(f"Error in message handler loop: {str(e)}")
     
     def _heartbeat_loop(self):
         """Loop for sending periodic heartbeats"""
-        while not self._should_stop.is_set():
+        while self.running:
             try:
                 # Send heartbeat
                 self._send_heartbeat()
                 
-                # Sleep for a longer period (heartbeats don't need to be frequent)
-                time.sleep(30.0)
-            
+                # Sleep for heartbeat interval
+                time.sleep(10.0)
             except Exception as e:
-                logger.error(f"Error in heartbeat loop for agent {self.agent_id}: {str(e)}")
-                # Sleep shorter after an error to retry sooner
-                time.sleep(5.0)
+                self.logger.error(f"Error in heartbeat loop: {str(e)}")
     
     def _check_for_new_messages(self):
         """Check for new messages from the protocol server"""
-        # Get next message from the server
-        message = self.server.message_broker.get_next_message(self.agent_id)
-        
-        if message:
-            # Add to inbox for processing
-            self.inbox.put(message)
+        # In a real implementation, this would retrieve messages from a server
+        # For this demo, messages are added to the inbox directly
+        pass
     
     def _process_inbox(self):
         """Process messages in the inbox"""
-        if self.inbox.empty():
-            return
-        
         try:
-            # Get next message from inbox
-            message = self.inbox.get_nowait()
-            
-            # Process based on message type
-            if message.message_type == MessageType.REQUEST:
-                self._handle_request(message)
-            
-            elif message.message_type == MessageType.RESPONSE:
-                self._handle_response(message)
-            
-            elif message.message_type == MessageType.LEARNING_UPDATE:
-                self._handle_learning_update(message)
-            
-            elif message.message_type == MessageType.BROADCAST:
-                self._handle_broadcast(message)
-            
-            elif message.message_type == MessageType.ALERT:
-                self._handle_alert(message)
-            
-            # Mark message as processed
-            self.inbox.task_done()
-        
-        except queue.Empty:
-            pass
+            # Process up to 10 messages per iteration to avoid blocking
+            for _ in range(10):
+                # Get a message from the inbox (non-blocking)
+                try:
+                    message = self.inbox.get(block=False)
+                except queue.Empty:
+                    break
+                    
+                # Process the message based on its type
+                if message.message_type == MessageType.REQUEST:
+                    self._handle_request(message)
+                elif message.message_type == MessageType.RESPONSE:
+                    self._handle_response(message)
+                elif message.message_type == MessageType.LEARNING_UPDATE:
+                    self._handle_learning_update(message)
+                elif message.message_type == MessageType.BROADCAST:
+                    self._handle_broadcast(message)
+                elif message.message_type == MessageType.ALERT:
+                    self._handle_alert(message)
+                    
+                # Mark the message as processed
+                self.inbox.task_done()
+        except Exception as e:
+            self.logger.error(f"Error processing inbox: {str(e)}")
     
     def _process_outbox(self):
         """Send messages in the outbox to the protocol server"""
-        if self.outbox.empty():
-            return
-        
         try:
-            # Get next message from outbox
-            message = self.outbox.get_nowait()
-            
-            # Send to server
-            self.server.send_message(message)
-            
-            # Mark message as sent
-            self.outbox.task_done()
-        
-        except queue.Empty:
-            pass
+            # Process up to 10 messages per iteration to avoid blocking
+            for _ in range(10):
+                # Get a message from the outbox (non-blocking)
+                try:
+                    message = self.outbox.get(block=False)
+                except queue.Empty:
+                    break
+                    
+                # In a real implementation, this would send the message to a server
+                # For this demo, we just log the message
+                self.logger.info(f"Sending message: {message.message_id}")
+                
+                # Mark the message as processed
+                self.outbox.task_done()
+        except Exception as e:
+            self.logger.error(f"Error processing outbox: {str(e)}")
     
     def _handle_request(self, message: ProtocolMessage):
         """Handle request messages"""
-        logger.info(f"Agent {self.agent_id} received request: {message.content.get('task_id', 'unknown')}")
-        
-        # Extract task information
-        task_id = message.content.get("task_id")
-        if not task_id:
-            logger.warning(f"Received request without task_id: {message.message_id}")
-            return
-        
-        # Create task object
-        task = Task(
-            task_id=task_id,
-            conversation_id=message.metadata.get("conversation_id", str(uuid.uuid4())),
-            task_type=message.content.get("task_type", ""),
-            description=message.content.get("description", ""),
-            input_data=message.content.get("input_data", {}),
-            assigned_agent=self.agent_id,
-            status="assigned"
-        )
-        
-        # Add to current tasks
-        self.current_tasks[task_id] = task
-        
-        # Update state if needed
-        if self.state == AgentState.IDLE:
-            self._update_state(AgentState.BUSY)
-        
-        # Schedule task for execution in the worker loop
-        # (don't execute directly here to avoid blocking the message handler)
+        self.logger.info(f"Received request: {message.message_id}")
+        # Process the request and generate a response
+        # This would be implemented in subclasses based on their needs
     
     def _handle_response(self, message: ProtocolMessage):
         """Handle response messages"""
-        # Extract information
-        conversation_id = message.metadata.get("conversation_id")
-        if not conversation_id:
-            logger.warning(f"Received response without conversation_id: {message.message_id}")
-            return
-        
-        # Process the response (implementation will depend on subclass needs)
+        self.logger.info(f"Received response: {message.message_id}")
+        # Process the response
         self._process_response(message)
     
     def _handle_learning_update(self, message: ProtocolMessage):
         """Handle learning update messages"""
-        # Extract update information
+        self.logger.info(f"Received learning update: {message.message_id}")
+        # Apply the learning update
         update_id = message.content.get("update_id")
-        if not update_id:
-            logger.warning(f"Received learning update without update_id: {message.message_id}")
-            return
-        
-        # Store new pattern in the agent's knowledge base
         pattern = message.content.get("pattern", {})
-        capability = message.content.get("capability", "")
-        effectiveness = message.content.get("effectiveness", 0.0)
+        capability = message.content.get("capability")
         
-        if pattern and capability and effectiveness > 0.5:
-            # Add to learned patterns
-            self.learned_patterns.append({
-                "update_id": update_id,
-                "pattern": pattern,
-                "capability": capability,
-                "effectiveness": effectiveness,
-                "confidence": message.content.get("confidence", 0.0),
-                "applied": False,
-                "received_at": time.time()
-            })
-            
-            # Switch to learning state temporarily
-            self._update_state(AgentState.LEARNING)
-            
-            # Apply the pattern to the agent's behavior
+        if update_id and pattern and capability:
             self._apply_learning_update(update_id, pattern, capability)
-            
-            # Revert to previous state
-            if self.current_tasks:
-                self._update_state(AgentState.BUSY)
-            else:
-                self._update_state(AgentState.IDLE)
     
     def _handle_broadcast(self, message: ProtocolMessage):
         """Handle broadcast messages"""
-        # Process based on content
-        action = message.metadata.get("action", "")
-        
+        self.logger.info(f"Received broadcast: {message.message_id}")
+        # Process the broadcast action
+        action = message.content.get("action")
         if action:
-            # Handle specific broadcast actions
             self._process_broadcast_action(message, action)
     
     def _handle_alert(self, message: ProtocolMessage):
         """Handle alert messages"""
-        # Extract alert information
-        alert_type = message.content.get("alert_type", "")
-        alert_message = message.content.get("message", "")
-        
-        logger.warning(f"Agent {self.agent_id} received alert: {alert_type} - {alert_message}")
-        
-        # Take action based on alert type
-        if alert_type == "system_shutdown":
-            self.stop()
+        self.logger.info(f"Received alert: {message.message_id}")
+        # Process the alert
+        # This would be implemented in subclasses based on their needs
     
     def _process_response(self, message: ProtocolMessage):
         """
@@ -419,7 +444,6 @@ class Agent(ABC):
         
         This method should be implemented by subclasses based on their needs.
         """
-        # Default implementation does nothing
         pass
     
     def _process_broadcast_action(self, message: ProtocolMessage, action: str):
@@ -428,137 +452,135 @@ class Agent(ABC):
         
         This method should be implemented by subclasses based on their needs.
         """
-        # Default implementation does nothing
         pass
     
     def _check_for_new_tasks(self):
         """Check for new tasks from the protocol server"""
-        # This is done via the message handler already
+        # In a real implementation, this would retrieve tasks from a server
+        # For this demo, tasks are added to the task queue directly
         pass
     
     def _process_current_tasks(self):
         """Process any current tasks"""
-        if not self.current_tasks:
-            if self.state == AgentState.BUSY:
-                self._update_state(AgentState.IDLE)
+        # Only process tasks if the agent is idle or already busy
+        if self.state != AgentState.IDLE and self.state != AgentState.BUSY:
             return
+            
+        # Determine how many tasks we can process concurrently
+        max_tasks = self._get_max_concurrent_tasks()
+        current_task_count = len(self.current_tasks)
         
-        # Process each task
-        for task_id, task in list(self.current_tasks.items()):
-            # Skip tasks that are not assigned or already running
-            if task.status not in ["assigned"]:
-                continue
+        # If we're already at max capacity, just wait for tasks to complete
+        if current_task_count >= max_tasks:
+            return
             
-            # Mark as running
-            task.status = "running"
-            
-            try:
-                # Execute task
-                result = self._execute_task(task)
-                
-                # Mark as completed
-                task.status = "completed"
-                task.result = result
-                
-                # Update server about task completion
-                self.server.task_orchestrator.update_task_status(
-                    task_id, "completed", result
-                )
-                
-                # Send response message
-                self._send_task_response(task, result)
-                
-                # Move to task history
-                self.task_history[task_id] = {
-                    "task": asdict(task),
-                    "completed_at": time.time(),
-                    "success": True
-                }
-                
-                # Remove from current tasks
-                del self.current_tasks[task_id]
-            
-            except Exception as e:
-                logger.error(f"Error executing task {task_id}: {str(e)}")
-                
-                # Mark as failed
-                task.status = "failed"
-                
-                # Update server about task failure
-                self.server.task_orchestrator.update_task_status(
-                    task_id, "failed", {"error": str(e)}
-                )
-                
-                # Send error response
-                self._send_task_error(task, str(e))
-                
-                # Move to task history
-                self.task_history[task_id] = {
-                    "task": asdict(task),
-                    "completed_at": time.time(),
-                    "success": False,
-                    "error": str(e)
-                }
-                
-                # Remove from current tasks
-                del self.current_tasks[task_id]
+        # Get more tasks from the queue
+        tasks_to_start = max_tasks - current_task_count
         
-        # Update state if needed
-        if not self.current_tasks and self.state == AgentState.BUSY:
-            self._update_state(AgentState.IDLE)
+        try:
+            # Process up to the available task slots
+            for _ in range(tasks_to_start):
+                # Get a task from the queue (non-blocking)
+                try:
+                    task = self.task_queue.get(block=False)
+                except queue.Empty:
+                    break
+                    
+                # Start the task
+                task.start()
+                self.current_tasks[task.task_id] = task
+                
+                # Update agent state if this is the first task
+                if len(self.current_tasks) == 1:
+                    self._update_state(AgentState.BUSY)
+                
+                # Execute the task in a separate thread to avoid blocking
+                task_thread = threading.Thread(
+                    target=self._execute_task_wrapper,
+                    args=(task,)
+                )
+                task_thread.daemon = True
+                task_thread.start()
+                
+                # Mark the task as processed in the queue
+                self.task_queue.task_done()
+        except Exception as e:
+            self.logger.error(f"Error processing tasks: {str(e)}")
+    
+    def _execute_task_wrapper(self, task: Task):
+        """Wrapper for task execution to handle exceptions"""
+        try:
+            # Execute the task
+            result = self._execute_task(task)
+            
+            # Mark the task as completed
+            task.complete(result)
+            
+            # Send response
+            self._send_task_response(task, result)
+        except Exception as e:
+            # Log the error
+            self.logger.error(f"Error executing task {task.task_id}: {str(e)}")
+            
+            # Mark the task as failed
+            task.fail(str(e))
+            
+            # Send error response
+            self._send_task_error(task, str(e))
+        finally:
+            # Move the task to history
+            self.task_history[task.task_id] = task
+            
+            # Remove from current tasks
+            if task.task_id in self.current_tasks:
+                del self.current_tasks[task.task_id]
+                
+            # Update agent state if no more tasks
+            if not self.current_tasks:
+                self._update_state(AgentState.IDLE)
     
     def _send_task_response(self, task: Task, result: Dict[str, Any]):
         """Send a response message for a completed task"""
-        identity = AgentIdentity(
-            agent_id=self.agent_id,
-            agent_type=self.agent_type.value,
-            capabilities=self.capabilities,
-            status=self.state.value
-        )
-        
+        # Create a response message
         message = ProtocolMessage(
-            sender=identity,
-            recipients=["orchestrator"],
+            message_id=f"resp-{uuid.uuid4()}",
+            sender_id=self.agent_id,
+            recipients=["controller"],  # Assuming a controller agent
             message_type=MessageType.RESPONSE,
-            priority=MessagePriority.MEDIUM,
             content={
                 "task_id": task.task_id,
-                "status": "completed",
                 "result": result
             },
             metadata={
-                "conversation_id": task.conversation_id,
-                "parent_message_id": task.task_id
-            }
+                "task_capability": task.capability,
+                "execution_time": task.completed_at - task.started_at
+            },
+            priority=MessagePriority.MEDIUM
         )
         
+        # Add the message to the outbox
         self.outbox.put(message)
     
     def _send_task_error(self, task: Task, error: str):
         """Send an error response message for a failed task"""
-        identity = AgentIdentity(
-            agent_id=self.agent_id,
-            agent_type=self.agent_type.value,
-            capabilities=self.capabilities,
-            status=self.state.value
-        )
-        
+        # Create an error response message
         message = ProtocolMessage(
-            sender=identity,
-            recipients=["orchestrator"],
+            message_id=f"err-{uuid.uuid4()}",
+            sender_id=self.agent_id,
+            recipients=["controller"],  # Assuming a controller agent
             message_type=MessageType.RESPONSE,
-            priority=MessagePriority.HIGH,  # Higher priority for errors
             content={
                 "task_id": task.task_id,
-                "status": "failed",
                 "error": error
             },
             metadata={
-                "conversation_id": task.conversation_id,
-                "parent_message_id": task.task_id
-            }
+                "task_capability": task.capability,
+                "execution_time": task.completed_at - task.started_at
+            },
+            priority=MessagePriority.HIGH
         )
         
+        # Add the message to the outbox
         self.outbox.put(message)
     
     def _apply_learning_update(self, update_id: str, pattern: Dict[str, Any], capability: str):
@@ -567,12 +589,12 @@ class Agent(ABC):
         
         This method should be implemented by subclasses based on their needs.
         """
-        # Default implementation just marks the pattern as applied
-        for pattern_info in self.learned_patterns:
-            if pattern_info["update_id"] == update_id:
-                pattern_info["applied"] = True
-                logger.info(f"Agent {self.agent_id} applied learning update: {update_id}")
-                break
+        pass
+    
+    def _get_max_concurrent_tasks(self) -> int:
+        """Get the maximum number of concurrent tasks this agent can handle"""
+        # Default to 1 concurrent task
+        return 1
     
     @abstractmethod
     def _execute_task(self, task: Task) -> Dict[str, Any]:
@@ -587,7 +609,7 @@ class Agent(ABC):
         Returns:
             Dict containing the result of the task execution
         """
-        raise NotImplementedError("Subclasses must implement _execute_task method")
+        pass
     
     def send_message(self, recipients: List[str], message_type: MessageType,
                    content: Dict[str, Any], metadata: Dict[str, Any] = None,
@@ -602,22 +624,18 @@ class Agent(ABC):
             metadata: Message metadata
             priority: Message priority
         """
-        identity = AgentIdentity(
-            agent_id=self.agent_id,
-            agent_type=self.agent_type.value,
-            capabilities=self.capabilities,
-            status=self.state.value
-        )
-        
+        # Create a message
         message = ProtocolMessage(
-            sender=identity,
+            message_id=f"msg-{uuid.uuid4()}",
+            sender_id=self.agent_id,
             recipients=recipients,
             message_type=message_type,
-            priority=priority,
             content=content,
-            metadata=metadata or {}
+            metadata=metadata,
+            priority=priority
         )
         
+        # Add the message to the outbox
         self.outbox.put(message)
     
     def record_feedback(self, task_id: str, action_type: str,
@@ -633,17 +651,25 @@ class Agent(ABC):
             comments: Optional comments about the rating
             context: Optional context information
         """
-        feedback = FeedbackRecord(
-            task_id=task_id,
-            agent_id=self.agent_id,
-            action_type=action_type,
-            rating=rating,
-            source="self",
-            comments=comments,
-            context=context or {}
+        # Create a feedback message
+        message = ProtocolMessage(
+            message_id=f"feedback-{uuid.uuid4()}",
+            sender_id=self.agent_id,
+            recipients=["learning_coordinator"],  # Send to learning coordinator
+            message_type=MessageType.RESPONSE,
+            content={
+                "feedback_type": "action_feedback",
+                "task_id": task_id,
+                "action_type": action_type,
+                "rating": rating,
+                "comments": comments,
+                "context": context or {}
+            },
+            priority=MessagePriority.LOW
         )
         
-        self.server.learning_system.record_feedback(feedback)
+        # Add the message to the outbox
+        self.outbox.put(message)
     
     def submit_learning_update(self, pattern: Dict[str, Any], capability: str,
                             effectiveness: float, confidence: float,
@@ -658,204 +684,25 @@ class Agent(ABC):
             confidence: Confidence in the effectiveness estimate (0.0 to 1.0)
             agent_types: List of agent types this update applies to
         """
-        if agent_types is None:
-            agent_types = [self.agent_type.value]
-        
-        update = LearningUpdate(
-            agent_types=agent_types,
-            capability=capability,
-            pattern=pattern,
-            effectiveness=effectiveness,
-            confidence=confidence,
-            supporting_evidence=[]
+        # Create a learning update message
+        message = ProtocolMessage(
+            message_id=f"learn-{uuid.uuid4()}",
+            sender_id=self.agent_id,
+            recipients=["learning_coordinator"],  # Send to learning coordinator
+            message_type=MessageType.LEARNING_UPDATE,
+            content={
+                "update_type": "pattern_discovery",
+                "pattern": pattern,
+                "capability": capability,
+                "effectiveness": effectiveness,
+                "confidence": confidence,
+                "agent_types": agent_types or [self.agent_type.value]
+            },
+            priority=MessagePriority.MEDIUM
         )
         
-        self.server.learning_system.register_learning_update(update)
-
-
-# =============================================================================
-# Model Interface
-# =============================================================================
-
-class ModelInterface:
-    """
-    Interface for interacting with AI models.
-    
-    This class abstracts away the differences between different model providers
-    and provides a unified interface for agents to use.
-    """
-    def __init__(self, model_id: Optional[str] = None, capability: Optional[str] = None):
-        """
-        Initialize the model interface.
-        
-        Args:
-            model_id: Optional specific model ID to use
-            capability: Optional capability to select model for
-        """
-        self.server = get_server()
-        
-        # Get model configuration
-        if model_id:
-            self.model_config = self.server.model_manager.get_model_config(model_id)
-        elif capability:
-            self.model_config = self.server.model_manager.get_model_for_capability(capability)
-        else:
-            # Default to GPT-4o if no specific model or capability is specified
-            self.model_config = self.server.model_manager.get_model_config("gpt-4o")
-        
-        if not self.model_config:
-            raise ValueError(f"No model found for ID {model_id} or capability {capability}")
-        
-        # Initialize provider-specific clients as needed
-        self._initialize_clients()
-    
-    def _initialize_clients(self):
-        """Initialize provider-specific clients"""
-        if self.model_config.provider.value == "openai":
-            try:
-                import openai
-                self.openai_client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-            except ImportError:
-                logger.error("OpenAI package not installed")
-                self.openai_client = None
-        
-        elif self.model_config.provider.value == "anthropic":
-            try:
-                import anthropic
-                self.anthropic_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-            except ImportError:
-                logger.error("Anthropic package not installed")
-                self.anthropic_client = None
-    
-    def generate_text(self, prompt: str, system_message: Optional[str] = None,
-                    max_tokens: Optional[int] = None) -> str:
-        """
-        Generate text using the configured model.
-        
-        Args:
-            prompt: The user prompt to send to the model
-            system_message: Optional system message for chat models
-            max_tokens: Maximum tokens to generate
-        
-        Returns:
-            The generated text
-        """
-        if not max_tokens:
-            max_tokens = self.model_config.max_tokens
-        
-        if self.model_config.provider.value == "openai":
-            return self._generate_text_openai(prompt, system_message, max_tokens)
-        
-        elif self.model_config.provider.value == "anthropic":
-            return self._generate_text_anthropic(prompt, system_message, max_tokens)
-        
-        else:
-            raise ValueError(f"Unsupported model provider: {self.model_config.provider.value}")
-    
-    def _generate_text_openai(self, prompt: str, system_message: Optional[str], max_tokens: int) -> str:
-        """Generate text using OpenAI models"""
-        if not self.openai_client:
-            raise ValueError("OpenAI client not initialized")
-        
-        messages = []
-        if system_message:
-            messages.append({"role": "system", "content": system_message})
-        
-        messages.append({"role": "user", "content": prompt})
-        
-        response = self.openai_client.chat.completions.create(
-            model=self.model_config.model_id,
-            messages=messages,
-            max_tokens=max_tokens
-        )
-        
-        return response.choices[0].message.content
-    
-    def _generate_text_anthropic(self, prompt: str, system_message: Optional[str], max_tokens: int) -> str:
-        """Generate text using Anthropic models"""
-        if not self.anthropic_client:
-            raise ValueError("Anthropic client not initialized")
-        
-        # Combine system message and prompt if both provided
-        if system_message:
-            full_prompt = f"{system_message}\n\n{prompt}"
-        else:
-            full_prompt = prompt
-        
-        response = self.anthropic_client.messages.create(
-            model=self.model_config.model_id,
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": full_prompt}]
-        )
-        
-        return response.content[0].text
-    
-    def analyze_code(self, code: str, language: str, query: str) -> Dict[str, Any]:
-        """
-        Analyze code using the configured model.
-        
-        Args:
-            code: The code to analyze
-            language: The programming language of the code
-            query: What to analyze about the code
-        
-        Returns:
-            Analysis results
-        """
-        prompt = f"""
-        Please analyze the following {language} code based on this query: "{query}"
-        
-        ```{language}
-        {code}
-        ```
-        
-        Provide a detailed analysis focusing specifically on the query.
-        Format your response as JSON with the following structure:
-        {{
-            "analysis": "The main analysis text",
-            "issues": [
-                {{
-                    "description": "Description of the issue",
-                    "severity": "high/medium/low",
-                    "line_numbers": [line numbers if applicable],
-                    "recommendations": ["List of recommendations"]
-                }}
-            ],
-            "recommendations": ["List of overall recommendations"]
-        }}
-        """
-        
-        system_message = "You are an expert code analyzer specializing in identifying code patterns, issues, and optimization opportunities. Provide analysis in JSON format only."
-        
-        # Generate the analysis
-        try:
-            result_text = self.generate_text(prompt, system_message)
-            
-            # Extract JSON from the response (in case the model added extra text)
-            import json
-            import re
-            
-            json_match = re.search(r'(\{.*\})', result_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-                result = json.loads(json_str)
-            else:
-                result = json.loads(result_text)
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error analyzing code: {str(e)}")
-            return {
-                "analysis": f"Error analyzing code: {str(e)}",
-                "issues": [],
-                "recommendations": ["Try again with a smaller code sample"]
-            }
-
-
-# =============================================================================
-# Specialized Agent Base Classes
-# =============================================================================
+        # Add the message to the outbox
+        self.outbox.put(message)
 
 class CodeQualityAgent(Agent):
     """Base class for code quality analysis agents"""
@@ -867,31 +714,63 @@ class CodeQualityAgent(Agent):
             capabilities=capabilities,
             preferred_model=preferred_model
         )
-        
-        # Code quality specific attributes
-        self.quality_thresholds = {
-            "complexity": 10,      # Maximum acceptable cyclomatic complexity
-            "length": 100,         # Maximum acceptable function length in lines
-            "nesting": 3,          # Maximum acceptable nesting level
-            "comments": 0.2,       # Minimum acceptable comment ratio
-            "duplication": 0.1     # Maximum acceptable code duplication ratio
-        }
     
     def _get_max_concurrent_tasks(self) -> int:
-        return 3  # Code quality agents can handle multiple tasks
+        """Get the maximum number of concurrent tasks this agent can handle"""
+        return 2  # Code quality agents can handle 2 concurrent tasks
     
     def _apply_learning_update(self, update_id: str, pattern: Dict[str, Any], capability: str):
         """Apply a learning update to the code quality agent"""
-        super()._apply_learning_update(update_id, pattern, capability)
+        self.logger.info(f"Applying learning update {update_id} for capability {capability}")
+        # In a real implementation, this would update the agent's behavior
+        # For this demo, we just log the update
         
-        # Update quality thresholds if this is a threshold update
-        if capability == "quality_thresholds" and "thresholds" in pattern:
-            new_thresholds = pattern["thresholds"]
-            for key, value in new_thresholds.items():
-                if key in self.quality_thresholds:
-                    self.quality_thresholds[key] = value
-                    logger.info(f"Updated {key} threshold to {value}")
-
+    def _execute_task(self, task: Task) -> Dict[str, Any]:
+        """Execute a code quality analysis task"""
+        self.logger.info(f"Executing code quality task: {task.capability}")
+        
+        # In a real implementation, this would perform the actual analysis
+        # For this demo, we just return a simulated result
+        
+        # Simulate task execution time
+        time.sleep(2.0)
+        
+        if task.capability == "code_review":
+            return {
+                "quality_score": 8.5,
+                "issues": [
+                    "Variable naming inconsistency on line 42",
+                    "Possible null reference exception in getUserData() method",
+                    "Consider using list comprehension on lines 78-82 for better readability"
+                ],
+                "suggestions": [
+                    "Refactor the authenticateUser method to reduce complexity",
+                    "Add parameter type hints to improve code clarity"
+                ]
+            }
+        elif task.capability == "style_check":
+            return {
+                "style_score": 7.8,
+                "style_issues": [
+                    "Inconsistent indentation in class LoginManager",
+                    "Line length exceeds 100 characters on lines 23, 45, 67",
+                    "Missing docstrings in 3 methods"
+                ]
+            }
+        elif task.capability == "documentation_analysis":
+            return {
+                "documentation_score": 6.5,
+                "coverage": 75.2,
+                "missing_docs": [
+                    "Class UserRepository has no docstring",
+                    "Method authenticateUser parameters are not documented",
+                    "Return values not documented in 4 methods"
+                ]
+            }
+        else:
+            return {
+                "error": f"Unsupported capability: {task.capability}"
+            }
 
 class ArchitectureAgent(Agent):
     """Base class for architecture analysis agents"""
@@ -903,14 +782,112 @@ class ArchitectureAgent(Agent):
             capabilities=capabilities,
             preferred_model=preferred_model
         )
-        
-        # Architecture specific attributes
-        self.known_patterns = []
-        self.known_antipatterns = []
     
     def _get_max_concurrent_tasks(self) -> int:
-        return 1  # Architecture analysis is typically resource-intensive
-
+        """Get the maximum number of concurrent tasks this agent can handle"""
+        return 1  # Architecture agents handle 1 task at a time due to complexity
+        
+    def _execute_task(self, task: Task) -> Dict[str, Any]:
+        """Execute an architecture analysis task"""
+        self.logger.info(f"Executing architecture task: {task.capability}")
+        
+        # In a real implementation, this would perform the actual analysis
+        # For this demo, we just return a simulated result
+        
+        # Simulate task execution time
+        time.sleep(3.0)
+        
+        if task.capability == "architecture_review":
+            return {
+                "architecture_score": 7.2,
+                "patterns_detected": [
+                    "Repository Pattern",
+                    "Factory Method",
+                    "Observer Pattern (partial implementation)"
+                ],
+                "issues": [
+                    "High coupling between UserService and PaymentProcessor",
+                    "Circular dependency between Order and Customer classes",
+                    "Service layer bypass in OrderController"
+                ],
+                "recommendations": [
+                    "Introduce interface for PaymentProcessor to reduce coupling",
+                    "Consider applying Mediator pattern for component communication",
+                    "Refactor authentication flow to use proper middleware"
+                ]
+            }
+        elif task.capability == "dependency_analysis":
+            return {
+                "dependencies": {
+                    "direct": 45,
+                    "indirect": 127,
+                    "external": 12
+                },
+                "problematic_dependencies": [
+                    "Tight coupling between OrderService and ShippingService",
+                    "ProductCatalog depends on concrete DatabaseService instead of abstraction",
+                    "Too many dependencies (23) in UserController class"
+                ],
+                "dependency_graph": {
+                    "nodes": [
+                        {"id": "UserService", "group": 1},
+                        {"id": "OrderService", "group": 1},
+                        {"id": "ProductService", "group": 1},
+                        {"id": "DatabaseService", "group": 2},
+                        {"id": "CacheService", "group": 2},
+                        {"id": "AuthService", "group": 3}
+                    ],
+                    "links": [
+                        {"source": "UserService", "target": "DatabaseService", "value": 5},
+                        {"source": "UserService", "target": "AuthService", "value": 8},
+                        {"source": "OrderService", "target": "UserService", "value": 3},
+                        {"source": "OrderService", "target": "ProductService", "value": 7},
+                        {"source": "ProductService", "target": "DatabaseService", "value": 6},
+                        {"source": "ProductService", "target": "CacheService", "value": 4}
+                    ]
+                }
+            }
+        elif task.capability == "pattern_detection":
+            return {
+                "patterns_detected": [
+                    {
+                        "name": "Singleton",
+                        "locations": ["DatabaseManager", "ConfigService"],
+                        "quality": "Good implementation"
+                    },
+                    {
+                        "name": "Factory Method",
+                        "locations": ["ProductFactory", "ReportGenerator"],
+                        "quality": "Standard implementation"
+                    },
+                    {
+                        "name": "Observer",
+                        "locations": ["OrderStatusManager", "NotificationService"],
+                        "quality": "Poor implementation, consider refactoring"
+                    },
+                    {
+                        "name": "Repository",
+                        "locations": ["UserRepository", "OrderRepository", "ProductRepository"],
+                        "quality": "Good implementation with proper abstractions"
+                    }
+                ],
+                "anti_patterns": [
+                    {
+                        "name": "God Object",
+                        "locations": ["SystemManager"],
+                        "severity": "High"
+                    },
+                    {
+                        "name": "Spaghetti Code",
+                        "locations": ["LegacyReportGenerator"],
+                        "severity": "Medium"
+                    }
+                ]
+            }
+        else:
+            return {
+                "error": f"Unsupported capability: {task.capability}"
+            }
 
 class DatabaseAgent(Agent):
     """Base class for database analysis agents"""
@@ -922,17 +899,97 @@ class DatabaseAgent(Agent):
             capabilities=capabilities,
             preferred_model=preferred_model
         )
-        
-        # Database specific attributes
-        self.known_orm_frameworks = [
-            "sqlalchemy", "django.db", "peewee", 
-            "sequelize", "mongoose", "typeorm",
-            "entity framework", "hibernate"
-        ]
     
     def _get_max_concurrent_tasks(self) -> int:
-        return 2  # Database analysis can be parallelized to some extent
-
+        """Get the maximum number of concurrent tasks this agent can handle"""
+        return 1  # Database agents handle 1 task at a time
+        
+    def _execute_task(self, task: Task) -> Dict[str, Any]:
+        """Execute a database analysis task"""
+        self.logger.info(f"Executing database task: {task.capability}")
+        
+        # In a real implementation, this would perform the actual analysis
+        # For this demo, we just return a simulated result
+        
+        # Simulate task execution time
+        time.sleep(2.5)
+        
+        if task.capability == "schema_analysis":
+            return {
+                "entities": 18,
+                "relationships": 24,
+                "normalization_score": 8.2,
+                "issues": [
+                    "OrderItems table missing proper foreign key constraint",
+                    "UserAddress has redundant fields (consider normalization)",
+                    "ProductCategory table uses string primary keys instead of integers"
+                ],
+                "recommendations": [
+                    "Add foreign key constraint to OrderItems.order_id",
+                    "Normalize UserAddress into separate address table",
+                    "Change primary key type of ProductCategory"
+                ]
+            }
+        elif task.capability == "query_optimization":
+            return {
+                "analyzed_queries": 12,
+                "problematic_queries": [
+                    {
+                        "query_id": "Q001",
+                        "issues": ["Missing index on user_id", "Full table scan on Orders"],
+                        "recommendation": "Add index on Orders.user_id and Orders.order_date"
+                    },
+                    {
+                        "query_id": "Q002",
+                        "issues": ["Inefficient JOIN with Products table", "Cartesian product risk"],
+                        "recommendation": "Rewrite query using INNER JOIN with explicit join condition"
+                    },
+                    {
+                        "query_id": "Q003",
+                        "issues": ["Too many JOINs (7 tables)", "Redundant sorting"],
+                        "recommendation": "Consider creating a view or optimize schema to reduce joins"
+                    }
+                ],
+                "potential_savings": {
+                    "query_execution_time": "65%",
+                    "disk_io": "43%",
+                    "cpu_usage": "38%"
+                }
+            }
+        elif task.capability == "performance_tuning":
+            return {
+                "current_performance": {
+                    "avg_query_time": "320ms",
+                    "peak_connections": 45,
+                    "slow_queries_per_hour": 23
+                },
+                "bottlenecks": [
+                    "Inefficient indexing on OrderItems table",
+                    "Poor connection pooling configuration",
+                    "Missing caching for product catalog queries"
+                ],
+                "recommendations": [
+                    {
+                        "description": "Add composite index on (order_id, product_id)",
+                        "expected_improvement": "70% faster order retrieval",
+                        "implementation_difficulty": "Low"
+                    },
+                    {
+                        "description": "Increase connection pool min size to 10",
+                        "expected_improvement": "25% faster at peak times",
+                        "implementation_difficulty": "Low"
+                    },
+                    {
+                        "description": "Implement Redis caching for product catalog",
+                        "expected_improvement": "90% faster product browsing",
+                        "implementation_difficulty": "Medium"
+                    }
+                ]
+            }
+        else:
+            return {
+                "error": f"Unsupported capability: {task.capability}"
+            }
 
 class DocumentationAgent(Agent):
     """Base class for documentation agents"""
@@ -944,34 +1001,75 @@ class DocumentationAgent(Agent):
             capabilities=capabilities,
             preferred_model=preferred_model
         )
-        
-        # Documentation specific attributes
-        self.documentation_templates = {}
     
     def _get_max_concurrent_tasks(self) -> int:
-        return 5  # Documentation can be highly parallelized
-
-
-class AgentReadinessAgent(Agent):
-    """Base class for agent readiness evaluation agents"""
-    
-    def __init__(self, agent_id: str, capabilities: List[str], preferred_model: Optional[str] = None):
-        super().__init__(
-            agent_id=agent_id,
-            agent_type=AgentCategory.AGENT_READINESS,
-            capabilities=capabilities,
-            preferred_model=preferred_model
-        )
+        """Get the maximum number of concurrent tasks this agent can handle"""
+        return 3  # Documentation agents can handle multiple tasks
         
-        # Agent readiness specific attributes
-        self.ml_frameworks = [
-            "tensorflow", "pytorch", "scikit-learn", "keras",
-            "huggingface", "transformers", "langchain", "llama-index"
-        ]
-    
-    def _get_max_concurrent_tasks(self) -> int:
-        return 2  # Agent readiness evaluation is moderately parallelizable
-
+    def _execute_task(self, task: Task) -> Dict[str, Any]:
+        """Execute a documentation task"""
+        self.logger.info(f"Executing documentation task: {task.capability}")
+        
+        # In a real implementation, this would perform the actual documentation
+        # For this demo, we just return a simulated result
+        
+        # Simulate task execution time
+        time.sleep(1.5)
+        
+        if task.capability == "doc_generation":
+            return {
+                "generated_docs": {
+                    "readme_md": "Project overview and setup instructions",
+                    "api_docs": "REST API endpoints documentation",
+                    "component_docs": "Description of major components"
+                },
+                "coverage": 85.3,
+                "missing_areas": [
+                    "Configuration options",
+                    "Deployment instructions",
+                    "Error handling documentation"
+                ]
+            }
+        elif task.capability == "coverage_analysis":
+            return {
+                "total_components": 156,
+                "documented_components": 114,
+                "coverage_score": 73.1,
+                "documentation_quality_score": 7.8,
+                "poorly_documented_areas": [
+                    "Authentication module (30% coverage)",
+                    "Payment processing (45% coverage)",
+                    "Error handling (25% coverage)"
+                ],
+                "recommendations": [
+                    "Add API documentation for authentication endpoints",
+                    "Improve code comments in PaymentProcessor class",
+                    "Document error codes and recovery strategies"
+                ]
+            }
+        elif task.capability == "consistency_check":
+            return {
+                "consistency_score": 68.7,
+                "inconsistencies": [
+                    "Parameter naming inconsistent between docs and code in UserService",
+                    "API endpoints use camelCase in code but snake_case in documentation",
+                    "Return values not accurately described in OrderController methods"
+                ],
+                "terminology_issues": [
+                    "Inconsistent use of 'purchase' vs 'order'",
+                    "Authentication and authorization used interchangeably",
+                    "User vs Customer vs Client terminology mixed"
+                ],
+                "recommendations": [
+                    "Create a terminology glossary for the project",
+                    "Update API docs to match actual parameter names",
+                    "Standardize on camelCase for all API parameter documentation"
+                ]
+            }
+        else:
+            return {
+                "error": f"Unsupported capability: {task.capability}"
+            }
 
 class LearningCoordinatorAgent(Agent):
     """
@@ -982,156 +1080,169 @@ class LearningCoordinatorAgent(Agent):
     """
     
     def __init__(self, agent_id: str = "learning_coordinator", preferred_model: Optional[str] = None):
-        capabilities = [
-            "pattern_recognition", "feedback_analysis", 
-            "learning_coordination", "model_evaluation"
-        ]
-        
         super().__init__(
             agent_id=agent_id,
             agent_type=AgentCategory.LEARNING_COORDINATOR,
-            capabilities=capabilities,
-            preferred_model=preferred_model or "gpt-4o"
+            capabilities=[
+                "feedback_processing",
+                "pattern_identification",
+                "model_evaluation"
+            ],
+            preferred_model=preferred_model
         )
         
-        # Learning coordinator specific attributes
+        # Initialize feedback buffer and pattern storage
         self.feedback_buffer = []
-        self.pattern_candidates = []
-        self.min_feedback_for_pattern = 5
-    
+        self.patterns = {}
+        self.pattern_efficacy = {}
+        
     def _get_max_concurrent_tasks(self) -> int:
-        return 10  # Learning coordinator needs to handle many tasks
-    
+        """Get the maximum number of concurrent tasks this agent can handle"""
+        return 1  # Learning coordinator handles 1 task at a time
+        
     def _execute_task(self, task: Task) -> Dict[str, Any]:
         """Execute a learning coordinator task"""
-        if task.task_type == "process_feedback":
+        self.logger.info(f"Executing learning coordinator task: {task.capability}")
+        
+        if task.capability == "feedback_processing":
             return self._process_feedback_task(task)
-        
-        elif task.task_type == "identify_patterns":
+        elif task.capability == "pattern_identification":
             return self._identify_patterns_task(task)
-        
-        elif task.task_type == "evaluate_model":
+        elif task.capability == "model_evaluation":
             return self._evaluate_model_task(task)
-        
         else:
-            raise ValueError(f"Unknown task type: {task.task_type}")
+            return {
+                "error": f"Unsupported capability: {task.capability}"
+            }
     
     def _process_feedback_task(self, task: Task) -> Dict[str, Any]:
         """Process feedback and add to buffer"""
-        feedback_data = task.input_data.get("feedback", {})
-        if not feedback_data:
-            return {"status": "error", "message": "No feedback data provided"}
+        # Extract feedback from task parameters
+        feedback = task.parameters.get("feedback", {})
+        
+        if not feedback:
+            return {"error": "No feedback provided"}
         
         # Add to feedback buffer
-        self.feedback_buffer.append(feedback_data)
+        self.feedback_buffer.append(feedback)
         
         # If buffer reaches threshold, schedule pattern identification
-        if len(self.feedback_buffer) >= self.min_feedback_for_pattern:
+        if len(self.feedback_buffer) >= 10:  # Threshold for pattern analysis
             self._schedule_pattern_identification()
         
-        return {"status": "success", "feedback_count": len(self.feedback_buffer)}
+        return {
+            "feedback_processed": True,
+            "feedback_buffer_size": len(self.feedback_buffer)
+        }
     
     def _identify_patterns_task(self, task: Task) -> Dict[str, Any]:
         """Identify patterns from feedback"""
-        feedback_subset = task.input_data.get("feedback_subset", [])
-        if not feedback_subset:
-            feedback_subset = self.feedback_buffer[-self.min_feedback_for_pattern:]
+        # Get feedback sample size from task parameters
+        sample_size = task.parameters.get("sample_size", 10)
+        
+        # Get feedback sample
+        feedback_sample = self.feedback_buffer[:sample_size]
         
         # Analyze feedback for patterns
-        patterns = self._analyze_feedback_for_patterns(feedback_subset)
+        patterns = self._analyze_feedback_for_patterns(feedback_sample)
         
-        # Submit learning updates for identified patterns
-        updates_submitted = []
+        # Submit patterns as learning updates
+        update_ids = []
         for pattern in patterns:
-            if pattern["confidence"] >= 0.7:  # Only submit high-confidence patterns
-                update_id = self._submit_pattern_as_learning_update(pattern)
-                updates_submitted.append(update_id)
+            update_id = self._submit_pattern_as_learning_update(pattern)
+            update_ids.append(update_id)
+        
+        # Remove processed feedback from buffer
+        self.feedback_buffer = self.feedback_buffer[sample_size:]
         
         return {
-            "status": "success",
             "patterns_identified": len(patterns),
-            "updates_submitted": updates_submitted
+            "update_ids": update_ids,
+            "remaining_feedback": len(self.feedback_buffer)
         }
     
     def _evaluate_model_task(self, task: Task) -> Dict[str, Any]:
         """Evaluate model performance"""
-        model_id = task.input_data.get("model_id")
+        # Get model ID from task parameters
+        model_id = task.parameters.get("model_id")
+        
         if not model_id:
-            return {"status": "error", "message": "No model_id provided"}
+            return {"error": "No model ID provided"}
         
-        # Evaluate model
-        evaluation = self._evaluate_model(model_id)
+        # Evaluate the model
+        evaluation_results = self._evaluate_model(model_id)
         
-        return {
-            "status": "success",
-            "model_id": model_id,
-            "evaluation": evaluation
-        }
+        return evaluation_results
     
     def _schedule_pattern_identification(self):
         """Schedule a pattern identification task"""
-        # Create task
+        # Create a pattern identification task
         task = Task(
-            task_type="identify_patterns",
-            description="Identify patterns from recent feedback",
-            input_data={
-                "feedback_subset": self.feedback_buffer[-self.min_feedback_for_pattern:]
+            task_id=f"pattern-{uuid.uuid4()}",
+            agent_id=self.agent_id,
+            capability="pattern_identification",
+            parameters={
+                "sample_size": len(self.feedback_buffer)
             },
-            priority=MessagePriority.LOW  # Low priority so it doesn't interfere with regular tasks
+            priority="medium"
         )
         
-        # Submit to orchestrator
-        self.server.task_orchestrator.submit_task(task)
+        # Add to task queue
+        self.task_queue.put(task)
     
     def _analyze_feedback_for_patterns(self, feedback_subset: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Analyze feedback to identify patterns"""
-        # Group feedback by agent type and action type
-        grouped_feedback = {}
-        for feedback in feedback_subset:
-            agent_id = feedback.get("agent_id", "unknown")
-            action_type = feedback.get("action_type", "unknown")
-            
-            # Get agent type
-            agent_identity = self.server.agent_registry.get_agent_identity(agent_id)
-            agent_type = agent_identity.agent_type if agent_identity else "unknown"
-            
-            key = f"{agent_type}:{action_type}"
-            if key not in grouped_feedback:
-                grouped_feedback[key] = []
-            
-            grouped_feedback[key].append(feedback)
+        # In a real implementation, this would use sophisticated analysis
+        # For this demo, we just simulate pattern discovery
         
-        # Identify patterns in each group
         patterns = []
-        for key, feedback_group in grouped_feedback.items():
-            if len(feedback_group) < 3:  # Need at least 3 examples to identify a pattern
+        
+        # Group feedback by action type
+        feedback_by_action = {}
+        for fb in feedback_subset:
+            action = fb.get("action_type")
+            if action not in feedback_by_action:
+                feedback_by_action[action] = []
+            feedback_by_action[action].append(fb)
+        
+        # Look for patterns in each action type
+        for action, action_feedback in feedback_by_action.items():
+            # Skip if too few samples
+            if len(action_feedback) < 3:
                 continue
-            
-            agent_type, action_type = key.split(":")
-            
+                
             # Calculate average rating
-            ratings = [f.get("rating", 0.0) for f in feedback_group]
-            avg_rating = sum(ratings) / len(ratings) if ratings else 0.0
+            avg_rating = sum(fb.get("rating", 0) for fb in action_feedback) / len(action_feedback)
             
-            # Only consider patterns with good or bad ratings
-            if 0.2 <= avg_rating <= 0.8:
-                continue  # Skip patterns with middling ratings
-            
-            # Identify common elements in context
-            contexts = [f.get("context", {}) for f in feedback_group]
+            # Skip if average rating is neutral
+            if 0.4 <= avg_rating <= 0.6:
+                continue
+                
+            # Find common elements in contexts
+            contexts = [fb.get("context", {}) for fb in action_feedback]
             common_elements = self._find_common_elements(contexts)
             
+            # If we found common elements, create a pattern
             if common_elements:
-                # Create pattern
                 pattern = {
-                    "agent_type": agent_type,
-                    "action_type": action_type,
-                    "effectiveness": avg_rating,
-                    "confidence": min(1.0, len(feedback_group) / 10),  # More feedback = higher confidence
-                    "pattern": common_elements,
-                    "feedback_count": len(feedback_group)
+                    "action_type": action,
+                    "pattern_elements": common_elements,
+                    "avg_rating": avg_rating,
+                    "sample_size": len(action_feedback),
+                    "confidence": min(0.5 + (len(action_feedback) / 20), 0.95)  # More samples = higher confidence
                 }
                 
+                # Determine target capability
+                if "code_review" in action:
+                    capability = "code_review"
+                elif "architecture" in action:
+                    capability = "architecture_review"
+                elif "database" in action:
+                    capability = "schema_analysis"
+                else:
+                    capability = "general"
+                    
+                pattern["capability"] = capability
                 patterns.append(pattern)
         
         return patterns
@@ -1140,44 +1251,78 @@ class LearningCoordinatorAgent(Agent):
         """Find common elements in a list of context dictionaries"""
         if not contexts:
             return {}
-        
-        # Start with first context
+            
+        # Start with the first context
         common = contexts[0].copy()
         
-        # Intersect with remaining contexts
+        # Intersect with each other context
         for context in contexts[1:]:
+            # Remove keys not in this context
             for key in list(common.keys()):
-                if key not in context or context[key] != common[key]:
+                if key not in context:
+                    del common[key]
+                elif common[key] != context[key]:
                     del common[key]
         
         return common
     
     def _submit_pattern_as_learning_update(self, pattern: Dict[str, Any]) -> str:
         """Submit a pattern as a learning update"""
-        update = LearningUpdate(
-            agent_types=[pattern["agent_type"]],
-            capability=pattern["action_type"],
-            pattern=pattern["pattern"],
-            effectiveness=pattern["effectiveness"],
-            confidence=pattern["confidence"],
-            supporting_evidence=[str(i) for i in range(pattern["feedback_count"])]
+        # Generate update ID
+        update_id = f"update-{uuid.uuid4()}"
+        
+        # Extract pattern elements and capability
+        pattern_elements = pattern.get("pattern_elements", {})
+        capability = pattern.get("capability", "general")
+        
+        # Create a learning update message
+        message = ProtocolMessage(
+            message_id=f"learn-{uuid.uuid4()}",
+            sender_id=self.agent_id,
+            recipients=["all"],  # Send to all agents
+            message_type=MessageType.LEARNING_UPDATE,
+            content={
+                "update_type": "pattern_discovery",
+                "update_id": update_id,
+                "pattern": pattern_elements,
+                "capability": capability,
+                "effectiveness": pattern.get("avg_rating", 0.5),
+                "confidence": pattern.get("confidence", 0.5)
+            },
+            priority=MessagePriority.LOW
         )
         
-        return self.server.learning_system.register_learning_update(update)
+        # Add the message to the outbox
+        self.outbox.put(message)
+        
+        # Store the pattern
+        self.patterns[update_id] = pattern
+        
+        return update_id
     
     def _evaluate_model(self, model_id: str) -> Dict[str, Any]:
         """Evaluate a model's performance"""
-        # Get model config
-        model_config = self.server.model_manager.get_model_config(model_id)
-        if not model_config:
-            return {"error": f"Model {model_id} not found"}
-        
-        # Perform evaluation
-        # TODO: Implement actual model evaluation
+        # In a real implementation, this would perform actual evaluation
+        # For this demo, we just return a simulated result
         
         return {
-            "accuracy": 0.95,
-            "latency": 0.5,
-            "token_efficiency": 0.8,
-            "evaluation_time": time.time()
+            "model_id": model_id,
+            "accuracy": 0.92,
+            "response_time": {
+                "avg_ms": 780,
+                "p95_ms": 1200,
+                "p99_ms": 1800
+            },
+            "cost_per_1000_tokens": 0.02,
+            "reliability": 0.995,
+            "strengths": [
+                "Code quality assessment",
+                "Architectural pattern recognition",
+                "Detailed explanations"
+            ],
+            "weaknesses": [
+                "Slowness on large codebases",
+                "Occasional hallucinations in edge cases",
+                "Limited multi-language support"
+            ]
         }
