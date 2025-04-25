@@ -7,6 +7,14 @@ import base64
 from datetime import datetime, timedelta
 from model_interface import ModelInterface
 
+# Import components
+from components.styling import apply_terraflow_style, render_logo
+from components.navigation import render_sidebar_navigation, render_breadcrumbs, render_page_header
+from components.ui_components import (
+    metric_card, feature_card, status_indicator, 
+    activity_feed, alert_item, section_header
+)
+
 # Set page configuration
 st.set_page_config(
     page_title="TerraFusion AI Platform",
@@ -14,346 +22,16 @@ st.set_page_config(
     layout="wide",
 )
 
-# Define custom CSS to match TerraFusion mockups
-st.markdown("""
-<style>
-    /* TerraFusion color palette and theme */
-    :root {
-        --tf-primary: #00e5ff;
-        --tf-primary-dark: #00b8d4;
-        --tf-background: #001529;
-        --tf-card-bg: #0a2540;
-        --tf-text: #ffffff;
-        --tf-text-secondary: rgba(0, 229, 255, 0.7);
-        --tf-text-tertiary: rgba(0, 229, 255, 0.5);
-        --tf-border: rgba(0, 229, 255, 0.2);
-        --tf-success: #00c853;
-        --tf-warning: #ffd600;
-        --tf-error: #ff1744;
-    }
-    
-    /* Base styles */
-    .stApp {
-        background-color: var(--tf-background);
-    }
-    
-    /* Header styles */
-    .main-header {
-        font-size: clamp(2.6rem, 2vw + 1.4rem, 4rem);
-        font-weight: 700;
-        color: var(--tf-text);
-        margin-bottom: 0;
-        padding-bottom: 0;
-    }
-    
-    .sub-header {
-        font-size: 1.2rem;
-        color: var(--tf-text-secondary);
-        margin-top: 0;
-        padding-top: 0;
-        margin-bottom: 2rem;
-    }
-    
-    /* Button styling */
-    .stButton > button {
-        background-color: var(--tf-primary) !important;
-        color: var(--tf-background) !important;
-        font-weight: 600 !important;
-        border: none !important;
-        padding: 0.6rem 1.2rem !important;
-        border-radius: 0.375rem !important;
-        transition: all 0.2s ease !important;
-        width: 100% !important;
-        text-transform: none !important;
-        letter-spacing: normal !important;
-    }
-    
-    .stButton > button:hover {
-        background-color: var(--tf-primary-dark) !important;
-        transform: translateY(-2px) !important;
-        box-shadow: 0 4px 12px rgba(0, 229, 255, 0.3) !important;
-    }
-    
-    /* Section headers */
-    h2, h3 {
-        color: var(--tf-primary) !important;
-        font-weight: 600;
-        margin-top: 2rem;
-        margin-bottom: 1.2rem;
-    }
-    
-    .section-header {
-        font-size: 1.8rem;
-        font-weight: 600;
-        color: var(--tf-primary);
-        margin-bottom: 1.5rem;
-        border-bottom: 1px solid var(--tf-border);
-        padding-bottom: 0.5rem;
-    }
-    
-    /* TerraFusion card styles */
-    .tf-card {
-        background-color: var(--tf-card-bg);
-        border: 1px solid var(--tf-border);
-        border-radius: 0.75rem;
-        padding: 1.5rem;
-        margin-bottom: 1.5rem;
-        position: relative;
-        overflow: hidden;
-        box-shadow: 0 0 20px rgba(0, 229, 255, 0.1);
-    }
-    
-    .tf-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 4px;
-        height: 100%;
-        background-color: var(--tf-primary);
-        opacity: 0.7;
-    }
-    
-    .card-title {
-        font-size: 1.2rem;
-        font-weight: 600;
-        color: var(--tf-primary);
-        margin-bottom: 1rem;
-    }
-    
-    /* Status indicators */
-    .status-online {
-        color: var(--tf-success);
-        font-weight: 600;
-    }
-    
-    .status-offline {
-        color: var(--tf-error);
-        font-weight: 600;
-    }
-    
-    /* Dashboard metric card */
-    .metric-card {
-        background-color: var(--tf-card-bg);
-        border: 1px solid var(--tf-border);
-        border-radius: 0.75rem;
-        padding: 1.5rem;
-        margin-bottom: 1rem;
-        position: relative;
-        transition: transform 0.3s ease, box-shadow 0.3s ease;
-    }
-    
-    .metric-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 0 30px rgba(0, 229, 255, 0.15);
-    }
-    
-    .metric-title {
-        font-size: 0.875rem;
-        font-weight: 500;
-        color: var(--tf-text-secondary);
-        margin-bottom: 0.75rem;
-    }
-    
-    .metric-value {
-        font-size: clamp(2rem, 1.5vw + 1rem, 3rem);
-        font-weight: 700;
-        color: var(--tf-text);
-        margin-bottom: 0.25rem;
-    }
-    
-    .metric-unit {
-        font-size: 0.75rem;
-        color: var(--tf-text-tertiary);
-        font-weight: 400;
-    }
-    
-    /* Feature card styles */
-    .feature-card {
-        background-color: var(--tf-card-bg);
-        border: 1px solid var(--tf-border);
-        border-radius: 0.75rem;
-        padding: 1.5rem;
-        height: 100%;
-        transition: transform 0.3s ease, box-shadow 0.3s ease;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .feature-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 0 30px rgba(0, 229, 255, 0.15);
-    }
-    
-    .feature-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 4px;
-        height: 100%;
-        background-color: var(--tf-primary);
-        opacity: 0.7;
-    }
-    
-    .feature-icon {
-        font-size: 2rem;
-        margin-bottom: 1rem;
-        color: var(--tf-primary);
-    }
-    
-    .feature-title {
-        font-size: 1.25rem;
-        font-weight: 600;
-        color: var(--tf-primary);
-        margin-bottom: 0.75rem;
-    }
-    
-    .feature-description {
-        font-size: 0.875rem;
-        color: var(--tf-text-tertiary);
-        line-height: 1.5;
-    }
-    
-    /* Activity feed */
-    .activity-item {
-        background-color: var(--tf-card-bg);
-        border: 1px solid var(--tf-border);
-        border-radius: 0.375rem;
-        padding: 1rem;
-        margin-bottom: 0.75rem;
-        position: relative;
-    }
-    
-    .activity-item::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 3px;
-        height: 100%;
-        background-color: var(--tf-primary);
-        opacity: 0.7;
-    }
-    
-    .activity-time {
-        font-size: 0.75rem;
-        color: var(--tf-text-tertiary);
-        margin-bottom: 0.5rem;
-    }
-    
-    .activity-content {
-        font-size: 0.875rem;
-        color: var(--tf-text);
-    }
-    
-    /* Alert styles */
-    .alert-item {
-        border-radius: 0.375rem;
-        padding: 1rem;
-        margin-bottom: 0.75rem;
-        position: relative;
-        background-color: var(--tf-card-bg);
-    }
-    
-    .alert-high::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 3px;
-        height: 100%;
-        background-color: var(--tf-error);
-    }
-    
-    .alert-medium::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 3px;
-        height: 100%;
-        background-color: var(--tf-warning);
-    }
-    
-    .alert-low::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 3px;
-        height: 100%;
-        background-color: var(--tf-success);
-    }
-    
-    /* Glassmorphic container */
-    .glassmorphic-container {
-        background: rgba(10, 37, 64, 0.7);
-        backdrop-filter: blur(10px);
-        border-radius: 1rem;
-        border: 1px solid var(--tf-border);
-        padding: 1.5rem;
-        box-shadow: 0 8px 32px rgba(0, 229, 255, 0.1);
-    }
-    
-    /* Guide section */
-    .guide-container {
-        background-color: rgba(0, 229, 255, 0.05);
-        border: 1px solid var(--tf-border);
-        border-radius: 0.75rem;
-        padding: 1.5rem;
-        margin-top: 2rem;
-    }
-    
-    .guide-title {
-        font-size: 1.25rem;
-        font-weight: 600;
-        color: var(--tf-primary);
-        margin-bottom: 1rem;
-    }
-    
-    .guide-step {
-        padding-left: 1rem;
-        border-left: 2px solid var(--tf-primary);
-        margin-bottom: 1rem;
-    }
-    
-    .guide-step-title {
-        font-weight: 600;
-        color: var(--tf-text);
-        margin-bottom: 0.25rem;
-    }
-    
-    .guide-step-description {
-        font-size: 0.875rem;
-        color: var(--tf-text-secondary);
-    }
-    
-    /* Footer */
-    .footer {
-        margin-top: 3rem;
-        padding-top: 1.5rem;
-        border-top: 1px solid var(--tf-border);
-        text-align: center;
-        color: var(--tf-text-tertiary);
-        font-size: 0.875rem;
-    }
-    
-    /* TerraFusion watermark/tiny logo */
-    .terraform-watermark {
-        position: absolute;
-        top: 0.75rem;
-        right: 0.75rem;
-        opacity: 0.1;
-        width: 1rem;
-        height: 1rem;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Apply consistent styling
+apply_terraflow_style()
 
 # Initialize session state
 if 'model_interface' not in st.session_state:
     st.session_state.model_interface = ModelInterface()
+
+# Render navigation in sidebar
+render_logo()
+render_sidebar_navigation()
 
 # Helper functions
 def get_random_activity():
@@ -386,19 +64,14 @@ def get_active_alerts():
     ]
     return alerts
 
-# Header section with logo
-header_container = st.container()
-with header_container:
-    col1, col2 = st.columns([6, 1])
-    with col1:
-        st.markdown('<h1 class="main-header">TerraFusion AI Platform</h1>', unsafe_allow_html=True)
-        st.markdown('<p class="sub-header">Advanced AI-powered code analysis and optimization platform</p>', unsafe_allow_html=True)
-    
-    # Header separator
-    st.markdown('<hr style="border-color: rgba(0, 229, 255, 0.2); margin: 2rem 0;">', unsafe_allow_html=True)
+# Header section with breadcrumb and title
+render_page_header(
+    title="TerraFusion AI Platform",
+    subtitle="Advanced AI-powered code analysis and optimization platform"
+)
 
 # AI Services Status
-st.markdown('<h2 class="section-header">AI Service Status</h2>', unsafe_allow_html=True)
+section_header("AI Service Status")
 col1, col2 = st.columns(2)
 
 with col1:
