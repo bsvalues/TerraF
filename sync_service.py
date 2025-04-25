@@ -7979,7 +7979,7 @@ class SyncService:
     def get_performance_metrics(self) -> Dict[str, Any]:
         """
         Get comprehensive performance metrics, including system resources,
-        database performance, and dynamic batch processing recommendations.
+        repository performance, and dynamic batch processing recommendations.
         
         Returns:
             Dictionary with integrated performance metrics and recommendations
@@ -7988,13 +7988,13 @@ class SyncService:
         
         try:
             # Set default values for metrics
-            default_db_metrics = {
+            default_repo_metrics = {
                 "metrics": {
                     "source": {
                         "cpu_utilization": 30,
                         "memory_utilization": 40,
                         "active_connections": 5,
-                        "avg_query_time_ms": 25,
+                        "avg_execution_time_ms": 25,
                         "operations_executed": 100,
                         "transaction_count": 10
                     },
@@ -8002,40 +8002,40 @@ class SyncService:
                         "cpu_utilization": 35,
                         "memory_utilization": 45,
                         "active_connections": 8,
-                        "avg_query_time_ms": 30,
+                        "avg_execution_time_ms": 30,
                         "operations_executed": 120,
                         "transaction_count": 15
                     }
                 },
                 "recommendations": [
                     {
-                        "description": "Consider index optimization for improved query performance",
+                        "description": "Consider index optimization for improved operation performance",
                         "severity": "medium"
                     }
                 ],
                 "historical_trends": {}
             }
             
-            # Get database performance metrics with fallback
+            # Get repository performance metrics with fallback
             try:
-                db_performance_summary = self.performance_monitor.get_performance_summary()
-            except Exception as db_err:
-                self.logger.warning(f"Using fallback repository metrics due to error: {str(db_err)}")
-                db_performance_summary = default_db_metrics
+                repo_performance_summary = self.performance_monitor.get_performance_summary()
+            except Exception as repo_err:
+                self.logger.warning(f"Using fallback repository metrics due to error: {str(repo_err)}")
+                repo_performance_summary = default_repo_metrics
             
             # Ensure required metrics exist
-            for db_type in ["source", "target"]:
-                if db_type not in db_performance_summary.get("metrics", {}):
-                    db_performance_summary["metrics"][db_type] = default_db_metrics["metrics"][db_type]
+            for repo_type in ["source", "target"]:
+                if repo_type not in repo_performance_summary.get("metrics", {}):
+                    repo_performance_summary["metrics"][repo_type] = default_repo_metrics["metrics"][repo_type]
                 
                 # Ensure all required fields exist
-                for field, default_value in default_db_metrics["metrics"][db_type].items():
-                    if field not in db_performance_summary["metrics"][db_type]:
-                        db_performance_summary["metrics"][db_type][field] = default_value
+                for field, default_value in default_repo_metrics["metrics"][repo_type].items():
+                    if field not in repo_performance_summary["metrics"][repo_type]:
+                        repo_performance_summary["metrics"][repo_type][field] = default_value
             
             # Ensure recommendations exist
-            if "recommendations" not in db_performance_summary:
-                db_performance_summary["recommendations"] = default_db_metrics["recommendations"]
+            if "recommendations" not in repo_performance_summary:
+                repo_performance_summary["recommendations"] = default_repo_metrics["recommendations"]
             
             # Get system resource metrics
             system_resources = self.resource_monitor.current_metrics
