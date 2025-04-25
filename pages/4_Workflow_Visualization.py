@@ -478,313 +478,115 @@ def analyze_workflow_efficiency(workflow_data):
         st.error(f"Error analyzing workflow: {str(e)}")
         return None
 
-# Example workflows for demonstration
-EXAMPLE_WORKFLOWS = {
-    "User Authentication Flow": """
-function authenticateUser(username, password) {
-  // Step 1: Validate input
-  if (!username || !password) {
-    throw new Error('Username and password are required');
-  }
-  
-  // Step 2: Check against database
-  const user = getUserFromDatabase(username);
-  
-  // Step 3: Verify password
-  if (!user || !verifyPassword(password, user.passwordHash)) {
-    // Step 3a: If invalid, log failed attempt
-    logFailedLoginAttempt(username);
-    throw new Error('Invalid username or password');
-  }
-  
-  // Step 4: Generate session token
-  const token = generateSessionToken(user.id);
-  
-  // Step 5: Record successful login
-  recordSuccessfulLogin(user.id);
-  
-  // Step 6: Return user with token
-  return {
-    user: {
-      id: user.id,
-      username: user.username,
-      roles: user.roles
-    },
-    token: token,
-    expires: getTokenExpiration(token)
-  };
+# Example workflow data for demonstration
+EXAMPLE_WORKFLOW_DATA = {
+    "workflow_name": "E-commerce Order Processing",
+    "workflow_description": "Process a customer order from initial request to completion",
+    "steps": [
+        {
+            "id": "validate_order",
+            "name": "Validate Order Request",
+            "description": "Check if the order request contains all required information",
+            "type": "decision",
+            "depends_on": [],
+            "duration": 2
+        },
+        {
+            "id": "create_order",
+            "name": "Create Order in Database",
+            "description": "Create a new order record in the database",
+            "type": "task",
+            "depends_on": ["validate_order"],
+            "duration": 3
+        },
+        {
+            "id": "check_inventory",
+            "name": "Check Inventory",
+            "description": "Verify that items are in stock",
+            "type": "task",
+            "depends_on": ["create_order"],
+            "duration": 4
+        },
+        {
+            "id": "process_payment",
+            "name": "Process Payment",
+            "description": "Process the customer's payment method",
+            "type": "task",
+            "depends_on": ["check_inventory"],
+            "duration": 7
+        },
+        {
+            "id": "reserve_inventory",
+            "name": "Reserve Inventory",
+            "description": "Reserve the inventory items for this order",
+            "type": "task",
+            "depends_on": ["process_payment"],
+            "duration": 3
+        },
+        {
+            "id": "confirm_order",
+            "name": "Confirm Order",
+            "description": "Mark the order as confirmed in the system",
+            "type": "task",
+            "depends_on": ["reserve_inventory"],
+            "duration": 1
+        },
+        {
+            "id": "send_confirmation",
+            "name": "Send Confirmation Email",
+            "description": "Send an order confirmation email to the customer",
+            "type": "task",
+            "depends_on": ["confirm_order"],
+            "duration": 2
+        },
+        {
+            "id": "get_order_details",
+            "name": "Return Order Details",
+            "description": "Retrieve and return the complete order details",
+            "type": "task",
+            "depends_on": ["send_confirmation"],
+            "duration": 1
+        }
+    ]
 }
 
-function getUserFromDatabase(username) {
-  // Simulate database lookup
-  console.log(`Looking up user: ${username}`);
-  
-  // In a real application, this would query a database
-  if (username === 'demo_user') {
-    return {
-      id: 'user_123',
-      username: 'demo_user',
-      passwordHash: 'hashed_password_here',
-      roles: ['user']
-    };
-  }
-  
-  return null;
-}
-
-function verifyPassword(password, passwordHash) {
-  // In a real application, this would use a secure hash comparison
-  console.log('Verifying password');
-  return passwordHash === 'hashed_password_here';
-}
-
-function logFailedLoginAttempt(userId) {
-  console.log(`Failed login attempt for user: ${userId}`);
-  // Update failed attempts counter and check for suspicious activity
-  checkForSuspiciousActivity(userId);
-}
-
-function checkForSuspiciousActivity(userId) {
-  // Check for multiple failed login attempts
-  console.log(`Checking for suspicious activity for user: ${userId}`);
-}
-
-function generateSessionToken(userId) {
-  // Generate JWT token
-  console.log(`Generating session token for user: ${userId}`);
-  return 'jwt-token-12345';
-}
-
-function getTokenExpiration(token) {
-  // Calculate token expiration time
-  return new Date(Date.now() + 3600000); // 1 hour
-}
-
-function recordSuccessfulLogin(userId) {
-  // Record successful login in audit log
-  console.log(`Recording successful login for user: ${userId}`);
-  updateLastLoginTimestamp(userId);
-}
-
-function updateLastLoginTimestamp(userId) {
-  // Update last login timestamp in database
-  console.log(`Updating last login timestamp for user: ${userId}`);
-}
-    """,
-    
-    "Data Processing Pipeline": """
-import pandas as pd
-import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-
-def process_data_pipeline(input_file):
-    """Main function to process data through the complete pipeline"""
-    # Step 1: Load the raw data
-    raw_data = load_data(input_file)
-    
-    # Step 2: Clean the data
-    cleaned_data = clean_data(raw_data)
-    
-    # Step 3: Transform the data
-    transformed_data = transform_data(cleaned_data)
-    
-    # Step 4: Split the data into training and testing sets
-    train_data, test_data = split_data(transformed_data)
-    
-    # Step 5: Scale the features
-    scaled_train, scaled_test = scale_features(train_data, test_data)
-    
-    # Step 6: Save the processed datasets
-    save_processed_data(scaled_train, scaled_test)
-    
-    return {
-        "train_data": scaled_train,
-        "test_data": scaled_test,
-        "statistics": calculate_statistics(transformed_data)
-    }
-
-def load_data(file_path):
-    """Load data from CSV file"""
-    print(f"Loading data from {file_path}")
-    try:
-        data = pd.read_csv(file_path)
-        print(f"Loaded {len(data)} records")
-        return data
-    except Exception as e:
-        print(f"Error loading data: {str(e)}")
-        raise
-
-def clean_data(data):
-    """Clean the data by handling missing values and outliers"""
-    print("Cleaning data...")
-    
-    # Handle missing values
-    data = handle_missing_values(data)
-    
-    # Remove outliers
-    data = remove_outliers(data)
-    
-    print(f"Data cleaning complete. {len(data)} records remaining")
-    return data
-
-def handle_missing_values(data):
-    """Handle missing values in the dataset"""
-    print("Handling missing values")
-    # Fill numeric columns with median
-    numeric_columns = data.select_dtypes(include=[np.number]).columns
-    for col in numeric_columns:
-        data[col] = data[col].fillna(data[col].median())
-    
-    # Fill categorical columns with mode
-    categorical_columns = data.select_dtypes(include=['object']).columns
-    for col in categorical_columns:
-        data[col] = data[col].fillna(data[col].mode()[0])
-    
-    return data
-
-def remove_outliers(data):
-    """Remove outliers from the dataset"""
-    print("Removing outliers")
-    numeric_columns = data.select_dtypes(include=[np.number]).columns
-    
-    for col in numeric_columns:
-        q1 = data[col].quantile(0.25)
-        q3 = data[col].quantile(0.75)
-        iqr = q3 - q1
-        lower_bound = q1 - (1.5 * iqr)
-        upper_bound = q3 + (1.5 * iqr)
-        
-        data = data[(data[col] >= lower_bound) & (data[col] <= upper_bound)]
-    
-    return data
-
-def transform_data(data):
-    """Transform the data by creating new features and encoding categorical variables"""
-    print("Transforming data")
-    
-    # Create new features
-    data = create_new_features(data)
-    
-    # Encode categorical variables
-    data = encode_categorical_variables(data)
-    
-    print("Data transformation complete")
-    return data
-
-def create_new_features(data):
-    """Create new features from existing ones"""
-    print("Creating new features")
-    # Example: Create a new feature (placeholder for actual implementation)
-    if 'feature1' in data.columns and 'feature2' in data.columns:
-        data['feature_ratio'] = data['feature1'] / data['feature2'].replace(0, 1)
-    
-    return data
-
-def encode_categorical_variables(data):
-    """Encode categorical variables using one-hot encoding"""
-    print("Encoding categorical variables")
-    categorical_columns = data.select_dtypes(include=['object']).columns
-    
-    # Perform one-hot encoding
-    data = pd.get_dummies(data, columns=list(categorical_columns))
-    
-    return data
-
-def split_data(data):
-    """Split the data into training and testing sets"""
-    print("Splitting data into train and test sets")
-    
-    # Define features and target
-    if 'target' in data.columns:
-        X = data.drop('target', axis=1)
-        y = data['target']
-        
-        # Split the data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42
-        )
-        
-        # Combine features and target for return
-        train_data = pd.concat([X_train, y_train], axis=1)
-        test_data = pd.concat([X_test, y_test], axis=1)
-    else:
-        # If no target column, just split the data
-        train_data, test_data = train_test_split(
-            data, test_size=0.2, random_state=42
-        )
-    
-    print(f"Train set: {len(train_data)} records, Test set: {len(test_data)} records")
-    return train_data, test_data
-
-def scale_features(train_data, test_data):
-    """Scale the features using StandardScaler"""
-    print("Scaling features")
-    
-    # Separate features and target if target exists
-    if 'target' in train_data.columns:
-        X_train = train_data.drop('target', axis=1)
-        y_train = train_data['target']
-        X_test = test_data.drop('target', axis=1)
-        y_test = test_data['target']
-        
-        # Initialize and fit the scaler
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
-        
-        # Convert back to DataFrame
-        X_train_scaled = pd.DataFrame(X_train_scaled, columns=X_train.columns)
-        X_test_scaled = pd.DataFrame(X_test_scaled, columns=X_test.columns)
-        
-        # Combine with target
-        train_scaled = pd.concat([X_train_scaled, y_train], axis=1)
-        test_scaled = pd.concat([X_test_scaled, y_test], axis=1)
-    else:
-        # Scale all features
-        scaler = StandardScaler()
-        train_scaled = pd.DataFrame(
-            scaler.fit_transform(train_data),
-            columns=train_data.columns
-        )
-        test_scaled = pd.DataFrame(
-            scaler.transform(test_data),
-            columns=test_data.columns
-        )
-    
-    print("Feature scaling complete")
-    return train_scaled, test_scaled
-
-def save_processed_data(train_data, test_data):
-    """Save the processed datasets to CSV files"""
-    print("Saving processed data")
-    
-    train_data.to_csv("processed_train_data.csv", index=False)
-    test_data.to_csv("processed_test_data.csv", index=False)
-    
-    print("Data saved successfully")
-
-def calculate_statistics(data):
-    """Calculate and return statistics about the data"""
-    print("Calculating statistics")
-    
-    stats = {
-        "record_count": len(data),
-        "feature_count": len(data.columns),
-        "numeric_features": len(data.select_dtypes(include=[np.number]).columns),
-        "categorical_features": len(data.select_dtypes(include=['object']).columns)
-    }
-    
-    return stats
-
-# Example usage
-if __name__ == "__main__":
-    result = process_data_pipeline("raw_data.csv")
-    print("Pipeline completed successfully!")
-    print(f"Training data shape: {result['train_data'].shape}")
-    print(f"Testing data shape: {result['test_data'].shape}")
-    print(f"Data statistics: {result['statistics']}")
-    """
+# Example workflow analysis for demonstration
+EXAMPLE_WORKFLOW_ANALYSIS = {
+    "efficiency_score": 68,
+    "analysis": "The workflow follows a logical sequence, but there are several bottlenecks and opportunities for parallel processing. The payment processing step is the most time-consuming and creates a single point of failure.",
+    "bottlenecks": [
+        {
+            "step_id": "process_payment",
+            "impact": "High",
+            "recommendation": "Consider implementing payment processing service scaling or moving to an asynchronous processing model."
+        },
+        {
+            "step_id": "check_inventory",
+            "impact": "Medium",
+            "recommendation": "Implement a caching layer for inventory status to reduce database load."
+        }
+    ],
+    "optimization_opportunities": [
+        {
+            "type": "Parallel Processing",
+            "description": "Some steps could be processed in parallel rather than sequentially",
+            "steps_affected": ["check_inventory", "process_payment"],
+            "estimated_improvement": "25-30% reduction in overall processing time"
+        },
+        {
+            "type": "Caching",
+            "description": "Implement caching for frequently accessed data",
+            "steps_affected": ["check_inventory", "get_order_details"],
+            "estimated_improvement": "40-50% reduction in database load"
+        }
+    ],
+    "overall_recommendations": [
+        "Implement an asynchronous processing model for payment handling",
+        "Add parallel processing for independent steps like inventory checking and payment processing",
+        "Implement a caching layer for inventory status",
+        "Add retry logic for critical steps like payment processing",
+        "Consider breaking down the monolithic workflow into microservices"
+    ]
 }
 
 # Initialize session state
@@ -820,13 +622,9 @@ with right_col:
     
     if input_method == "Example Workflow":
         # Example workflow selection
-        selected_example = st.selectbox(
-            "Select Example Workflow",
-            list(EXAMPLE_WORKFLOWS.keys())
-        )
-        
-        code_language = "JavaScript" if "Authentication" in selected_example else "Python"
-        code_to_analyze = EXAMPLE_WORKFLOWS[selected_example]
+        st.success("Using pre-loaded example workflow")
+        st.session_state.workflow_data = EXAMPLE_WORKFLOW_DATA
+        st.session_state.workflow_details = EXAMPLE_WORKFLOW_ANALYSIS
     else:
         # Custom code input
         code_language = st.selectbox(
@@ -839,24 +637,24 @@ with right_col:
             height=300,
             placeholder=f"Paste your {code_language} code here..."
         )
-    
-    # Analyze button
-    if st.button("Analyze Workflow", type="primary"):
-        if not code_to_analyze.strip():
-            st.error("Please enter code to analyze")
-        else:
-            with st.spinner("Analyzing workflow..."):
-                # Extract workflow from code
-                workflow_data = extract_workflow_from_code(code_to_analyze, code_language)
-                
-                if workflow_data:
-                    st.session_state.workflow_data = workflow_data
-                    st.session_state.analyzed_code = code_to_analyze
+        
+        # Analyze button
+        if st.button("Analyze Workflow", type="primary"):
+            if not code_to_analyze.strip():
+                st.error("Please enter code to analyze")
+            else:
+                with st.spinner("Analyzing workflow..."):
+                    # Extract workflow from code
+                    workflow_data = extract_workflow_from_code(code_to_analyze, code_language)
                     
-                    # Analyze workflow efficiency
-                    st.session_state.workflow_details = analyze_workflow_efficiency(workflow_data)
-                    
-                    st.success("Workflow analysis completed!")
+                    if workflow_data:
+                        st.session_state.workflow_data = workflow_data
+                        st.session_state.analyzed_code = code_to_analyze
+                        
+                        # Analyze workflow efficiency
+                        st.session_state.workflow_details = analyze_workflow_efficiency(workflow_data)
+                        
+                        st.success("Workflow analysis completed!")
     
     # Back to home
     if st.button("Back to Home"):
@@ -891,7 +689,7 @@ with left_col:
         with col2:
             st.markdown(
                 f'<div class="metric-card">'
-                f'<div class="metric-label">Complexity Score</div>'
+                f'<div class="metric-label">Efficiency Score</div>'
                 f'<div class="metric-value">{workflow_details.get("efficiency_score", 0)}/100</div>'
                 f'</div>',
                 unsafe_allow_html=True
@@ -1034,15 +832,6 @@ with left_col:
                     )
             
             st.markdown('</div>', unsafe_allow_html=True)  # Close card div
-        
-        # Code display expander
-        with st.expander("View Analyzed Code", expanded=False):
-            st.markdown(
-                f'<div class="code-block">'
-                f'<pre><code>{st.session_state.analyzed_code}</code></pre>'
-                f'</div>',
-                unsafe_allow_html=True
-            )
         
         # Workflow steps expander
         with st.expander("View Workflow Steps", expanded=False):
