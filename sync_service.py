@@ -2224,15 +2224,15 @@ class DataQualityProfiler:
                 "timestamp": datetime.datetime.now().isoformat()
             }
     
-    def _estimate_row_count(self, table_name: str) -> int:
-        """Estimate row count for a table"""
-        # In a real implementation, this would use database statistics
+    def _estimate_row_count(self, collection_name: str) -> int:
+        """Estimate item count for a collection"""
+        # In a real implementation, this would use repository statistics
         # For the simulation, we'll generate a random count
         return random.randint(1000, 100000)
     
-    def _get_mock_columns(self, table_name: str) -> List[Dict[str, str]]:
-        """Get mock column information for a table"""
-        if table_name == "properties":
+    def _get_mock_columns(self, collection_name: str) -> List[Dict[str, str]]:
+        """Get mock field information for a collection"""
+        if collection_name == "properties":
             return [
                 {"column_name": "property_id", "data_type": "INTEGER"},
                 {"column_name": "parcel_number", "data_type": "VARCHAR"},
@@ -2243,7 +2243,7 @@ class DataQualityProfiler:
                 {"column_name": "total_value", "data_type": "DECIMAL"},
                 {"column_name": "last_updated", "data_type": "DATETIME"}
             ]
-        elif table_name == "valuations":
+        elif collection_name == "valuations":
             return [
                 {"column_name": "valuation_id", "data_type": "INTEGER"},
                 {"column_name": "property_id", "data_type": "INTEGER"},
@@ -2253,7 +2253,7 @@ class DataQualityProfiler:
                 {"column_name": "assessor_id", "data_type": "INTEGER"}
             ]
         else:
-            # Generic columns for other tables
+            # Generic fields for other collections
             return [
                 {"column_name": "id", "data_type": "INTEGER"},
                 {"column_name": "name", "data_type": "VARCHAR"},
@@ -2262,50 +2262,50 @@ class DataQualityProfiler:
                 {"column_name": "updated_at", "data_type": "DATETIME"}
             ]
     
-    def _analyze_column(self, column_name: str, data_type: str, values: List[Any]) -> Dict[str, Any]:
-        """Analyze a column from sample data"""
-        column_profile = {
-            "name": column_name,
+    def _analyze_field(self, field_name: str, data_type: str, values: List[Any]) -> Dict[str, Any]:
+        """Analyze a field from sample data"""
+        field_profile = {
+            "name": field_name,
             "data_type": data_type,
             "sample_size": len(values)
         }
         
         # Count NULL values
         null_count = sum(1 for v in values if v is None)
-        column_profile["null_count"] = null_count
-        column_profile["null_percentage"] = (null_count / len(values) * 100) if values else 0
+        field_profile["null_count"] = null_count
+        field_profile["null_percentage"] = (null_count / len(values) * 100) if values else 0
         
         # Count unique values
         non_null_values = [v for v in values if v is not None]
         unique_values = set(non_null_values)
-        column_profile["cardinality"] = len(unique_values)
-        column_profile["unique_percentage"] = (len(unique_values) / len(non_null_values) * 100) if non_null_values else 0
+        field_profile["cardinality"] = len(unique_values)
+        field_profile["unique_percentage"] = (len(unique_values) / len(non_null_values) * 100) if non_null_values else 0
         
         # Type-specific analysis
         if data_type.upper() in ("INTEGER", "DECIMAL", "FLOAT", "NUMERIC"):
-            column_profile["type"] = "numeric"
+            field_profile["type"] = "numeric"
             numeric_values = [float(v) for v in non_null_values if str(v).replace(".", "", 1).isdigit()]
             
             if numeric_values:
-                column_profile["min"] = min(numeric_values)
-                column_profile["max"] = max(numeric_values)
-                column_profile["mean"] = sum(numeric_values) / len(numeric_values)
-                column_profile["median"] = self._calculate_median(numeric_values)
+                field_profile["min"] = min(numeric_values)
+                field_profile["max"] = max(numeric_values)
+                field_profile["mean"] = sum(numeric_values) / len(numeric_values)
+                field_profile["median"] = self._calculate_median(numeric_values)
                 
                 # Standard deviation
                 if len(numeric_values) > 1:
-                    variance = sum((x - column_profile["mean"]) ** 2 for x in numeric_values) / len(numeric_values)
-                    column_profile["std_dev"] = variance ** 0.5
+                    variance = sum((x - field_profile["mean"]) ** 2 for x in numeric_values) / len(numeric_values)
+                    field_profile["std_dev"] = variance ** 0.5
                 else:
-                    column_profile["std_dev"] = 0
+                    field_profile["std_dev"] = 0
                 
                 # Calculate skewness
-                if len(numeric_values) > 2 and column_profile["std_dev"] > 0:
-                    skewness = sum((x - column_profile["mean"]) ** 3 for x in numeric_values)
-                    skewness /= len(numeric_values) * (column_profile["std_dev"] ** 3)
-                    column_profile["skewness"] = skewness
+                if len(numeric_values) > 2 and field_profile["std_dev"] > 0:
+                    skewness = sum((x - field_profile["mean"]) ** 3 for x in numeric_values)
+                    skewness /= len(numeric_values) * (field_profile["std_dev"] ** 3)
+                    field_profile["skewness"] = skewness
                 else:
-                    column_profile["skewness"] = 0
+                    field_profile["skewness"] = 0
                 
                 # Identify outliers using IQR method
                 q1, q3 = self._calculate_quartiles(numeric_values)
@@ -2314,35 +2314,35 @@ class DataQualityProfiler:
                 upper_bound = q3 + 1.5 * iqr
                 
                 outliers = [x for x in numeric_values if x < lower_bound or x > upper_bound]
-                column_profile["outlier_count"] = len(outliers)
-                column_profile["outlier_percentage"] = (len(outliers) / len(numeric_values) * 100) if numeric_values else 0
+                field_profile["outlier_count"] = len(outliers)
+                field_profile["outlier_percentage"] = (len(outliers) / len(numeric_values) * 100) if numeric_values else 0
                 
         elif data_type.upper() in ("VARCHAR", "CHAR", "TEXT"):
-            column_profile["type"] = "text"
+            field_profile["type"] = "text"
             text_values = [str(v) for v in non_null_values if v is not None]
             
             if text_values:
-                column_profile["min_length"] = min(len(str(v)) for v in text_values)
-                column_profile["max_length"] = max(len(str(v)) for v in text_values)
-                column_profile["avg_length"] = sum(len(str(v)) for v in text_values) / len(text_values)
+                field_profile["min_length"] = min(len(str(v)) for v in text_values)
+                field_profile["max_length"] = max(len(str(v)) for v in text_values)
+                field_profile["avg_length"] = sum(len(str(v)) for v in text_values) / len(text_values)
                 
                 # Check for email pattern
                 email_pattern = r"[^@]+@[^@]+\.[^@]+"
                 email_count = sum(1 for v in text_values if re.match(email_pattern, str(v)))
-                column_profile["email_count"] = email_count
-                column_profile["email_percentage"] = (email_count / len(text_values) * 100) if text_values else 0
+                field_profile["email_count"] = email_count
+                field_profile["email_percentage"] = (email_count / len(text_values) * 100) if text_values else 0
                 
         elif data_type.upper() in ("DATE", "DATETIME", "TIMESTAMP"):
-            column_profile["type"] = "datetime"
+            field_profile["type"] = "datetime"
             # In a real implementation, this would parse and analyze dates
             # For the simulation, we'll just set some basic metrics
-            column_profile["has_future_dates"] = False
-            column_profile["has_very_old_dates"] = False
+            field_profile["has_future_dates"] = False
+            field_profile["has_very_old_dates"] = False
             
-        # Calculate column quality score
-        column_profile["quality_score"] = self._calculate_column_quality_score(column_profile)
+        # Calculate field quality score
+        field_profile["quality_score"] = self._calculate_field_quality_score(field_profile)
         
-        return column_profile
+        return field_profile
     
     def _calculate_median(self, values: List[float]) -> float:
         """Calculate the median of a list of values"""
@@ -2367,45 +2367,45 @@ class DataQualityProfiler:
         
         return sorted_values[q1_idx], sorted_values[q3_idx]
     
-    def _calculate_column_quality_score(self, column_profile: Dict[str, Any]) -> float:
-        """Calculate a quality score for a column (0-1)"""
+    def _calculate_field_quality_score(self, field_profile: Dict[str, Any]) -> float:
+        """Calculate a quality score for a field (0-1)"""
         # Start with a perfect score and subtract penalties
         score = 1.0
         
         # Penalize for NULL values
-        null_penalty = min(column_profile.get("null_percentage", 0) / 100, 0.5)
+        null_penalty = min(field_profile.get("null_percentage", 0) / 100, 0.5)
         score -= null_penalty
         
         # Type-specific penalties
-        if column_profile.get("type") == "numeric":
+        if field_profile.get("type") == "numeric":
             # Penalize for outliers
-            outlier_penalty = min(column_profile.get("outlier_percentage", 0) / 200, 0.25)
+            outlier_penalty = min(field_profile.get("outlier_percentage", 0) / 200, 0.25)
             score -= outlier_penalty
             
             # Penalize for extreme skewness
-            skewness = abs(column_profile.get("skewness", 0))
+            skewness = abs(field_profile.get("skewness", 0))
             skewness_penalty = min(skewness / 20, 0.25)
             score -= skewness_penalty
             
-        elif column_profile.get("type") == "text":
+        elif field_profile.get("type") == "text":
             # Penalize for very short values if there are many
-            if column_profile.get("min_length", 0) < 2 and column_profile.get("cardinality", 0) > 10:
+            if field_profile.get("min_length", 0) < 2 and field_profile.get("cardinality", 0) > 10:
                 score -= 0.1
                 
         # Ensure score is between 0 and 1
         return max(0, min(score, 1))
     
     def _calculate_quality_score(self, profile: Dict[str, Any]) -> float:
-        """Calculate overall quality score for a table"""
-        column_scores = [col.get("quality_score", 0) for col in profile["columns"].values()]
+        """Calculate overall quality score for a collection"""
+        field_scores = [field.get("quality_score", 0) for field in profile["fields"].values()]
         
-        if not column_scores:
+        if not field_scores:
             return 0.0
             
-        # Weight important columns more heavily
+        # Weight important fields more heavily
         # In a real implementation, this would use domain knowledge
         # For the simulation, we'll just use the average
-        return sum(column_scores) / len(column_scores)
+        return sum(field_scores) / len(field_scores)
     
     def _interpret_quality_score(self, score: float) -> str:
         """Interpret a quality score as a descriptive category"""
@@ -2420,25 +2420,25 @@ class DataQualityProfiler:
         else:
             return "critical"
     
-    def _generate_mock_correlations(self, columns: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, float]]:
+    def _generate_mock_correlations(self, fields: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, float]]:
         """Generate mock correlation data"""
-        numeric_columns = [col for col, profile in columns.items() if profile.get("type") == "numeric"]
+        numeric_fields = [field for field, profile in fields.items() if profile.get("type") == "numeric"]
         correlations = {}
         
-        for col in numeric_columns:
-            correlations[col] = {}
+        for field in numeric_fields:
+            correlations[field] = {}
             
-        # Generate random correlations between columns
-        for i, col1 in enumerate(numeric_columns):
-            for col2 in numeric_columns[i+1:]:
+        # Generate random correlations between fields
+        for i, field1 in enumerate(numeric_fields):
+            for field2 in numeric_fields[i+1:]:
                 # Random correlation between -1 and 1
                 correlation = random.uniform(-0.9, 0.9)
-                correlations[col1][col2] = correlation
-                correlations[col2][col1] = correlation
+                correlations[field1][field2] = correlation
+                correlations[field2][field1] = correlation
                 
         return correlations
     
-    def _generate_mock_anomalous_records(self, table_name: str, profile: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _generate_mock_anomalous_records(self, collection_name: str, profile: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Generate mock anomalous records"""
         # In a real implementation, this would find actual anomalous records
         # For the simulation, we'll generate random anomalies
@@ -2448,15 +2448,15 @@ class DataQualityProfiler:
         for i in range(3):
             record = {"id": random.randint(1000, 9999)}
             
-            # Add anomalies for specific columns
-            for column, col_profile in profile["columns"].items():
-                if col_profile.get("type") == "numeric" and random.random() < 0.3:
+            # Add anomalies for specific fields
+            for field, field_profile in profile["fields"].items():
+                if field_profile.get("type") == "numeric" and random.random() < 0.3:
                     # Generate outlier value
-                    if "max" in col_profile:
-                        record[column] = col_profile["max"] * (2 + random.random())
-                elif col_profile.get("type") == "text" and random.random() < 0.3:
+                    if "max" in field_profile:
+                        record[field] = field_profile["max"] * (2 + random.random())
+                elif field_profile.get("type") == "text" and random.random() < 0.3:
                     # Generate invalid text
-                    record[column] = "###INVALID###" + str(random.randint(1, 100))
+                    record[field] = "###INVALID###" + str(random.randint(1, 100))
                         
             anomalous_records.append(record)
             
