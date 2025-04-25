@@ -416,10 +416,10 @@ with tab2:
         if show_advanced:
             t_col3, t_col4 = st.columns(2)
             with t_col3:
-                query_time = target_metrics.get("avg_query_time_ms", 0)
+                process_time = target_metrics.get("avg_query_time_ms", 0)
                 st.markdown(create_metric_card(
-                    "Average Query Time", 
-                    f"{query_time:.2f}", 
+                    "Average Process Time", 
+                    f"{process_time:.2f}", 
                     unit="ms"
                 ), unsafe_allow_html=True)
             with t_col4:
