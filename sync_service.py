@@ -1098,9 +1098,9 @@ class ResourceMonitor:
 
 class DatabasePerformanceMonitor:
     """
-    Monitor database performance and resource utilization.
+    Monitor repository performance and resource utilization.
     Provides insights into query execution times, connection pools,
-    and database load for performance optimization.
+    and repository load for performance optimization.
     """
     def __init__(
         self, 
@@ -7589,7 +7589,7 @@ class SyncService:
             self.logger.info("Applying dynamic batch sizing based on current system state")
             # Initialize with default settings first
             batch_config = BatchConfiguration(
-                batch_size=operation_specific_batch_sizes.get("database_read", 200),
+                batch_size=operation_specific_batch_sizes.get("repository_read", 200),
                 dynamic_sizing=True,
                 adaptive_learning=True,
                 workload_specific_sizing=True,
@@ -7813,7 +7813,7 @@ class SyncService:
                 self.logger.info("Applying dynamic batch sizing based on current system state")
                 # Initialize with default settings first
                 batch_config = BatchConfiguration(
-                    batch_size=operation_specific_batch_sizes.get("database_read", 150),
+                    batch_size=operation_specific_batch_sizes.get("repository_read", 150),
                     dynamic_sizing=True,
                     adaptive_learning=True,
                     workload_specific_sizing=True,
@@ -8070,8 +8070,8 @@ class SyncService:
                     "optimal_batch_sizes": {
                         "data_transform": 150,
                         "data_validation": 300,
-                        "database_write": 80,
-                        "database_read": 200,
+                        "repository_write": 80,
+                        "repository_read": 200,
                         "api_request": 40
                     },
                     "adjustment_explanations": [
@@ -8135,8 +8135,8 @@ class SyncService:
                     "optimal_batch_sizes": {
                         "data_transform": 150,
                         "data_validation": 300,
-                        "database_write": 80,
-                        "database_read": 200,
+                        "repository_write": 80,
+                        "repository_read": 200,
                         "api_request": 40
                     }
                 },
@@ -8328,8 +8328,8 @@ class SyncService:
         base_batch_sizes = {
             "data_transform": 200,   # CPU-intensive operations
             "data_validation": 500,  # Less resource-intensive
-            "database_write": 100,   # I/O-bound operations
-            "database_read": 300,    # I/O-bound but usually faster than writes
+            "repository_write": 100,   # I/O-bound operations
+            "repository_read": 300,    # I/O-bound but usually faster than writes
             "api_request": 50        # Network-bound operations
         }
         
@@ -8391,9 +8391,9 @@ class SyncService:
                 adjustment_explanations.append(
                     f"{op_type}: Using {factor:.2f} factor based on CPU/memory constraints"
                 )
-            elif op_type in ["database_write", "database_read"]:
+            elif op_type in ["repository_write", "repository_read"]:
                 # Database operations - consider both system and DB factors
-                if op_type == "database_write":
+                if op_type == "repository_write":
                     # Writes primarily affect target database
                     factor = min(system_factors["memory"], db_factors["target"])
                 else:
@@ -8425,7 +8425,7 @@ class SyncService:
             "optimal_batch_sizes": optimal_batch_sizes,
             "base_batch_sizes": base_batch_sizes,
             "system_factors": system_factors,
-            "database_factors": db_factors,
+            "repository_factors": db_factors,
             "adjustment_explanations": adjustment_explanations
         }
     
