@@ -1,0 +1,130 @@
+Here’s a “bootstrap” prompt you can feed directly into your Replit AI Agent in the TerraFusionPlayground workspace. It tells the agent exactly how to stand up the new monorepo backend + marketplace skeleton so you can iterate from there.
+
+```
+### Replit AI Agent Bootstrap: TerraFusionPlayground Monorepo Migration
+
+You are the Replit AI Agent for the “TerraFusionPlayground” repository. Your mission is to create the scaffolding for a single “mono” backend and a plugin marketplace UI, so that all existing apps (BCBSLevy, GeospatialAnalyzerBS, TerraFlow, etc.) can be migrated in phases.
+
+1. Workspace setup
+   - Ensure the repo uses a monorepo tool (pnpm workspaces or Turborepo).  
+   - Create or update `pnpm-workspace.yaml` (or `turbo.json`) to include:
+     ```
+     apps/*
+     packages/*
+     server/*
+     ```
+   - Add a top-level `package.json` with scripts:
+     ```json
+     {
+       "scripts": {
+         "dev": "turbo run dev",
+         "build": "turbo run build",
+         "test": "turbo run test",
+         "lint": "turbo run lint"
+       }
+     }
+     ```
+
+2. Skeleton backend
+   - Under `server/`, generate an Express+TypeScript starter:
+     ```
+     server/
+       src/
+         index.ts        ← Express entry point
+         routes/
+           health.ts     ← GET /health returns 200
+           api.ts        ← stub router for /api/v1
+         middleware/
+           auth.ts       ← placeholder JWT check
+           error.ts      ← global error handler
+         services/
+           db.ts         ← TypeScript file exporting a “getDbClient()” stub
+     ```
+   - In `server/src/index.ts`, wire up:
+     ```ts
+     import express from 'express';
+     import apiRouter from './routes/api';
+     import { healthRouter } from './routes/health';
+     import { authMiddleware } from './middleware/auth';
+
+     const app = express();
+     app.use(express.json());
+     app.use('/health', healthRouter);
+     app.use('/api/v1', authMiddleware, apiRouter);
+
+     const port = process.env.PORT || 4000;
+     app.listen(port, () => console.log(`Server listening on ${port}`));
+     ```
+   - Add TypeScript config (`tsconfig.json`) and a basic GitHub Actions workflow to build & lint.
+
+3. Marketplace backend stub
+   - Under `packages/marketplace-backend/`, create:
+     ```
+     src/
+       index.ts         ← exports Express router
+       routes.ts        ← stub GET /plugins
+       schema.ts        ← Plugin manifest interface
+     package.json       ← name: "@tf/market-backend"
+     tsconfig.json
+     ```
+   - In `routes.ts`, export:
+     ```ts
+     import { Router } from 'express';
+     const router = Router();
+     router.get('/plugins', (_req, res) => {
+       res.json([{ id: 'example', name: 'Example Plugin', version: '0.1.0' }]);
+     });
+     export default router;
+     ```
+
+4. Marketplace UI stub
+   - Under `apps/marketplace-ui/`, scaffold a React+Vite project:
+     ```
+     apps/marketplace-ui/
+       src/
+         App.tsx           ← renders “Marketplace coming soon”
+         main.tsx
+       index.html
+       package.json       ← name: "marketplace-ui"
+       tsconfig.json
+     ```
+   - In `App.tsx`, display:
+     ```tsx
+     export default function App() {
+       return (
+         <div className="p-8">
+           <h1 className="text-2xl font-bold">Plugin Marketplace</h1>
+           <p>Loading plugin catalog…</p>
+         </div>
+       );
+     }
+     ```
+
+5. Shared schema & config
+   - Create `shared/` at repo root:
+     ```
+     shared/
+       schema.ts          ← export interfaces: Property, SyncJob, PluginManifest
+       config.ts          ← read env-vars and export as constants
+     ```
+   - Have both `server` and `packages/marketplace-backend` import from `shared/schema.ts`.
+
+6. CI pipeline update
+   - In `.github/workflows/ci.yml`, add a matrix to:
+     - Install root dependencies
+     - Run `pnpm build` in all workspaces
+     - Run `pnpm lint` across the repo
+     - Run `pnpm test` (empty tests pass initially)
+
+7. Validate
+   - Run `pnpm install && pnpm dev`  
+   - Ensure:
+     - `http://localhost:4000/health` returns 200  
+     - `http://localhost:4000/api/v1/plugins` returns JSON stub  
+     - `apps/marketplace-ui` starts on its own port  
+
+---
+
+> **Now** the mono backend and marketplace skeleton exist. Next, we’ll migrate each domain app into `server/src/routes` and flesh out the marketplace features behind a feature flag.  
+
+— Feed this entire block as your Replit AI Agent prompt to instantly bootstrap the new monorepo structure.

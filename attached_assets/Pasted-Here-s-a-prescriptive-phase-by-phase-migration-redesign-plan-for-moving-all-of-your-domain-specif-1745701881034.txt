@@ -1,0 +1,95 @@
+Here’s a prescriptive, phase-by-phase migration & redesign plan for moving all of your domain-specific apps into the TerraFusionPlayground monorepo, collapsing into a single “mono” backend, and standing up your Plugin Marketplace.  
+
+---
+
+## 📦 Phase 1 – Consolidate into Monorepo  
+
+1. **Import each codebase**  
+   - Add your existing repos (BCBSLevy, GeospatialAnalyzerBS, TerraFlow, etc.) under `apps/` or `packages/` in TerraFusionPlayground.  
+   - Update `pnpm-workspace.yaml` (or `turbo.json`) to include their new paths.  
+2. **Unify shared schemas & types**  
+   - Move all GraphQL/OpenAPI schemas, DRIZZLE models, TypeScript interfaces into `shared/schema.ts`  ([GitHub - bsvalues/TerraFusionPlayground](https://github.com/bsvalues/TerraFusionPlayground)).  
+   - Remove duplicates; ensure one source-of-truth for “Property,” “SyncJob,” “User,” etc.  
+3. **Centralize configuration**  
+   - Consolidate `.env` and Nix/Terraform configs so there is a single `server/config.ts` reading all env-vars.  
+   - Archive per-repo config files once values are merged.  
+
+**Outcome:** One repo, one set of types, one CI pipeline—no more drifting APIs.  
+
+---
+
+## 🔧 Phase 2 – Build the Monolithic Backend  
+
+1. **Express app re-architecture**  
+   - Create `server/src/index.ts` as the single Express entry point.  
+   - Under `server/src/routes/` mount sub-routers for each domain:  
+     ```
+     /api/v1/levy     → apps/bcbslevy/router.ts  
+     /api/v1/gis      → apps/geospatial/router.ts  
+     /api/v1/flow     → apps/terraflow/router.ts  
+     /api/v1/market   → packages/marketplace-backend/router.ts  
+     ```  
+2. **Shared services layer**  
+   - Move database clients, CRDT sync logic, MCP tools into `server/src/services/`.  
+   - Expose them via DI so each router imports only what it needs.  
+3. **Middleware & security**  
+   - Globally register auth/jwt-validation, rate-limit, input-sanitization in `server/src/middleware/`.  
+   - Remove per-app auth code; rely on centralized policies.  
+
+**Outcome:** All domain APIs run in one process, share connection pools, share middleware, simplified deployment.  
+
+---
+
+## 🛒 Phase 3 – Stand Up the Marketplace  
+
+1. **Backend: plugin registry**  
+   - In `packages/marketplace-backend/`:  
+     - Define a Plugin manifest schema (id, version, entryPoint, pricing).  
+     - CRUD endpoints: `GET /plugins`, `POST /plugins/publish`, `POST /plugins/{id}/purchase`.  
+2. **Frontend: Marketplace app**  
+   - Create `apps/marketplace-ui/` (React + Tailwind).  
+   - Display catalog cards (plugin name, description, price, install button).  
+   - On install, call `/api/v1/market/install` then update user’s workspace.  
+3. **Payment integration**  
+   - Wire Stripe (or County-approved gateway) in `packages/marketplace-backend/payments.ts`.  
+   - Manage entitlements in database; expose entitlement-check middleware.  
+
+**Outcome:** Third-party and in-house plugins can be packaged, published, discovered, purchased, and installed at runtime.  
+
+---
+
+## 🚀 Phase 4 – CI/CD & Deployment  
+
+1. **Mono CI pipeline** (GitHub Actions/Turbo)  
+   - **Lint & type-check** across all apps in parallel.  
+   - **Unit & E2E tests**: run backend tests, then Playwright against `marketplace-ui` and `terrafield-mobile`.  
+   - **Build matrix**: produce Docker images for `server`, `marketplace-ui`, `terrafield-mobile`.  
+   - **Canary deploy**: on `main` push, deploy to staging; on `release` tag, deploy to prod.  
+2. **Docker Compose / Kubernetes**  
+   - Define a single `deployment.yaml` that spins up:  
+     - `terrafusion-server`  
+     - `terrafusion-marketplace`  
+     - `terrafusion-mobile` (as static-served React Native web)  
+   - Shared Redis, Postgres, CRDT-sync cluster.  
+3. **Feature flags & rollout**  
+   - Protect the new marketplace behind a flag (`FEATURE_MARKETPLACE`).  
+   - Gradually onboard internal users, gather feedback, then flip flag for all.  
+
+---
+
+## 📊 Phase 5 – Validate & Iterate  
+
+- **User testing**: run a 2-week pilot with internal staff using the unified UI (sync monitor → marketplace → mobile).  
+- **Telemetry**: track flow completion rates, plugin installs, API latencies in Grafana  ([GitHub - bsvalues/TerraFusionPlayground](https://github.com/bsvalues/TerraFusionPlayground)).  
+- **Feedback loops**: embed an “in-app” feedback widget on each page so end users can report confusion in context.  
+
+---
+
+### Next Steps for Your Team  
+1. **Approve this migration roadmap** and assign owners per phase.  
+2. **Kick off Phase 1**: merge and unify types/config.  
+3. **Stand up a skeleton mono‐server** (Phase 2) with empty routers.  
+4. **Rapid-prototype** the Marketplace UI (Phase 3) behind a feature flag.  
+5. **Enhance CI** to build/test all pieces in one pipeline (Phase 4).  
+
+By following this staged approach you’ll end up with a single, maintainable backend, a clear end-user workflow, and a full plugin marketplace—no more fragmented apps, no more confused users.
