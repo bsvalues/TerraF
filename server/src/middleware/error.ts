@@ -1,50 +1,102 @@
 /**
  * Error Handling Middleware
  * 
- * Global error handler for the Express application.
+ * Provides centralized error handling for the Express application.
  */
 
 import { Request, Response, NextFunction } from 'express';
 import { ENV } from '../../../shared/config';
 
-// Custom error class with status code
+/**
+ * Custom API Error class
+ */
 export class ApiError extends Error {
   statusCode: number;
-  
-  constructor(message: string, statusCode: number = 500) {
+  details?: any;
+
+  constructor(message: string, statusCode: number = 500, details?: any) {
     super(message);
     this.statusCode = statusCode;
-    this.name = this.constructor.name;
-    Error.captureStackTrace(this, this.constructor);
+    this.details = details;
+    this.name = 'ApiError';
+  }
+
+  static badRequest(message: string, details?: any) {
+    return new ApiError(message, 400, details);
+  }
+
+  static unauthorized(message: string = 'Unauthorized', details?: any) {
+    return new ApiError(message, 401, details);
+  }
+
+  static forbidden(message: string = 'Forbidden', details?: any) {
+    return new ApiError(message, 403, details);
+  }
+
+  static notFound(message: string = 'Resource not found', details?: any) {
+    return new ApiError(message, 404, details);
+  }
+
+  static conflict(message: string, details?: any) {
+    return new ApiError(message, 409, details);
+  }
+
+  static internal(message: string = 'Internal server error', details?: any) {
+    return new ApiError(message, 500, details);
   }
 }
 
 /**
  * Global error handler middleware
  */
-export const errorHandler = (
-  err: Error | ApiError, 
-  _req: Request, 
-  res: Response, 
-  _next: NextFunction
-) => {
-  console.error(`[Error] ${err.message}`);
-  
-  // Set default status code
+export function errorHandler(
+  err: Error | ApiError,
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  // Log the error
+  console.error('[Error]', err);
+
+  // Determine status code and prepare response
   const statusCode = (err as ApiError).statusCode || 500;
-  
-  // Prepare response
-  const response: any = {
+  const message = err.message || 'Something went wrong';
+
+  // Prepare error response
+  const errorResponse: Record<string, any> = {
     error: {
-      message: err.message || 'Internal Server Error',
-      status: statusCode
+      message,
+      status: statusCode,
     }
   };
-  
-  // Add stack trace in development
-  if (ENV.isDevelopment && err.stack) {
-    response.error.stack = err.stack;
+
+  // Add details in development mode or for API errors
+  if (ENV.isDevelopment || err instanceof ApiError) {
+    if ((err as ApiError).details) {
+      errorResponse.error.details = (err as ApiError).details;
+    }
+
+    // Include stack trace in development
+    if (ENV.isDevelopment) {
+      errorResponse.error.stack = err.stack;
+    }
   }
-  
-  res.status(statusCode).json(response);
-};
+
+  // Send error response
+  res.status(statusCode).json(errorResponse);
+}
+
+/**
+ * 404 handler middleware
+ */
+export function notFoundHandler(
+  req: Request, 
+  res: Response
+) {
+  res.status(404).json({
+    error: {
+      message: `Not Found - ${req.originalUrl}`,
+      status: 404
+    }
+  });
+}

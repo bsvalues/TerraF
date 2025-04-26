@@ -1,77 +1,147 @@
 /**
  * Authentication Middleware
  * 
- * Handles JWT validation and user authentication.
+ * Handles user authentication and authorization for the API.
  */
 
 import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
 import { AUTH } from '../../../shared/config';
+import { ApiError } from './error';
 
-// Interface for authenticated request
-export interface AuthenticatedRequest extends Request {
-  user?: {
-    id: string;
-    email: string;
-    role: string;
-  };
+// Extend Express Request to include user information
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        id: string;
+        email: string;
+        role: string;
+        [key: string]: any;
+      };
+    }
+  }
 }
 
 /**
- * Middleware to verify JWT and attach user to request
+ * Authenticate user from JWT token in authorization header or cookie
  */
-export const authMiddleware = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  // In a real implementation, this would validate the JWT token
-  // For now, this is just a placeholder that allows requests through
-  
-  // Get token from header or cookie
-  const token = req.headers.authorization?.split(' ')[1] || 
-                req.cookies?.[AUTH.cookieName];
-  
-  if (!token) {
-    // For development purposes, allow unauthenticated requests
-    // In production, uncomment the following line:
-    // return res.status(401).json({ error: 'Authentication required' });
-    
-    // For now, attach a demo user
-    req.user = {
-      id: 'demo-user',
-      email: 'demo@terrafusion.example',
-      role: 'developer',
-    };
-    return next();
-  }
-  
+export function authenticate(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
   try {
-    // This would validate the token and extract user information
-    // For now, just attach a mock user
-    req.user = {
-      id: 'authenticated-user',
-      email: 'user@terrafusion.example',
-      role: 'admin',
-    };
-    next();
+    // Get token from authorization header or cookie
+    let token: string | undefined;
+    
+    // Check for token in Authorization header
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    }
+    
+    // If not in header, check for token in cookie
+    if (!token && req.cookies && req.cookies[AUTH.cookieName]) {
+      token = req.cookies[AUTH.cookieName];
+    }
+    
+    // If no token, return unauthorized
+    if (!token) {
+      return next(ApiError.unauthorized('Authentication required'));
+    }
+    
+    // Verify token
+    try {
+      const decoded = jwt.verify(token, AUTH.jwtSecret) as {
+        id: string;
+        email: string;
+        role: string;
+        [key: string]: any;
+      };
+      
+      // Attach user to request
+      req.user = decoded;
+      next();
+    } catch (error) {
+      // Token verification failed
+      return next(ApiError.unauthorized('Invalid or expired token'));
+    }
   } catch (error) {
-    res.status(403).json({ error: 'Invalid or expired token' });
+    next(error);
   }
-};
+}
 
 /**
- * Middleware to check if user has required role
+ * Optional authentication - attaches user if token is valid but doesn't require it
  */
-export const requireRole = (roles: string[]) => {
-  return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    if (!req.user) {
-      return res.status(401).json({ error: 'Authentication required' });
+export function optionalAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    // Get token from authorization header or cookie
+    let token: string | undefined;
+    
+    // Check for token in Authorization header
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
     }
     
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ 
-        error: 'Insufficient permissions',
-        required: roles,
-        current: req.user.role
-      });
+    // If not in header, check for token in cookie
+    if (!token && req.cookies && req.cookies[AUTH.cookieName]) {
+      token = req.cookies[AUTH.cookieName];
+    }
+    
+    // If no token, continue without authentication
+    if (!token) {
+      return next();
+    }
+    
+    // Verify token
+    try {
+      const decoded = jwt.verify(token, AUTH.jwtSecret) as {
+        id: string;
+        email: string;
+        role: string;
+        [key: string]: any;
+      };
+      
+      // Attach user to request
+      req.user = decoded;
+    } catch (error) {
+      // Token verification failed, but continue without user
+      console.warn('Invalid token provided, continuing without authentication');
     }
     
     next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Check if user has required role
+ */
+export function hasRole(
+  roles: string | string[]
+) {
+  const allowedRoles = Array.isArray(roles) ? roles : [roles];
+  
+  return (req: Request, res: Response, next: NextFunction) => {
+    // First make sure user is authenticated
+    if (!req.user) {
+      return next(ApiError.unauthorized('Authentication required'));
+    }
+    
+    // Check if user has required role
+    if (allowedRoles.includes(req.user.role)) {
+      return next();
+    }
+    
+    // User doesn't have required role
+    return next(ApiError.forbidden('Insufficient permissions'));
   };
-};
+}
