@@ -1,194 +1,423 @@
 """
-Bridge Module for Streamlit to New API Integration
+TerraFusion Bridge Module
 
-This module provides a bridge for communication between the Streamlit application
-and the new API services being developed as part of the migration to a modern
-monorepo architecture.
+This module provides a bridge between the Streamlit Python application and the Node.js/TypeScript
+microservices in the monorepo. It enables calling JavaScript/TypeScript functions from Python,
+and vice versa, maintaining compatibility during the migration.
 
-It allows the existing Streamlit code to gradually adopt the new services
-without requiring a complete rewrite all at once.
+Usage example:
+    from bridge import call_service, register_callback
+
+    # Call a TypeScript service from Python
+    result = call_service('marketplace', 'getPlugins', {'limit': 10})
+
+    # Register a Python callback that can be called from TypeScript
+    @register_callback('on_plugin_installed')
+    def handle_plugin_installed(plugin_id, workspace_id):
+        print(f"Plugin {plugin_id} was installed in workspace {workspace_id}")
 """
 
-import os
 import json
+import os
+import subprocess
+import threading
 import time
-import hashlib
-from typing import Any, Dict, List, Optional, Union, Callable
+import uuid
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Union
+import logging
+
 import requests
-from requests.exceptions import RequestException
+from queue import Queue
+import streamlit as st
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Configuration
-API_BASE_URL = os.environ.get('API_BASE_URL', 'http://localhost:4000')
-API_VERSION = os.environ.get('API_VERSION', 'v1')
-API_TIMEOUT = int(os.environ.get('API_TIMEOUT', 30))
+SERVICE_PORT = 4000  # Default port for the Express API server
+SERVICE_BASE_URL = os.environ.get("API_BASE_URL", f"http://localhost:{SERVICE_PORT}")
+REQUEST_TIMEOUT = 30  # seconds
 
-# Simple in-memory cache
-_cache: Dict[str, Dict[str, Any]] = {}
+# Store registered callbacks
+_callbacks: Dict[str, Callable] = {}
 
-def _generate_cache_key(endpoint: str, params: Dict[str, Any], cache_key: Optional[str] = None) -> str:
-    """Generate a cache key for the API request."""
-    params_str = json.dumps(params, sort_keys=True)
-    key_parts = [endpoint, params_str]
+# Queue for bridge events
+_event_queue: Queue = Queue()
+
+# Authentication token cache
+_auth_token: Optional[str] = None
+
+
+class BridgeException(Exception):
+    """Exception raised for errors in the bridge."""
     
-    if cache_key:
-        key_parts.append(cache_key)
-    
-    key_string = ":".join(key_parts)
-    return hashlib.md5(key_string.encode()).hexdigest()
+    def __init__(self, message: str, service: str = "", method: str = "", status_code: Optional[int] = None):
+        self.message = message
+        self.service = service
+        self.method = method
+        self.status_code = status_code
+        super().__init__(f"Bridge error: {message}")
 
-def call_api(
-    endpoint: str,
-    method: str = "GET",
-    data: Optional[Dict[str, Any]] = None,
+
+def _get_auth_token() -> Optional[str]:
+    """Get the current authentication token from session or cache."""
+    global _auth_token
+    
+    # First check session state
+    if "auth_token" in st.session_state:
+        return st.session_state.auth_token
+    
+    # Then check cache
+    return _auth_token
+
+
+def _set_auth_token(token: str) -> None:
+    """Set the authentication token in both session and cache."""
+    global _auth_token
+    
+    # Store in session state if available
+    if "session_state" in globals():
+        st.session_state.auth_token = token
+    
+    # Store in module cache
+    _auth_token = token
+
+
+def call_service(
+    service: str, 
+    method: str, 
     params: Optional[Dict[str, Any]] = None,
-    headers: Optional[Dict[str, Any]] = None,
-    version: Optional[str] = None,
-    cache_key: Optional[str] = None,
-    cache_ttl: int = 60  # default 60 seconds
+    auth_required: bool = True
 ) -> Any:
     """
-    Call the new API service from Streamlit.
+    Call a service method in the TypeScript/Node.js backend.
     
     Args:
-        endpoint: API endpoint path
-        method: HTTP method (GET, POST, etc.)
-        data: Request body data
-        params: Query parameters
-        headers: Request headers
-        version: API version to use
-        cache_key: Optional key for caching responses
-        cache_ttl: Cache time-to-live in seconds
+        service: The name of the service to call (e.g., 'marketplace', 'workflow')
+        method: The method name to call within the service
+        params: Optional parameters to pass to the method
+        auth_required: Whether authentication is required for this call
         
     Returns:
-        API response data
+        The result from the service method
         
     Raises:
-        Exception: When API request fails
+        BridgeException: If an error occurs in the bridge communication
     """
-    if params is None:
-        params = {}
-    
-    if headers is None:
-        headers = {}
-    
-    if version is None:
-        version = API_VERSION
-    
-    url = f"{API_BASE_URL}/api/{version}/{endpoint.lstrip('/')}"
-    
-    # Handle caching for GET requests
-    if method.upper() == "GET" and cache_key:
-        cache_key_hash = _generate_cache_key(endpoint, params or {}, cache_key)
-        
-        # Check if we have a valid cached response
-        if cache_key_hash in _cache:
-            cache_entry = _cache[cache_key_hash]
-            if (time.time() - cache_entry['timestamp']) < cache_ttl:
-                print(f"[Bridge] Using cached data for {endpoint}")
-                return cache_entry['data']
-    
-    # Set up headers
-    request_headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
+    url = f"{SERVICE_BASE_URL}/api/{service}/{method}"
+    headers = {
+        "Content-Type": "application/json"
     }
-    request_headers.update(headers)
+    
+    # Add authentication token if required
+    if auth_required:
+        token = _get_auth_token()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        else:
+            logger.warning(f"Auth required for {service}.{method} but no token available")
     
     try:
-        response = requests.request(
-            method=method.upper(),
-            url=url,
-            params=params,
-            json=data,
-            headers=request_headers,
-            timeout=API_TIMEOUT
+        response = requests.post(
+            url,
+            headers=headers,
+            json=params or {},
+            timeout=REQUEST_TIMEOUT
         )
         
-        # Raise for HTTP errors
-        response.raise_for_status()
-        
-        # Parse the response
-        response_data = response.json()
-        
-        # Cache the response if appropriate
-        if method.upper() == "GET" and cache_key:
-            cache_key_hash = _generate_cache_key(endpoint, params or {}, cache_key)
-            _cache[cache_key_hash] = {
-                'data': response_data,
-                'timestamp': time.time()
-            }
-        
-        return response_data
-    except RequestException as e:
-        error_msg = f"API request failed: {e}"
-        print(f"[Bridge] Error: {error_msg}")
-        
-        # Enhance the error with more details
-        if hasattr(e, 'response') and e.response:
+        if response.status_code >= 200 and response.status_code < 300:
+            return response.json()
+        else:
+            error_msg = f"Service call failed: {response.status_code}"
             try:
-                error_detail = e.response.json()
-                error_msg += f" - {error_detail.get('message', '')}"
-            except (ValueError, KeyError):
-                pass
+                error_data = response.json()
+                if "error" in error_data and "message" in error_data["error"]:
+                    error_msg = error_data["error"]["message"]
+            except:
+                error_msg = response.text or error_msg
+                
+            raise BridgeException(
+                message=error_msg,
+                service=service,
+                method=method,
+                status_code=response.status_code
+            )
+    
+    except requests.RequestException as e:
+        logger.error(f"Request error calling {service}.{method}: {str(e)}")
+        raise BridgeException(
+            message=f"Communication error: {str(e)}",
+            service=service,
+            method=method
+        )
+
+
+def register_callback(event_name: str) -> Callable[[Callable], Callable]:
+    """
+    Decorator to register a Python function as a callback for an event.
+    
+    Args:
+        event_name: The name of the event to register for
         
-        raise Exception(error_msg) from e
+    Returns:
+        Decorator function that registers the callback
+    """
+    def decorator(func: Callable) -> Callable:
+        _callbacks[event_name] = func
+        logger.info(f"Registered callback for event: {event_name}")
+        return func
+    
+    return decorator
 
-def clear_cache() -> None:
-    """Clear the API response cache."""
-    global _cache
-    _cache = {}
-    print("[Bridge] Cache cleared")
 
-# Domain-specific API methods
-class MarketplaceAPI:
-    """Marketplace API wrapper"""
+def call_callback(event_name: str, *args, **kwargs) -> Any:
+    """
+    Call a registered callback by name.
     
-    @staticmethod
-    def list_plugins(params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """List available plugins in the marketplace."""
-        return call_api(
-            endpoint="market/plugins",
-            params=params or {},
-            cache_key="plugins_list"
-        )
-    
-    @staticmethod
-    def get_plugin(plugin_id: str) -> Dict[str, Any]:
-        """Get details for a specific plugin."""
-        return call_api(
-            endpoint=f"market/plugins/{plugin_id}",
-            cache_key=f"plugin_{plugin_id}"
-        )
-    
-    @staticmethod
-    def purchase_plugin(plugin_id: str, payment_details: Dict[str, Any]) -> Dict[str, Any]:
-        """Purchase a plugin."""
-        return call_api(
-            endpoint=f"market/plugins/{plugin_id}/purchase",
-            method="POST",
-            data=payment_details
-        )
+    Args:
+        event_name: The name of the event/callback to trigger
+        *args: Positional arguments to pass to the callback
+        **kwargs: Keyword arguments to pass to the callback
+        
+    Returns:
+        The result of the callback function
+        
+    Raises:
+        BridgeException: If the callback is not registered
+    """
+    if event_name in _callbacks:
+        try:
+            return _callbacks[event_name](*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Error in callback {event_name}: {str(e)}")
+            raise BridgeException(f"Callback error: {str(e)}")
+    else:
+        raise BridgeException(f"No callback registered for event: {event_name}")
 
-class UserAPI:
-    """User management API wrapper"""
-    
-    @staticmethod
-    def get_current_user() -> Dict[str, Any]:
-        """Get the current user information."""
-        return call_api(
-            endpoint="users/me",
-            cache_key="current_user"
-        )
-    
-    @staticmethod
-    def update_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
-        """Update user settings."""
-        return call_api(
-            endpoint="users/settings",
-            method="PUT",
-            data=settings
-        )
 
-# Export domain-specific APIs
-marketplace = MarketplaceAPI
-users = UserAPI
+def login(email: str, password: str) -> Dict[str, Any]:
+    """
+    Log in to the backend services and get an authentication token.
+    
+    Args:
+        email: User email
+        password: User password
+        
+    Returns:
+        User data including the authentication token
+        
+    Raises:
+        BridgeException: If login fails
+    """
+    try:
+        result = call_service("auth", "login", {
+            "email": email,
+            "password": password
+        }, auth_required=False)
+        
+        if "token" in result:
+            _set_auth_token(result["token"])
+            
+        return result
+    except Exception as e:
+        logger.error(f"Login error: {str(e)}")
+        raise BridgeException(f"Login failed: {str(e)}")
+
+
+def logout() -> None:
+    """
+    Log out and clear the authentication token.
+    """
+    global _auth_token
+    
+    try:
+        # Call the logout API endpoint
+        call_service("auth", "logout", {}, auth_required=True)
+    except Exception as e:
+        logger.warning(f"Error during logout API call: {str(e)}")
+    
+    # Clear the token regardless of API call success
+    if "session_state" in globals():
+        if "auth_token" in st.session_state:
+            del st.session_state.auth_token
+    
+    _auth_token = None
+
+
+def get_current_user() -> Optional[Dict[str, Any]]:
+    """
+    Get the currently logged-in user information.
+    
+    Returns:
+        User data dict or None if not logged in
+    """
+    try:
+        return call_service("users", "me")
+    except BridgeException as e:
+        if e.status_code == 401:
+            # Not authenticated, return None
+            return None
+        # For other errors, re-raise
+        raise
+
+
+def is_authenticated() -> bool:
+    """
+    Check if the user is currently authenticated.
+    
+    Returns:
+        True if authenticated, False otherwise
+    """
+    return get_current_user() is not None
+
+
+def get_plugins(limit: int = 10, offset: int = 0, category: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Get plugins from the marketplace.
+    
+    Args:
+        limit: Maximum number of plugins to return
+        offset: Number of plugins to skip for pagination
+        category: Optional category filter
+        
+    Returns:
+        Dict containing plugins and pagination info
+    """
+    params = {
+        "limit": limit,
+        "offset": offset
+    }
+    
+    if category:
+        params["category"] = category
+        
+    return call_service("market", "plugins", params, auth_required=False)
+
+
+def get_plugin_details(plugin_id: str) -> Dict[str, Any]:
+    """
+    Get detailed information about a specific plugin.
+    
+    Args:
+        plugin_id: ID of the plugin
+        
+    Returns:
+        Plugin details
+    """
+    return call_service("market", "pluginDetails", {"id": plugin_id}, auth_required=False)
+
+
+def install_plugin(plugin_id: str, workspace_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Install or purchase a plugin.
+    
+    Args:
+        plugin_id: ID of the plugin to install
+        workspace_id: Optional workspace ID to install the plugin to
+        
+    Returns:
+        Installation result
+    """
+    params = {"pluginId": plugin_id}
+    
+    if workspace_id:
+        params["workspaceId"] = workspace_id
+        
+    return call_service("market", "purchasePlugin", params)
+
+
+def get_user_plugins() -> List[Dict[str, Any]]:
+    """
+    Get the plugins installed by the current user.
+    
+    Returns:
+        List of installed plugins
+    """
+    return call_service("market", "userPlugins")
+
+
+def get_workflows(limit: int = 10, offset: int = 0, status: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Get the workflows for the current user.
+    
+    Args:
+        limit: Maximum number of workflows to return
+        offset: Number of workflows to skip for pagination
+        status: Optional status filter
+        
+    Returns:
+        Dict containing workflows and pagination info
+    """
+    params = {
+        "limit": limit,
+        "offset": offset
+    }
+    
+    if status:
+        params["status"] = status
+        
+    return call_service("workflows", "list", params)
+
+
+def get_workflow_details(workflow_id: str) -> Dict[str, Any]:
+    """
+    Get detailed information about a specific workflow.
+    
+    Args:
+        workflow_id: ID of the workflow
+        
+    Returns:
+        Workflow details
+    """
+    return call_service("workflows", "details", {"id": workflow_id})
+
+
+def run_workflow(workflow_id: str, parameters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Run a workflow.
+    
+    Args:
+        workflow_id: ID of the workflow to run
+        parameters: Optional parameters for the workflow
+        
+    Returns:
+        Workflow run information
+    """
+    return call_service("workflows", "run", {
+        "id": workflow_id,
+        "parameters": parameters or {}
+    })
+
+
+def get_workflow_run_status(run_id: str) -> Dict[str, Any]:
+    """
+    Get the status of a workflow run.
+    
+    Args:
+        run_id: ID of the workflow run
+        
+    Returns:
+        Workflow run status information
+    """
+    return call_service("workflows", "runStatus", {"runId": run_id})
+
+
+# Initialize bridge when module is imported
+def _initialize_bridge():
+    logger.info("Initializing TerraFusion bridge...")
+    
+    # Check if server is running
+    try:
+        response = requests.get(f"{SERVICE_BASE_URL}/api/health", timeout=5)
+        if response.status_code == 200:
+            logger.info("Successfully connected to TerraFusion API server")
+        else:
+            logger.warning(f"API server responded with status {response.status_code}")
+    except requests.RequestException:
+        logger.warning("Could not connect to API server. Some features may be unavailable.")
+
+
+# Run initialization
+_initialize_bridge()
