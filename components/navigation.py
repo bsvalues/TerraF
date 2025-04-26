@@ -56,22 +56,18 @@ def get_current_page_name() -> str:
 
 def render_sidebar_navigation():
     """
-    Render the sidebar navigation with futuristic cyberpunk styling.
+    Render the sidebar navigation with simplified styling.
     """
-    # Add the header with cyberpunk styling
-    st.sidebar.markdown(
-        """
-        <div class="tf-sidebar-header">
-            <h2 class="tf-sidebar-title">TerraFusion AI</h2>
-        </div>
-        """, 
-        unsafe_allow_html=True
-    )
+    # Import the logo rendering function
+    from components.styling import render_logo
     
-    # Add the navigation label with cybertech styling
+    # Use the Logo function
+    render_logo()
+    
+    # Add the navigation label
     st.sidebar.markdown(
         """
-        <div style="margin-bottom: 1.5rem; color: var(--tf-text-secondary); 
+        <div style="margin-bottom: 1rem; color: var(--tf-text-secondary); 
                     font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px;">
             Navigation
         </div>
@@ -97,19 +93,30 @@ def render_sidebar_navigation():
             page_url.strip('/') in current_page
         )
         
-        # Apply the appropriate CSS class based on whether this is the current page
+        # Apply reliable styling based on whether this is the current page
         if is_current:
-            st.sidebar.markdown(
-                f"""
-                <div class="tf-nav-item tf-nav-item-active">
-                    <div class="tf-nav-icon">{page_icon}</div>
-                    <div>{page_name}</div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+            nav_style = """
+                background-color: rgba(124, 77, 255, 0.12); 
+                color: #7c4dff; 
+                font-weight: 600;
+                border-radius: 0.5rem;
+            """
         else:
-            # For non-current items, make them clickable
+            nav_style = """
+                color: var(--tf-text-secondary);
+                transition: background-color 0.2s ease;
+                border-radius: 0.5rem;
+            """
+            # Add hover style for non-active items
+            nav_style += """
+                :hover {
+                    background-color: rgba(124, 77, 255, 0.08);
+                    color: var(--tf-text);
+                }
+            """
+        
+        # For non-current items, make them clickable
+        if not is_current:
             if page_url == "/":
                 # For home page
                 click_action = "window.location.href = '/';"
@@ -117,22 +124,26 @@ def render_sidebar_navigation():
                 # For other pages
                 click_action = f"window.open('/{page_url.strip('/')}', '_self');"
             
-            st.sidebar.markdown(
-                f"""
-                <div class="tf-nav-item" onclick="{click_action}" style="cursor: pointer;">
-                    <div class="tf-nav-icon">{page_icon}</div>
-                    <div>{page_name}</div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+            onclick = f"onclick=\"{click_action}\" style=\"cursor: pointer;\""
+        else:
+            onclick = ""
+        
+        st.sidebar.markdown(
+            f"""
+            <div style="display: flex; align-items: center; padding: 0.625rem 1rem; 
+                        margin-bottom: 0.25rem; {nav_style}" {onclick}>
+                <div style="margin-right: 0.625rem; font-size: 1.1em;">{page_icon}</div>
+                <div>{page_name}</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
     
-    # Add a glowing separator with cyberpunk styling
+    # Add a simple separator
     st.sidebar.markdown(
         """
         <hr style="border: none; height: 1px; 
-                  background: linear-gradient(to right, 
-                  rgba(98, 0, 234, 0.05), rgba(98, 0, 234, 0.3), rgba(98, 0, 234, 0.05)); 
+                  background: rgba(124, 77, 255, 0.1); 
                   margin: 2rem 0;">
         """, 
         unsafe_allow_html=True
@@ -165,17 +176,20 @@ def render_breadcrumbs(additional_items=None):
             if (isinstance(item, tuple) or isinstance(item, list)) and len(item) == 2:
                 breadcrumbs.append([item[0], item[1]])
     
-    # Render the breadcrumbs
-    breadcrumb_html = '<div class="tf-breadcrumb">'
+    # Render the breadcrumbs with inline styles
+    breadcrumb_html = '<div style="display: flex; align-items: center; font-size: 0.875rem; color: rgba(248, 249, 250, 0.65); margin-bottom: 1rem;">'
     
     for i, breadcrumb in enumerate(breadcrumbs):
         name, url = breadcrumb
         
-        # For the last item, don't make it a link and apply the active class
+        # For the last item, don't make it a link and apply a different style
         if i == len(breadcrumbs) - 1:
-            breadcrumb_html += f'<div class="tf-breadcrumb-item tf-breadcrumb-active">{name}</div>'
+            breadcrumb_html += f'<div style="color: #7c4dff;">{name}</div>'
         else:
-            breadcrumb_html += f'<div class="tf-breadcrumb-item"><a href="{url}">{name}</a></div>'
+            breadcrumb_html += f'<div><a href="{url}" style="color: rgba(248, 249, 250, 0.85); text-decoration: none; transition: color 0.15s ease;">{name}</a></div>'
+            
+            # Add separator
+            breadcrumb_html += '<div style="margin: 0 0.25rem;">/</div>'
     
     breadcrumb_html += '</div>'
     
@@ -193,13 +207,12 @@ def render_page_header(title, subtitle=None, additional_breadcrumbs=None):
     # Render the breadcrumbs
     render_breadcrumbs(additional_breadcrumbs)
     
-    # Render the title with cyberpunk styling
+    # Render the title with simple styling
     st.markdown(
         f'''
-        <div class="tf-header-container">
-            <h1 class="tf-page-title">
+        <div style="margin-bottom: 1rem;">
+            <h1 style="font-size: 2.5rem; color: #7c4dff; margin-bottom: 0.5rem; font-weight: 700;">
                 {title}
-                <span class="tf-title-accent"></span>
             </h1>
         </div>
         ''', 
@@ -210,25 +223,22 @@ def render_page_header(title, subtitle=None, additional_breadcrumbs=None):
     if subtitle is not None:
         st.markdown(
             f'''
-            <p class="tf-subtitle">
+            <p style="font-size: 1.2rem; color: rgba(248, 249, 250, 0.85); margin-top: 0.5rem; margin-bottom: 1.5rem;">
                 {subtitle}
             </p>
             ''', 
             unsafe_allow_html=True
         )
     
-    # Add a glowing separator with cyberpunk styling
+    # Add a simple separator
     st.markdown(
         '''
         <hr style="border: none; height: 1px; 
                   background: linear-gradient(to right, 
-                  rgba(98, 0, 234, 0.05), 
-                  rgba(98, 0, 234, 0.3), 
-                  var(--tf-accent), 
-                  rgba(98, 0, 234, 0.3),
-                  rgba(98, 0, 234, 0.05)); 
-                  margin: 1.5rem 0; 
-                  box-shadow: 0 0 8px var(--tf-glow);">
+                  rgba(124, 77, 255, 0.05), 
+                  rgba(124, 77, 255, 0.25), 
+                  rgba(124, 77, 255, 0.05)); 
+                  margin: 1.5rem 0;">
         ''', 
         unsafe_allow_html=True
     )
