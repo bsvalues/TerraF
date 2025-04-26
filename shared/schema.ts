@@ -1,118 +1,118 @@
 /**
  * Shared Schema Definitions
  * 
- * This file contains shared type definitions and interfaces used across
- * multiple services and applications in the TerraFusion platform.
+ * Common type definitions that are shared across services
+ * in the TerraFusion monorepo.
  */
 
-// Base entity interface with common fields
-export interface BaseEntity {
+/**
+ * User Account
+ */
+export interface User {
   id: string;
+  email: string;
+  displayName: string;
+  avatarUrl?: string;
+  role: 'user' | 'admin' | 'developer';
   createdAt: Date;
   updatedAt: Date;
+  lastLoginAt?: Date;
+  verifiedAt?: Date;
+  settings?: UserSettings;
 }
 
-// User entity
-export interface User extends BaseEntity {
-  email: string;
-  name: string;
-  role: UserRole;
-  organizationId?: string;
-  preferences?: UserPreferences;
-  isActive: boolean;
-}
-
-export enum UserRole {
-  ADMIN = 'admin',
-  USER = 'user',
-  DEVELOPER = 'developer',
-  ANALYST = 'analyst',
-}
-
-export interface UserPreferences {
-  theme?: 'light' | 'dark';
-  notifications?: boolean;
-  dashboardLayout?: string;
-}
-
-// Property-related interfaces
-export interface Property extends BaseEntity {
-  name: string;
-  address: Address;
-  ownerId: string;
-  type: PropertyType;
-  status: PropertyStatus;
-  value?: number;
-  assessmentId?: string;
-  metadata?: Record<string, any>;
-}
-
-export enum PropertyType {
-  RESIDENTIAL = 'residential',
-  COMMERCIAL = 'commercial',
-  INDUSTRIAL = 'industrial',
-  AGRICULTURAL = 'agricultural',
-  MIXED_USE = 'mixed_use',
-}
-
-export enum PropertyStatus {
-  ACTIVE = 'active',
-  PENDING = 'pending',
-  ARCHIVED = 'archived',
-  DELETED = 'deleted',
-}
-
-export interface Address {
-  street: string;
-  city: string;
-  state: string;
-  zip: string;
-  country: string;
-  coordinates?: {
-    latitude: number;
-    longitude: number;
+/**
+ * User Settings
+ */
+export interface UserSettings {
+  theme: 'light' | 'dark' | 'system';
+  notifications: {
+    email: boolean;
+    push: boolean;
+    inApp: boolean;
   };
+  timezone?: string;
+  language?: string;
+  defaultDashboard?: string;
 }
 
-// Sync job related interfaces
-export interface SyncJob extends BaseEntity {
+/**
+ * Organization
+ */
+export interface Organization {
+  id: string;
   name: string;
-  status: SyncJobStatus;
-  source: string;
-  target: string;
-  progress: number;
-  startedAt?: Date;
-  completedAt?: Date;
-  error?: string;
-  itemsProcessed: number;
-  itemsTotal: number;
+  slug: string;
+  logoUrl?: string;
+  contactEmail?: string;
+  description?: string;
+  createdAt: Date;
+  updatedAt: Date;
+  members?: OrganizationMember[];
+  workspaces?: Workspace[];
+}
+
+/**
+ * Organization Member
+ */
+export interface OrganizationMember {
   userId: string;
-  metadata?: Record<string, any>;
+  organizationId: string;
+  role: 'owner' | 'admin' | 'member' | 'guest';
+  joinedAt: Date;
+  invitedBy?: string;
 }
 
-export enum SyncJobStatus {
-  PENDING = 'pending',
-  RUNNING = 'running',
-  COMPLETED = 'completed',
-  FAILED = 'failed',
-  CANCELLED = 'cancelled',
+/**
+ * Workspace
+ */
+export interface Workspace {
+  id: string;
+  name: string;
+  slug: string;
+  organizationId: string;
+  description?: string;
+  createdAt: Date;
+  updatedAt: Date;
+  createdBy: string;
+  isArchived: boolean;
+  members?: WorkspaceMember[];
 }
 
-// Plugin marketplace interfaces
-export interface PluginManifest extends BaseEntity {
+/**
+ * Workspace Member
+ */
+export interface WorkspaceMember {
+  userId: string;
+  workspaceId: string;
+  role: 'owner' | 'editor' | 'viewer';
+  joinedAt: Date;
+}
+
+/**
+ * Plugin Manifest
+ */
+export interface PluginManifest {
+  id: string;
   name: string;
   description: string;
   version: string;
   publisher: string;
   entryPoint: string;
   icon?: string;
-  tags: string[];
+  tags?: string[];
   pricing: PluginPricing;
-  requirements: PluginRequirements;
-  compatibleWith: string[];
+  requirements?: PluginRequirements;
+  compatibleWith?: string[];
   isPublic: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  publishedAt?: Date;
 }
 
+/**
+ * Plugin Pricing
+ */
 export interface PluginPricing {
   type: 'free' | 'paid' | 'subscription';
   price?: number;
@@ -121,17 +121,110 @@ export interface PluginPricing {
   trialDays?: number;
 }
 
+/**
+ * Plugin Requirements
+ */
 export interface PluginRequirements {
-  minApiVersion: string;
-  permissions: string[];
-  dependencies?: string[];
+  minApiVersion?: string;
+  permissions?: string[];
+  dependencies?: {
+    name: string;
+    version: string;
+  }[];
 }
 
-export interface PluginPurchase extends BaseEntity {
+/**
+ * Plugin Purchase
+ */
+export interface PluginPurchase {
+  id: string;
   pluginId: string;
   userId: string;
-  transactionId: string;
+  organizationId?: string;
+  purchaseDate: Date;
+  expiryDate?: Date;
+  status: 'active' | 'expired' | 'cancelled';
+  paymentMethod?: string;
+  transactionId?: string;
   price: number;
   currency: string;
-  status: 'completed' | 'pending' | 'failed' | 'refunded';
+}
+
+/**
+ * Workflow Definition
+ */
+export interface Workflow {
+  id: string;
+  name: string;
+  description?: string;
+  workspaceId: string;
+  createdBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+  isPublic: boolean;
+  isTemplate: boolean;
+  steps: WorkflowStep[];
+  version: number;
+  status: 'draft' | 'active' | 'archived';
+}
+
+/**
+ * Workflow Step
+ */
+export interface WorkflowStep {
+  id: string;
+  workflowId: string;
+  name: string;
+  description?: string;
+  type: string;
+  config: Record<string, any>;
+  position: number;
+  dependencies: string[];
+  timeout?: number;
+}
+
+/**
+ * API Token
+ */
+export interface ApiToken {
+  id: string;
+  name: string;
+  userId: string;
+  token: string;
+  createdAt: Date;
+  expiresAt?: Date;
+  lastUsedAt?: Date;
+  scopes: string[];
+}
+
+/**
+ * Notification
+ */
+export interface Notification {
+  id: string;
+  userId: string;
+  title: string;
+  message: string;
+  status: 'unread' | 'read' | 'archived';
+  type: 'info' | 'success' | 'warning' | 'error';
+  linkUrl?: string;
+  createdAt: Date;
+  readAt?: Date;
+  entityType?: string;
+  entityId?: string;
+}
+
+/**
+ * Activity Log
+ */
+export interface ActivityLog {
+  id: string;
+  userId: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  timestamp: Date;
+  details?: Record<string, any>;
+  ipAddress?: string;
+  userAgent?: string;
 }
