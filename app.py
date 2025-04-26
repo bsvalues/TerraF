@@ -9,10 +9,11 @@ from model_interface import ModelInterface
 
 # Import components
 from components.styling import apply_terraflow_style, render_logo
-from components.navigation import render_sidebar_navigation, render_breadcrumbs, render_page_header
+from components.navigation import render_sidebar_navigation, render_page_header
 from components.ui_components import (
-    metric_card, feature_card, status_indicator, 
-    activity_feed, alert_item, section_header
+    render_card, render_metric_card, render_alert, 
+    render_info_tooltip, render_progress_bar, render_tag,
+    create_gradient_chart
 )
 
 # Set page configuration
@@ -71,127 +72,111 @@ render_page_header(
 )
 
 # AI Services Status
-section_header("AI Service Status")
+st.subheader("AI Service Status")
 col1, col2 = st.columns(2)
 
 with col1:
-    st.markdown('<div class="tf-card">', unsafe_allow_html=True)
-    st.markdown('<div class="card-title">OpenAI Service</div>', unsafe_allow_html=True)
-    
     # Check OpenAI status
     openai_status = st.session_state.model_interface.check_openai_status()
     if openai_status:
-        st.markdown('<span class="status-online">● Connected</span> - GPT-4o model active', unsafe_allow_html=True)
-        st.markdown('<p style="color: rgba(0, 229, 255, 0.5); font-size: 0.875rem;">API connection established. All advanced code analysis features available.</p>', unsafe_allow_html=True)
+        status_text = "**● Connected** - GPT-4o model active\n\nAPI connection established. All advanced code analysis features available."
+        render_card("OpenAI Service", status_text, icon="🤖")
     else:
-        st.markdown('<span class="status-offline">● Disconnected</span> - Connection issue', unsafe_allow_html=True)
-        st.markdown('<p style="color: rgba(0, 229, 255, 0.5); font-size: 0.875rem;">Please check API key and network connectivity.</p>', unsafe_allow_html=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
+        status_text = "**● Disconnected** - Connection issue\n\nPlease check API key and network connectivity."
+        render_alert("OpenAI API connection is not available. Some advanced features may be limited.", level="error")
+        render_card("OpenAI Service", status_text, icon="🤖")
 
 with col2:
-    st.markdown('<div class="tf-card">', unsafe_allow_html=True)
-    st.markdown('<div class="card-title">Anthropic Service</div>', unsafe_allow_html=True)
-    
     # Check Anthropic status
     anthropic_status = st.session_state.model_interface.check_anthropic_status()
     if anthropic_status:
-        st.markdown('<span class="status-online">● Connected</span> - Claude 3.5 model active', unsafe_allow_html=True)
-        st.markdown('<p style="color: rgba(0, 229, 255, 0.5); font-size: 0.875rem;">API connection established. All specialized reasoning features available.</p>', unsafe_allow_html=True)
+        status_text = "**● Connected** - Claude 3.5 model active\n\nAPI connection established. All specialized reasoning features available."
+        render_card("Anthropic Service", status_text, icon="🧠")
     else:
-        st.markdown('<span class="status-offline">● Disconnected</span> - Connection issue', unsafe_allow_html=True)
-        st.markdown('<p style="color: rgba(0, 229, 255, 0.5); font-size: 0.875rem;">Please check API key and network connectivity.</p>', unsafe_allow_html=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
+        status_text = "**● Disconnected** - Connection issue\n\nPlease check API key and network connectivity."
+        render_alert("Anthropic API connection is not available. Some advanced features may be limited.", level="error")
+        render_card("Anthropic Service", status_text, icon="🧠")
 
 # Performance Metrics
-st.markdown('<h2 class="section-header">System Performance</h2>', unsafe_allow_html=True)
+st.subheader("System Performance")
 
 metrics = get_performance_metrics()
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    st.markdown(
-        f'<div class="metric-card">'
-        f'<div class="metric-title">Sync Operations</div>'
-        f'<div class="metric-value">{metrics["sync_operations"]}</div>'
-        f'<div class="metric-unit">operations / day</div>'
-        f'</div>',
-        unsafe_allow_html=True
+    render_metric_card(
+        title="Sync Operations",
+        value=metrics["sync_operations"],
+        unit="operations / day",
+        icon="📊",
+        trend=5.2  # Example trend showing 5.2% increase
     )
 
 with col2:
-    st.markdown(
-        f'<div class="metric-card">'
-        f'<div class="metric-title">Files Processed</div>'
-        f'<div class="metric-value">{metrics["files_processed"]}</div>'
-        f'<div class="metric-unit">files / day</div>'
-        f'</div>',
-        unsafe_allow_html=True
+    render_metric_card(
+        title="Files Processed",
+        value=metrics["files_processed"],
+        unit="files / day",
+        icon="📁",
+        trend=12.4  # Example trend showing 12.4% increase
     )
 
 with col3:
-    st.markdown(
-        f'<div class="metric-card">'
-        f'<div class="metric-title">Avg. Processing Time</div>'
-        f'<div class="metric-value">{metrics["processing_time"]}s</div>'
-        f'<div class="metric-unit">per file</div>'
-        f'</div>',
-        unsafe_allow_html=True
+    render_metric_card(
+        title="Avg. Processing Time",
+        value=f"{metrics['processing_time']}",
+        unit="sec per file",
+        icon="⏱️",
+        trend=-8.5  # Example trend showing 8.5% decrease (improvement)
     )
 
 with col4:
-    st.markdown(
-        f'<div class="metric-card">'
-        f'<div class="metric-title">Optimization Gain</div>'
-        f'<div class="metric-value">{metrics["optimization_gain"]}%</div>'
-        f'<div class="metric-unit">performance improvement</div>'
-        f'</div>',
-        unsafe_allow_html=True
+    render_metric_card(
+        title="Optimization Gain",
+        value=metrics["optimization_gain"],
+        unit="%",
+        icon="🚀",
+        trend=3.1  # Example trend showing 3.1% increase
     )
 
+# Add a simple chart for visualization
+st.subheader("Processing Performance Trend")
+# Create sample data for the chart
+data = [10, 8, 6, 7, 5, 4, 4.8, 4.82]  # Processing time trend in seconds
+fig = create_gradient_chart(data, title="Processing Time Trend", y_label="Seconds", color="#7c4dff")
+st.pyplot(fig)
+
 # Platform Tools Section
-st.markdown('<h2 class="section-header">Platform Tools</h2>', unsafe_allow_html=True)
+st.subheader("Platform Tools")
 
 # First row of features
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.markdown(
-        '<div class="feature-card">'
-        '<div class="feature-icon">📊</div>'
-        '<div class="feature-title">Sync Service Dashboard</div>'
-        '<div class="feature-description">Monitor and manage sync operations with real-time metrics, dynamic batch sizing, and performance optimization based on system resources.</div>'
-        '</div>',
-        unsafe_allow_html=True
+    # Use render_card for consistent styling
+    render_card(
+        title="Sync Service Dashboard",
+        content="Monitor and manage sync operations with real-time metrics, dynamic batch sizing, and performance optimization based on system resources.",
+        icon="📊"
     )
-    
     if st.button("Open Sync Service", key="sync"):
         st.switch_page("pages/1_Sync_Service_Dashboard.py")
 
 with col2:
-    st.markdown(
-        '<div class="feature-card">'
-        '<div class="feature-icon">🔍</div>'
-        '<div class="feature-title">Code Analysis Dashboard</div>'
-        '<div class="feature-description">Analyze code quality, architecture, performance, and security using advanced AI models with actionable recommendations.</div>'
-        '</div>',
-        unsafe_allow_html=True
+    render_card(
+        title="Code Analysis Dashboard",
+        content="Analyze code quality, architecture, performance, and security using advanced AI models with actionable recommendations.",
+        icon="🔍"
     )
-    
     if st.button("Open Code Analysis", key="code"):
         st.switch_page("pages/2_Code_Analysis_Dashboard.py")
 
 with col3:
-    st.markdown(
-        '<div class="feature-card">'
-        '<div class="feature-icon">🤖</div>'
-        '<div class="feature-title">Agent Orchestration</div>'
-        '<div class="feature-description">Manage specialized AI agents with different capabilities for enhanced code analysis and continuous optimization.</div>'
-        '</div>',
-        unsafe_allow_html=True
+    render_card(
+        title="Agent Orchestration",
+        content="Manage specialized AI agents with different capabilities for enhanced code analysis and continuous optimization.",
+        icon="🤖"
     )
-    
     if st.button("Open Agent Orchestration", key="agent"):
         st.switch_page("pages/3_Agent_Orchestration.py")
 
@@ -199,53 +184,40 @@ with col3:
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.markdown(
-        '<div class="feature-card">'
-        '<div class="feature-icon">🔄</div>'
-        '<div class="feature-title">Workflow Visualization</div>'
-        '<div class="feature-description">Visualize, analyze, and optimize code workflows to identify bottlenecks and improve efficiency with AI-powered insights.</div>'
-        '</div>',
-        unsafe_allow_html=True
+    render_card(
+        title="Workflow Visualization",
+        content="Visualize, analyze, and optimize code workflows to identify bottlenecks and improve efficiency with AI-powered insights.",
+        icon="🔄"
     )
-    
     if st.button("Open Workflow Visualization", key="workflow"):
         st.switch_page("pages/4_Workflow_Visualization.py")
 
 with col2:
-    st.markdown(
-        '<div class="feature-card">'
-        '<div class="feature-icon">📁</div>'
-        '<div class="feature-title">Repository Analysis</div>'
-        '<div class="feature-description">Deep analysis of entire code repositories to evaluate structure, quality, and provide targeted improvement opportunities.</div>'
-        '</div>',
-        unsafe_allow_html=True
+    render_card(
+        title="Repository Analysis",
+        content="Deep analysis of entire code repositories to evaluate structure, quality, and provide targeted improvement opportunities.",
+        icon="📁"
     )
-    
     if st.button("Open Repository Analysis", key="repo"):
         st.switch_page("pages/5_Repository_Analysis.py")
 
 with col3:
-    st.markdown(
-        '<div class="feature-card">'
-        '<div class="feature-icon">💬</div>'
-        '<div class="feature-title">AI Chat Interface</div>'
-        '<div class="feature-description">Interactive communication with specialized AI agents to get insights and assistance for development challenges.</div>'
-        '</div>',
-        unsafe_allow_html=True
+    render_card(
+        title="AI Chat Interface",
+        content="Interactive communication with specialized AI agents to get insights and assistance for development challenges.",
+        icon="💬"
     )
-    
     if st.button("Open AI Chat", key="chat"):
         st.switch_page("pages/6_AI_Chat_Interface.py")
 
 # Activity and alerts section
-st.markdown('<h2 class="section-header">System Activity</h2>', unsafe_allow_html=True)
+st.subheader("System Activity")
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.markdown('<div class="glassmorphic-container">', unsafe_allow_html=True)
-    st.markdown('<div class="card-title">Recent Activity</div>', unsafe_allow_html=True)
-    
+    # Prepare activity log for our timeline component
     activities = get_random_activity()
+    events = []
     
     for activity in activities:
         time_diff = datetime.now() - activity["time"]
@@ -256,76 +228,114 @@ with col1:
         else:
             time_str = f"{time_diff.seconds // 60}m ago"
         
-        st.markdown(
-            f'<div class="activity-item">'
-            f'<div class="activity-time">{time_str}</div>'
-            f'<div class="activity-content">{activity["text"]}</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
+        events.append({
+            "time": time_str,
+            "title": f"Activity: {activity['type'].title()}",
+            "description": activity["text"]
+        })
     
-    st.markdown('</div>', unsafe_allow_html=True)
-
-with col2:
-    st.markdown('<div class="glassmorphic-container">', unsafe_allow_html=True)
-    st.markdown('<div class="card-title">Active Alerts</div>', unsafe_allow_html=True)
-    
-    alerts = get_active_alerts()
-    
-    if not alerts:
-        st.markdown('<p style="color: var(--tf-text-tertiary); font-size: 0.875rem;">No active alerts</p>', unsafe_allow_html=True)
-    else:
-        for alert in alerts:
-            severity_class = f"alert-{alert['severity']}"
+    # Use a card with a more descriptive heading
+    with st.expander("Recent Activity Log", expanded=True):
+        # Create a timeline of events
+        for event in events:
             st.markdown(
-                f'<div class="alert-item {severity_class}">'
-                f'<div class="activity-time">{alert["time"]}</div>'
-                f'<div class="activity-content">{alert["text"]}</div>'
-                f'</div>',
+                f"""
+                <div style="display: flex; padding: 0.5rem 0; border-bottom: 1px solid rgba(124, 77, 255, 0.1);">
+                    <div style="min-width: 70px; color: rgba(248, 249, 250, 0.65); font-size: 0.875rem;">
+                        {event['time']}
+                    </div>
+                    <div>
+                        <div style="font-weight: 500; margin-bottom: 0.25rem; color: #7c4dff;">
+                            {event['title']}
+                        </div>
+                        <div style="color: rgba(248, 249, 250, 0.85); font-size: 0.9rem;">
+                            {event['description']}
+                        </div>
+                    </div>
+                </div>
+                """,
                 unsafe_allow_html=True
             )
-    
-    st.markdown('</div>', unsafe_allow_html=True)
+
+with col2:
+    # Display active alerts using our alert component
+    with st.expander("Active Alerts", expanded=True):
+        alerts = get_active_alerts()
+        
+        if not alerts:
+            st.info("No active alerts at this time.")
+        else:
+            for alert in alerts:
+                # Map severity to component's level
+                if alert["severity"] == "high":
+                    level = "error"
+                elif alert["severity"] == "medium":
+                    level = "warning"
+                else:
+                    level = "info"
+                
+                # Use the alert component
+                render_alert(
+                    message=f"{alert['text']} ({alert['time']})",
+                    level=level,
+                    dismissible=True
+                )
 
 # Getting started guide
-st.markdown('<div class="guide-container">', unsafe_allow_html=True)
-st.markdown('<div class="guide-title">Getting Started</div>', unsafe_allow_html=True)
+st.subheader("Getting Started")
 
-st.markdown(
-    '<div class="guide-step">'
-    '<div class="guide-step-title">1. Connect AI Services</div>'
-    '<div class="guide-step-description">Configure your OpenAI and Anthropic API keys to enable advanced analysis features.</div>'
-    '</div>',
-    unsafe_allow_html=True
-)
+# Create a cleaner getting started section with progress indicators
+col1, col2 = st.columns(2)
 
-st.markdown(
-    '<div class="guide-step">'
-    '<div class="guide-step-title">2. Analyze Your Repository</div>'
-    '<div class="guide-step-description">Use the Repository Analysis tool to get a comprehensive overview of your codebase.</div>'
-    '</div>',
-    unsafe_allow_html=True
-)
+with col1:
+    render_progress_bar(
+        value=1, max_value=4, 
+        label="1. Connect AI Services: Configure OpenAI and Anthropic API keys to enable advanced analysis features."
+    )
+    
+    render_progress_bar(
+        value=0, max_value=4, 
+        label="2. Analyze Your Repository: Get a comprehensive overview of your codebase structure and quality."
+    )
 
-st.markdown(
-    '<div class="guide-step">'
-    '<div class="guide-step-title">3. Optimize Workflows</div>'
-    '<div class="guide-step-description">Identify and resolve bottlenecks with the Workflow Visualization tool.</div>'
-    '</div>',
-    unsafe_allow_html=True
-)
+with col2:
+    render_progress_bar(
+        value=0, max_value=4, 
+        label="3. Optimize Workflows: Identify and resolve bottlenecks with the Workflow Visualization tool.", 
+        style="warning"
+    )
+    
+    render_progress_bar(
+        value=0, max_value=4, 
+        label="4. Monitor Performance: Track system metrics and optimization with the Sync Service Dashboard."
+    )
 
-st.markdown(
-    '<div class="guide-step">'
-    '<div class="guide-step-title">4. Monitor Performance</div>'
-    '<div class="guide-step-description">Track system metrics and optimization with the Sync Service Dashboard.</div>'
-    '</div>',
-    unsafe_allow_html=True
-)
+# Add quick setup help
+st.info("👋 **Welcome to TerraFusion AI Platform!** To get started, connect your AI services and explore the platform's capabilities.")
 
-st.markdown('</div>', unsafe_allow_html=True)
+# Add some tags for platform features
+st.write("### Platform Features")
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    render_tag("AI-Powered Analysis", size="medium")
+    
+with col2:
+    render_tag("Multi-Agent System", size="medium")
+    
+with col3:
+    render_tag("Smart Optimization", size="medium")
+    
+with col4:
+    render_tag("2025 Technology", size="medium")
 
 # Footer
-st.markdown('<div class="footer">', unsafe_allow_html=True)
-st.markdown("© 2025 TerraFusion AI Platform | Advanced Code Analysis and Optimization", unsafe_allow_html=True)
-st.markdown("</div>", unsafe_allow_html=True)
+st.markdown("""---""")
+st.markdown(
+    """
+    <div style="text-align: center; color: rgba(248, 249, 250, 0.65); font-size: 0.75rem; margin-top: 2rem;">
+        © 2025 TerraFusion AI Platform | Advanced Code Analysis and Optimization
+    </div>
+    """, 
+    unsafe_allow_html=True
+)

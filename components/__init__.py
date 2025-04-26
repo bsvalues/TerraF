@@ -14,11 +14,14 @@ from components.styling import (
 )
 
 from components.ui_components import (
-    metric_card,
-    feature_card,
-    status_indicator,
-    activity_feed,
-    alert_item,
-    section_header,
-    loading_placeholder
+    render_card,
+    render_metric_card,
+    render_alert,
+    render_info_tooltip,
+    render_progress_bar,
+    render_tag,
+    render_timeline,
+    render_code_block,
+    render_tabs,
+    create_gradient_chart
 )
