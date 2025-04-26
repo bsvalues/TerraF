@@ -1,0 +1,92 @@
+### Replit AI Agent Bootstrap: Sprint 0 End-to-End PoC for TerraFusionPlayground
+
+You are the Replit AI Agent operating in the TerraFusionPlayground workspace. Your immediate goal is to prove Python ↔ Node ↔ Streamlit end-to-end connectivity by building and testing a “Levy Calculator” POC. Follow these steps exactly:
+
+1. 📄 **Streamlit App (“levy_app.py”)**  
+   - Under `packages/streamlit-bridge/src/`, create `levy_app.py`.  
+   - In it, import our bridge module and call the backend:  
+     ```python
+     from tf_bridge import call_api
+     import streamlit as st
+
+     st.title("Levy Calculator POC")
+     prop_id = st.text_input("Property ID", "123")
+     if st.button("Calculate"):
+         with st.spinner("Fetching…"):
+             data = call_api(f"/api/v1/levy?propertyId={prop_id}")
+         st.json(data)
+     ```  
+   - Ensure `bridge.py` exposes `call_api(path: str) → dict` using `requests` against the Express server.
+
+2. 🔧 **Python Bridge Packaging**  
+   - In `packages/streamlit-bridge/`, add `pyproject.toml`:
+     ```toml
+     [project]
+     name = "tf-bridge"
+     version = "0.1.0"
+     dependencies = ["requests", "streamlit"]
+     ```
+   - Confirm that `pip install -e .` in CI will allow `import tf_bridge`.
+
+3. 🧪 **Integration Test**  
+   - Under `.github/integration/`, create `test_levy_poc.py`:
+     ```python
+     import subprocess, requests, time, pytest
+
+     @pytest.fixture(scope="session", autouse=True)
+     def start_servers():
+         # 1) Launch Express server
+         srv = subprocess.Popen(["npm","--prefix","server","run","dev"])
+         # 2) Launch Python bridge
+         br = subprocess.Popen(["pipx","run","streamlit","run","packages/streamlit-bridge/src/levy_app.py","--server.port","8501"])
+         time.sleep(5)
+         yield
+         srv.terminate(); br.terminate()
+
+     def test_levy_endpoint():
+         r = requests.get("http://localhost:4000/api/v1/levy?propertyId=123")
+         assert r.status_code == 200
+         assert "amount" in r.json()
+
+     def test_streamlit_poc():
+         r = requests.get("http://localhost:8501")
+         assert r.status_code == 200
+         assert "Levy Calculator POC" in r.text
+     ```
+   - Add `pytest` and `pipx` installs to CI.
+
+4. ⚙️ **CI Pipeline Update**  
+   - In `.github/workflows/ci.yml` add a job “integration” after build:
+     ```yaml
+     jobs:
+       integration:
+         runs-on: ubuntu-latest
+         needs: build
+         steps:
+           - uses: actions/checkout@v3
+           - name: Setup Node.js
+             uses: actions/setup-node@v3
+             with: node-version: 18
+           - name: Setup Python
+             uses: actions/setup-python@v4
+             with: python-version: 3.10
+           - name: Install dependencies
+             run: |
+               pnpm install
+               pip install -e packages/streamlit-bridge
+               pip install pytest requests pipx
+           - name: Run integration tests
+             run: pytest .github/integration
+     ```
+
+5. ✅ **Validation**  
+   - After CI passes, manually run locally:
+     ```
+     pnpm dev & 
+     streamlit run packages/streamlit-bridge/src/levy_app.py
+     ```  
+   - Open `http://localhost:8501`, enter a property ID, click “Calculate” and verify JSON.
+
+---
+
+Feed exactly this block to your Replit AI Agent. It will scaffold the levy_app, packaging, tests, and CI so you have a working end-to-end proof-of-concept.

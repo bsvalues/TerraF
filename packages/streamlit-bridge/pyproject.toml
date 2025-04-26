@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tf-bridge"
+version = "0.1.0"
+authors = [
+    {name = "TerraFusion Team"}
+]
+description = "Bridge for connecting Streamlit apps to the TerraFusion backend"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "requests>=2.25.0",
+    "streamlit>=1.10.0"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/terrafusion/terrafusion"
+"Bug Tracker" = "https://github.com/terrafusion/terrafusion/issues"
