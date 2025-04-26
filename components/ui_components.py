@@ -3,11 +3,225 @@ UI Components Module
 
 This module provides reusable UI components for the TerraFusion UI.
 """
+
+# Loading animation CSS
+LOADING_CSS = """
+<style>
+@keyframes pulse {
+  0% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+  100% { opacity: 0.4; }
+}
+
+.tf-loading {
+  animation: pulse 1.5s infinite ease-in-out;
+  background: linear-gradient(90deg, rgba(124, 77, 255, 0.12), rgba(124, 77, 255, 0.2), rgba(124, 77, 255, 0.12));
+  background-size: 200% 100%;
+  border-radius: 4px;
+  display: inline-block;
+  height: 16px;
+  margin: 5px 0;
+}
+
+.tf-loading.tf-loading-circle {
+  border-radius: 50%;
+  height: 40px;
+  width: 40px;
+}
+
+.tf-skeleton-text {
+  height: 18px;
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+.tf-skeleton-title {
+  height: 24px;
+  margin-bottom: 12px;
+  width: 70%;
+}
+
+.tf-skeleton-circle {
+  border-radius: 50%;
+  height: 64px;
+  width: 64px;
+}
+
+.tf-skeleton-button {
+  height: 38px;
+  width: 120px;
+  border-radius: 4px;
+}
+
+.tf-skeleton-image {
+  height: 200px;
+  width: 100%;
+}
+
+/* Animation for loading animations */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.tf-loading {
+  animation: shimmer 2s infinite linear;
+}
+
+/* Notification styles */
+.tf-notification {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 9999;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.tf-notification.info {
+  background-color: rgba(124, 77, 255, 0.95);
+  color: white;
+}
+
+.tf-notification.success {
+  background-color: rgba(0, 230, 118, 0.95);
+  color: white;
+}
+
+.tf-notification.warning {
+  background-color: rgba(255, 234, 0, 0.95);
+  color: #1e1e1e;
+}
+
+.tf-notification.error {
+  background-color: rgba(255, 23, 68, 0.95);
+  color: white;
+}
+
+.tf-notification.hidden {
+  transform: translateX(120%);
+  opacity: 0;
+}
+
+/* Modal styles */
+.tf-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.tf-modal {
+  background-color: var(--tf-card-bg);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  max-width: 500px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  border: 1px solid rgba(124, 77, 255, 0.25);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+}
+
+.tf-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(124, 77, 255, 0.15);
+}
+
+.tf-modal-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--tf-primary);
+}
+
+.tf-modal-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.25rem;
+  color: var(--tf-text-tertiary);
+}
+
+.tf-modal-body {
+  margin-bottom: 1.5rem;
+}
+
+.tf-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(124, 77, 255, 0.15);
+}
+
+/* Button styles */
+.tf-button {
+  background-color: var(--tf-primary);
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.tf-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.tf-button.secondary {
+  background-color: transparent;
+  border: 1px solid var(--tf-primary);
+  color: var(--tf-primary);
+}
+
+/* Subtle animations */
+.tf-hover-scale {
+  transition: transform 0.2s ease;
+}
+
+.tf-hover-scale:hover {
+  transform: scale(1.02);
+}
+
+.tf-hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.tf-hover-lift:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+}
+</style>
+"""
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+import uuid
+import time
 from typing import List, Dict, Any, Union, Optional, Tuple
+
+# Loading CSS will be applied when needed, not automatically
+def apply_loading_animations_css():
+    """Apply loading animations CSS"""
+    st.markdown(LOADING_CSS, unsafe_allow_html=True)
 
 def render_card(title: str, content: str, icon: Optional[str] = None):
     """
@@ -372,6 +586,145 @@ def render_timeline(events: List[Dict[str, Any]]):
     html += '</div>'
     
     st.markdown(html, unsafe_allow_html=True)
+
+def render_loading_skeleton(type_of_skeleton="text", count=1, width=None):
+    """
+    Render a loading skeleton animation.
+    
+    Args:
+        type_of_skeleton: Type of skeleton to render ("text", "title", "circle", "button", "image")
+        count: Number of skeleton items to render
+        width: Optional width of the skeleton (percentage or pixel value as string)
+    """
+    skeleton_class = f"tf-skeleton-{type_of_skeleton}"
+    width_style = f"width: {width};" if width else ""
+    
+    for _ in range(count):
+        st.markdown(
+            f"""
+            <div class="tf-loading {skeleton_class}" style="{width_style}"></div>
+            """,
+            unsafe_allow_html=True
+        )
+
+def render_loading_spinner(text="Loading...", size="medium"):
+    """
+    Render a loading spinner.
+    
+    Args:
+        text: Text to display alongside the spinner
+        size: Size of the spinner ("small", "medium", "large")
+    """
+    # Determine spinner size based on the parameter
+    if size == "small":
+        dimensions = "height: 24px; width: 24px;"
+    elif size == "large":
+        dimensions = "height: 56px; width: 56px;"
+    else:  # medium (default)
+        dimensions = "height: 40px; width: 40px;"
+    
+    st.markdown(
+        f"""
+        <div style="display: flex; align-items: center; margin: 1rem 0;">
+            <div class="tf-loading tf-loading-circle" style="{dimensions}"></div>
+            <div style="margin-left: 1rem; color: var(--tf-text-secondary);">{text}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+def render_notification(message, type_of_notification="info", duration=5000):
+    """
+    Render a notification (toast message).
+    
+    Args:
+        message: Notification message
+        type_of_notification: Type of notification ("info", "success", "warning", "error")
+        duration: Duration in milliseconds before the notification disappears
+    """
+    notification_id = f"notification_{uuid.uuid4().hex[:8]}"
+    
+    # Set icon based on notification type
+    icon = "ℹ️"
+    if type_of_notification == "success":
+        icon = "✅"
+    elif type_of_notification == "warning":
+        icon = "⚠️"
+    elif type_of_notification == "error":
+        icon = "❌"
+    
+    # Create the notification HTML
+    notification_html = f"""
+    <div id="{notification_id}" class="tf-notification {type_of_notification}">
+        <div style="display: flex; align-items: flex-start;">
+            <div style="margin-right: 0.75rem;">{icon}</div>
+            <div style="flex-grow: 1;">{message}</div>
+            <div style="margin-left: 0.75rem; cursor: pointer;" 
+                 onclick="document.getElementById('{notification_id}').classList.add('hidden')">✕</div>
+        </div>
+    </div>
+    
+    <script>
+    // Auto-hide the notification after the specified duration
+    setTimeout(function() {{
+        const notification = document.getElementById('{notification_id}');
+        if (notification) {{
+            notification.classList.add('hidden');
+        }}
+    }}, {duration});
+    </script>
+    """
+    
+    st.markdown(notification_html, unsafe_allow_html=True)
+
+def render_modal(title, content, show_modal=False, on_close=None):
+    """
+    Render a modal dialog.
+    
+    Args:
+        title: Modal title
+        content: Modal content (HTML string)
+        show_modal: Whether to show the modal
+        on_close: Optional JavaScript code to run when the modal is closed
+    """
+    if not show_modal:
+        return
+    
+    modal_id = f"modal_{uuid.uuid4().hex[:8]}"
+    close_js = on_close if on_close else ""
+    
+    modal_html = f"""
+    <div id="{modal_id}" class="tf-modal-backdrop">
+        <div class="tf-modal">
+            <div class="tf-modal-header">
+                <div class="tf-modal-title">{title}</div>
+                <button class="tf-modal-close" onclick="closeModal()">✕</button>
+            </div>
+            <div class="tf-modal-body">
+                {content}
+            </div>
+            <div class="tf-modal-footer">
+                <button class="tf-button secondary" onclick="closeModal()">Cancel</button>
+                <button class="tf-button" onclick="confirmModal()">OK</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+    function closeModal() {{
+        document.getElementById('{modal_id}').style.display = 'none';
+        {close_js}
+    }}
+    
+    function confirmModal() {{
+        document.getElementById('{modal_id}').style.display = 'none';
+        {close_js}
+        // Add any confirmation logic here
+    }}
+    </script>
+    """
+    
+    st.markdown(modal_html, unsafe_allow_html=True)
 
 def create_gradient_chart(data, title=None, x_label=None, y_label=None, color='#7c4dff'):
     """

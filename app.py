@@ -1,4 +1,13 @@
 import streamlit as st
+
+# Set page configuration (must be the first Streamlit command)
+st.set_page_config(
+    page_title="TerraFusion AI Platform",
+    page_icon="🌍",
+    layout="wide",
+)
+
+# Import other libraries
 import pandas as pd
 import numpy as np
 import time
@@ -13,18 +22,15 @@ from components.navigation import render_sidebar_navigation, render_page_header
 from components.ui_components import (
     render_card, render_metric_card, render_alert, 
     render_info_tooltip, render_progress_bar, render_tag,
-    create_gradient_chart
-)
-
-# Set page configuration
-st.set_page_config(
-    page_title="TerraFusion AI Platform",
-    page_icon="🌍",
-    layout="wide",
+    create_gradient_chart, render_loading_spinner, render_loading_skeleton,
+    render_notification, render_modal, render_timeline, apply_loading_animations_css
 )
 
 # Apply consistent styling
 apply_terraflow_style()
+
+# Apply loading animations CSS
+apply_loading_animations_css()
 
 # Initialize session state
 if 'model_interface' not in st.session_state:
@@ -236,26 +242,8 @@ with col1:
     
     # Use a card with a more descriptive heading
     with st.expander("Recent Activity Log", expanded=True):
-        # Create a timeline of events
-        for event in events:
-            st.markdown(
-                f"""
-                <div style="display: flex; padding: 0.5rem 0; border-bottom: 1px solid rgba(124, 77, 255, 0.1);">
-                    <div style="min-width: 70px; color: rgba(248, 249, 250, 0.65); font-size: 0.875rem;">
-                        {event['time']}
-                    </div>
-                    <div>
-                        <div style="font-weight: 500; margin-bottom: 0.25rem; color: #7c4dff;">
-                            {event['title']}
-                        </div>
-                        <div style="color: rgba(248, 249, 250, 0.85); font-size: 0.9rem;">
-                            {event['description']}
-                        </div>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+        # Use our timeline component instead of custom HTML
+        render_timeline(events)
 
 with col2:
     # Display active alerts using our alert component
@@ -328,6 +316,97 @@ with col3:
     
 with col4:
     render_tag("2025 Technology", size="medium")
+
+# UI Components Showcase
+with st.expander("Advanced UI Components Demo", expanded=False):
+    st.subheader("Advanced UI Components")
+    st.markdown("This section demonstrates the new UI components available in the application.")
+    
+    # Loading components demo
+    st.write("#### Loading Components")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        render_loading_spinner("Loading data...")
+        
+    with col2:
+        st.write("Skeleton Loaders:")
+        render_loading_skeleton("title", 1)
+        render_loading_skeleton("text", 3)
+        render_loading_skeleton("button", 1)
+    
+    # Show notification demo
+    st.write("#### Notifications")
+    
+    notification_col1, notification_col2, notification_col3, notification_col4 = st.columns(4)
+    
+    with notification_col1:
+        if st.button("Show Info Notification"):
+            render_notification("This is an information notification", "info", 5000)
+    
+    with notification_col2:
+        if st.button("Show Success Notification"):
+            render_notification("Operation completed successfully!", "success", 5000)
+    
+    with notification_col3:
+        if st.button("Show Warning Notification"):
+            render_notification("Warning: Approaching resource limit", "warning", 5000)
+    
+    with notification_col4:
+        if st.button("Show Error Notification"):
+            render_notification("Error: Failed to connect to service", "error", 5000)
+    
+    # Modal dialog demo
+    st.write("#### Modal Dialogs")
+    
+    if st.button("Show Modal Dialog"):
+        modal_content = """
+        <p style="margin-bottom: 1rem;">Are you sure you want to perform this action?</p>
+        <p style="color: rgba(248, 249, 250, 0.65);">This action cannot be undone.</p>
+        """
+        render_modal("Confirmation", modal_content, True)
+    
+    # Timeline component demo
+    st.write("#### Timeline Component")
+    
+    timeline_events = [
+        {"time": "2 hours ago", "title": "System Update", "description": "Core system updated to version 2.4.0"},
+        {"time": "Yesterday", "title": "New Agent Added", "description": "Added DatabaseOptimizer agent to the system"},
+        {"time": "3 days ago", "title": "Performance Improvement", "description": "Reduced processing time by 30% through workflow optimization"}
+    ]
+    
+    render_timeline(timeline_events)
+    
+    # Subtle animations demo
+    st.write("#### Subtle Animations")
+    
+    animation_col1, animation_col2 = st.columns(2)
+    
+    with animation_col1:
+        st.markdown(
+            """
+            <div class="tf-hover-scale" style="background-color: var(--tf-card-bg); border: 1px solid rgba(124, 77, 255, 0.25); 
+                        border-radius: 0.75rem; padding: 1.25rem; text-align: center; cursor: pointer;">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">🚀</div>
+                <div style="font-weight: 600; margin-bottom: 0.5rem;">Scale Animation</div>
+                <div style="color: rgba(248, 249, 250, 0.65); font-size: 0.875rem;">Hover over this card to see the scale effect</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    
+    with animation_col2:
+        st.markdown(
+            """
+            <div class="tf-hover-lift" style="background-color: var(--tf-card-bg); border: 1px solid rgba(124, 77, 255, 0.25); 
+                        border-radius: 0.75rem; padding: 1.25rem; text-align: center; cursor: pointer;">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">✨</div>
+                <div style="font-weight: 600; margin-bottom: 0.5rem;">Lift Animation</div>
+                <div style="color: rgba(248, 249, 250, 0.65); font-size: 0.875rem;">Hover over this card to see the lift effect</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
 # Footer
 st.markdown("""---""")

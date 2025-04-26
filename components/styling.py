@@ -318,16 +318,85 @@ def get_image_base64(img_path):
         st.warning(f"Error loading image: {e}")
         return None
 
+def get_theme_toggle_script():
+    """Get the JavaScript for theme toggling."""
+    return """
+    <script>
+    // Store the current theme in session storage
+    const getCurrentTheme = () => {
+        return sessionStorage.getItem('terraflow_theme') || 'dark';
+    };
+    
+    // Set theme-specific variables
+    const setThemeVariables = (isDark) => {
+        const root = document.documentElement;
+        
+        // Base colors
+        if (isDark) {
+            root.style.setProperty('--tf-background', '#121212');
+            root.style.setProperty('--tf-card-bg', '#1e1e1e');
+            root.style.setProperty('--tf-text', '#f8f9fa');
+            root.style.setProperty('--tf-text-secondary', 'rgba(248, 249, 250, 0.85)');
+            root.style.setProperty('--tf-text-tertiary', 'rgba(248, 249, 250, 0.65)');
+        } else {
+            root.style.setProperty('--tf-background', '#f8f9fa');
+            root.style.setProperty('--tf-card-bg', '#ffffff');
+            root.style.setProperty('--tf-text', '#212529');
+            root.style.setProperty('--tf-text-secondary', 'rgba(33, 37, 41, 0.85)');
+            root.style.setProperty('--tf-text-tertiary', 'rgba(33, 37, 41, 0.65)');
+        }
+    };
+    
+    // Toggle theme function
+    const toggleTheme = () => {
+        const currentTheme = getCurrentTheme();
+        const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        
+        // Store the new theme
+        sessionStorage.setItem('terraflow_theme', newTheme);
+        
+        // Apply the theme
+        setThemeVariables(newTheme === 'dark');
+        
+        // Update the toggle button
+        const toggleButton = document.getElementById('theme-toggle');
+        if (toggleButton) {
+            toggleButton.innerHTML = newTheme === 'dark' ? '☀️' : '🌙';
+        }
+    };
+    
+    // Apply the current theme when the page loads
+    document.addEventListener('DOMContentLoaded', () => {
+        const currentTheme = getCurrentTheme();
+        setThemeVariables(currentTheme === 'dark');
+        
+        // Update toggle button if it exists
+        const toggleButton = document.getElementById('theme-toggle');
+        if (toggleButton) {
+            toggleButton.innerHTML = currentTheme === 'dark' ? '☀️' : '🌙';
+        }
+    });
+    </script>
+    """
+
 def render_logo():
     """
-    Render the TerraFusion logo.
+    Render the TerraFusion logo and theme toggle.
     """
-    # Simple logo that works reliably
-    logo_html = """
-    <div style="margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid rgba(124, 77, 255, 0.1);">
+    # Add theme toggle script
+    theme_toggle_script = get_theme_toggle_script()
+    st.sidebar.markdown(theme_toggle_script, unsafe_allow_html=True)
+    
+    # Create logo with theme toggle button
+    logo_html = f"""
+    <div style="margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid rgba(124, 77, 255, 0.1); display: flex; justify-content: space-between; align-items: center;">
         <div style="font-size: 1.5rem; font-weight: 700; color: #7c4dff;">
             TerraFusion AI
         </div>
+        <button id="theme-toggle" onclick="toggleTheme()" 
+                style="background: none; border: none; font-size: 1.2rem; cursor: pointer; color: var(--tf-text);">
+            ☀️
+        </button>
     </div>
     """
     
