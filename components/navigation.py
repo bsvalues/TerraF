@@ -7,15 +7,30 @@ import streamlit as st
 import os
 from typing import List, Tuple, Dict, Optional, Union, Any
 
-# Define the navigation structure
+# Define the navigation structure with improved organization
 NAVIGATION = [
-    {"name": "Home", "icon": "🏠", "url": "/"},
-    {"name": "Sync Service", "icon": "📊", "url": "/Sync_Service_Dashboard"},
-    {"name": "Code Analysis", "icon": "🔍", "url": "/Code_Analysis_Dashboard"},
-    {"name": "Agent Orchestration", "icon": "🤖", "url": "/Agent_Orchestration"},
-    {"name": "Workflow Visualization", "icon": "📈", "url": "/Workflow_Visualization"},
-    {"name": "Repository Analysis", "icon": "🔄", "url": "/Repository_Analysis"},
-    {"name": "AI Chat Interface", "icon": "💬", "url": "/AI_Chat_Interface"},
+    {"name": "Home", "icon": "🏠", "url": "/", "description": "Main dashboard and system overview", "category": "main"},
+    
+    # DevOps Core Services
+    {"name": "Sync Service", "icon": "🔄", "url": "/Sync_Service_Dashboard", "description": "Data synchronization and ETL operations", "category": "devops"},
+    {"name": "Workflow Visualization", "icon": "📊", "url": "/Workflow_Visualization", "description": "Visualize and optimize development workflows", "category": "devops"},
+    {"name": "Agent Orchestration", "icon": "🤖", "url": "/Agent_Orchestration", "description": "Manage AI agent deployment and coordination", "category": "devops"},
+    
+    # Analysis Tools
+    {"name": "Code Analysis", "icon": "🔍", "url": "/Code_Analysis_Dashboard", "description": "Code quality and architecture analysis", "category": "analysis"},
+    {"name": "Repository Analysis", "icon": "📁", "url": "/Repository_Analysis", "description": "Repository health and structure analysis", "category": "analysis"},
+    
+    # Utilities
+    {"name": "AI Chat Interface", "icon": "💬", "url": "/AI_Chat_Interface", "description": "Interact with AI assistants", "category": "utilities"},
+    {"name": "API Status", "icon": "📡", "url": "/API_Status", "description": "Check API and service connectivity", "category": "utilities"},
+]
+
+# Define Navigation Categories
+CATEGORIES = [
+    {"id": "main", "name": "Overview", "icon": "📊"},
+    {"id": "devops", "name": "DevOps Tools", "icon": "🛠️"},
+    {"id": "analysis", "name": "Analysis", "icon": "📈"},
+    {"id": "utilities", "name": "Utilities", "icon": "🧰"},
 ]
 
 def get_current_page_name() -> str:
@@ -56,7 +71,7 @@ def get_current_page_name() -> str:
 
 def render_sidebar_navigation():
     """
-    Render the sidebar navigation with simplified styling.
+    Render the sidebar navigation with improved categorization and styling.
     """
     # Import the logo rendering function
     from components.styling import render_logo
@@ -64,88 +79,132 @@ def render_sidebar_navigation():
     # Use the Logo function
     render_logo()
     
-    # Add the navigation label
-    st.sidebar.markdown(
-        """
-        <div style="margin-bottom: 1rem; color: var(--tf-text-secondary); 
-                    font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px;">
-            Navigation
-        </div>
-        """, 
-        unsafe_allow_html=True
-    )
-    
     current_page = get_current_page_name()
     
     # If we're on the main page (app.py), change current_page to "Home"
     if current_page in ["app", "combined_app", "enhanced_app"]:
         current_page = "Home"
     
+    # Group navigation items by category
+    nav_by_category = {}
     for nav_item in NAVIGATION:
-        page_name = nav_item["name"]
-        page_icon = nav_item["icon"]
-        page_url = nav_item["url"]
-        
-        # Check if this is the current page
-        is_current = (page_name == current_page) or (
-            page_name == "Home" and current_page in ["app", "combined_app", "enhanced_app"]
-        ) or (
-            page_url.strip('/') in current_page
-        )
-        
-        # Apply reliable styling based on whether this is the current page
-        if is_current:
-            nav_style = """
-                background-color: rgba(124, 77, 255, 0.12); 
-                color: #7c4dff; 
-                font-weight: 600;
-                border-radius: 0.5rem;
-            """
-        else:
-            nav_style = """
-                color: var(--tf-text-secondary);
-                transition: background-color 0.2s ease;
-                border-radius: 0.5rem;
-            """
-            # Add hover style for non-active items
-            nav_style += """
-                :hover {
-                    background-color: rgba(124, 77, 255, 0.08);
-                    color: var(--tf-text);
-                }
-            """
-        
-        # For non-current items, make them clickable
-        if not is_current:
-            if page_url == "/":
-                # For home page
-                click_action = "window.location.href = '/';"
-            else:
-                # For other pages
-                click_action = f"window.open('/{page_url.strip('/')}', '_self');"
-            
-            onclick = f"onclick=\"{click_action}\" style=\"cursor: pointer;\""
-        else:
-            onclick = ""
-        
-        st.sidebar.markdown(
-            f"""
-            <div style="display: flex; align-items: center; padding: 0.625rem 1rem; 
-                        margin-bottom: 0.25rem; {nav_style}" {onclick}>
-                <div style="margin-right: 0.625rem; font-size: 1.1em;">{page_icon}</div>
-                <div>{page_name}</div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        category = nav_item.get("category", "utilities")  # Default to utilities if not specified
+        if category not in nav_by_category:
+            nav_by_category[category] = []
+        nav_by_category[category].append(nav_item)
     
-    # Add a simple separator
+    # Render navigation by category
+    for category in CATEGORIES:
+        category_id = category["id"]
+        if category_id in nav_by_category and nav_by_category[category_id]:
+            # Display category header
+            st.sidebar.markdown(
+                f"""
+                <div style="margin-top: 1.5rem; margin-bottom: 0.75rem; color: var(--tf-text-secondary); 
+                            font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center;">
+                    <span style="margin-right: 0.5rem;">{category["icon"]}</span>
+                    {category["name"]}
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
+            
+            # Display items in this category
+            for nav_item in nav_by_category[category_id]:
+                page_name = nav_item["name"]
+                page_icon = nav_item["icon"]
+                page_url = nav_item["url"]
+                page_desc = nav_item.get("description", "")
+                
+                # Check if this is the current page
+                is_current = (page_name == current_page) or (
+                    page_name == "Home" and current_page in ["app", "combined_app", "enhanced_app"]
+                ) or (
+                    page_url.strip('/') in current_page
+                )
+                
+                # Apply reliable styling based on whether this is the current page
+                if is_current:
+                    nav_style = """
+                        background-color: rgba(124, 77, 255, 0.12); 
+                        color: #7c4dff; 
+                        font-weight: 600;
+                        border-radius: 0.5rem;
+                    """
+                    desc_color = "rgba(124, 77, 255, 0.7)"
+                else:
+                    nav_style = """
+                        color: var(--tf-text-secondary);
+                        transition: all 0.2s ease;
+                        border-radius: 0.5rem;
+                    """
+                    desc_color = "var(--tf-text-tertiary)"
+                    # Add hover style for non-active items
+                    nav_style += """
+                        :hover {
+                            background-color: rgba(124, 77, 255, 0.08);
+                            color: var(--tf-text);
+                            transform: translateY(-2px);
+                        }
+                    """
+                
+                # For non-current items, make them clickable
+                if not is_current:
+                    if page_url == "/":
+                        # For home page
+                        click_action = "window.location.href = '/';"
+                    else:
+                        # For other pages
+                        click_action = f"window.open('/{page_url.strip('/')}', '_self');"
+                    
+                    onclick = f"onclick=\"{click_action}\" style=\"cursor: pointer;\""
+                else:
+                    onclick = ""
+                
+                # Create navigation item with description
+                st.sidebar.markdown(
+                    f"""
+                    <div style="display: flex; flex-direction: column; padding: 0.625rem 1rem; 
+                                margin-bottom: 0.5rem; {nav_style}" {onclick}>
+                        <div style="display: flex; align-items: center;">
+                            <div style="margin-right: 0.625rem; font-size: 1.1em;">{page_icon}</div>
+                            <div>{page_name}</div>
+                        </div>
+                        <div style="margin-left: 1.75rem; font-size: 0.75rem; color: {desc_color}; margin-top: 0.25rem;">
+                            {page_desc}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+    
+    # Add system status indicator
+    from bridge import bridge
+    api_status = bridge.get_api_status()
+    
     st.sidebar.markdown(
         """
         <hr style="border: none; height: 1px; 
                   background: rgba(124, 77, 255, 0.1); 
-                  margin: 2rem 0;">
+                  margin: 1.5rem 0 1rem 0;">
         """, 
+        unsafe_allow_html=True
+    )
+    
+    status_color = "#00e676" if api_status.get("success", False) else "#ff1744"
+    status_text = "System Online" if api_status.get("success", False) else "System Error"
+    
+    st.sidebar.markdown(
+        f"""
+        <div style="display: flex; align-items: center; font-size: 0.8rem; color: var(--tf-text-secondary);">
+            <div style="width: 8px; height: 8px; border-radius: 50%; background-color: {status_color}; 
+                       margin-right: 0.5rem; box-shadow: 0 0 5px {status_color};"></div>
+            <div>{status_text}</div>
+            <div style="margin-left: auto; font-size: 0.7rem; color: var(--tf-text-tertiary);">
+                v1.2.0
+            </div>
+        </div>
+        """,
         unsafe_allow_html=True
     )
 
