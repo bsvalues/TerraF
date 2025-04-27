@@ -254,7 +254,8 @@ def render_card(title: str, content: str, icon: Optional[str] = None):
     )
 
 def render_metric_card(title: str, value: Union[str, int, float], unit: Optional[str] = None, 
-                      icon: Optional[str] = None, trend: Optional[float] = None):
+                      icon: Optional[str] = None, trend: Optional[float] = None, 
+                      health_status: Optional[str] = None):
     """
     Render a metric card showing a single KPI or metric.
     
@@ -264,6 +265,7 @@ def render_metric_card(title: str, value: Union[str, int, float], unit: Optional
         unit: Optional unit of measurement
         icon: Optional icon (emoji or font awesome)
         trend: Optional trend value (positive for up, negative for down)
+        health_status: Optional status ('healthy', 'warning', 'critical')
     """
     # Format the trend if provided
     if trend is not None:
@@ -287,17 +289,38 @@ def render_metric_card(title: str, value: Union[str, int, float], unit: Optional
         icon_html = f'<div style="font-size: 1.25rem; margin-bottom: 0.5rem; color: #7c4dff;">{icon}</div>'
     else:
         icon_html = ''
+        
+    # Set the color based on health status
+    if health_status == "healthy":
+        value_color = "#00e676"
+        border_color = "rgba(0, 230, 118, 0.3)"
+        indicator = '<span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: #00e676; margin-right: 0.5rem; box-shadow: 0 0 5px #00e676;"></span>'
+    elif health_status == "warning":
+        value_color = "#ffea00"
+        border_color = "rgba(255, 234, 0, 0.3)"
+        indicator = '<span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: #ffea00; margin-right: 0.5rem; box-shadow: 0 0 5px #ffea00;"></span>'
+    elif health_status == "critical":
+        value_color = "#ff1744"
+        border_color = "rgba(255, 23, 68, 0.3)"
+        indicator = '<span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: #ff1744; margin-right: 0.5rem; box-shadow: 0 0 5px #ff1744;"></span>'
+    else:
+        value_color = "#7c4dff"
+        border_color = "rgba(124, 77, 255, 0.25)"
+        indicator = ''
+    
+    # Show indicator only if health status is provided
+    status_indicator = indicator if health_status else ''
     
     st.markdown(
         f"""
-        <div style="background-color: var(--tf-card-bg); border: 1px solid rgba(124, 77, 255, 0.25); 
+        <div style="background-color: var(--tf-card-bg); border: 1px solid {border_color}; 
                     border-radius: 0.75rem; padding: 1.25rem; text-align: center; height: 100%;">
             {icon_html}
             <div style="color: rgba(248, 249, 250, 0.65); font-size: 0.875rem; margin-bottom: 0.5rem;">
                 {title}
             </div>
-            <div style="font-size: 2rem; font-weight: 700; color: #7c4dff; margin-bottom: 0.25rem;">
-                {value}{unit_html}{trend_html}
+            <div style="font-size: 2rem; font-weight: 700; color: {value_color}; margin-bottom: 0.25rem;">
+                {status_indicator}{value}{unit_html}{trend_html}
             </div>
         </div>
         """,
