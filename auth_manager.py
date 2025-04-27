@@ -1,169 +1,193 @@
 """
-TerraFusion Platform Authentication Module
+TerraFusionPlatform Authentication Manager
 
-This module provides basic authentication functionality for TerraFusion platform.
-It handles user authentication, session management, and access control.
+This module handles user authentication, session management, and access control.
 """
 
 import os
 import json
-import hashlib
-import secrets
 import time
-from datetime import datetime, timedelta
+import hmac
+import uuid
+from hashlib import sha256
+from typing import Dict, Any, Optional, Tuple
 
-# Constants
-AUTH_DIR = "auth"
-USERS_FILE = os.path.join(AUTH_DIR, "users.json")
-SESSIONS_FILE = os.path.join(AUTH_DIR, "sessions.json")
-SESSION_EXPIRY = 24  # Hours
+# Authentication directory and file paths
+AUTH_DIR = 'auth'
+USERS_FILE = os.path.join(AUTH_DIR, 'users.json')
+SESSIONS_FILE = os.path.join(AUTH_DIR, 'sessions.json')
 
-# Ensure auth directory exists
-if not os.path.exists(AUTH_DIR):
-    os.makedirs(AUTH_DIR)
+# Session expiration time (24 hours)
+SESSION_EXPIRY = 60 * 60 * 24
 
-# Initialize users file if it doesn't exist
-if not os.path.exists(USERS_FILE):
-    with open(USERS_FILE, 'w') as f:
-        json.dump({"users": {}}, f)
+def ensure_auth_files_exist() -> None:
+    """Ensure authentication files and directories exist."""
+    # Create auth directory if it doesn't exist
+    if not os.path.exists(AUTH_DIR):
+        os.makedirs(AUTH_DIR)
+    
+    # Create users file if it doesn't exist
+    if not os.path.exists(USERS_FILE):
+        with open(USERS_FILE, 'w') as f:
+            json.dump({"users": {}}, f, indent=4)
+    
+    # Create sessions file if it doesn't exist
+    if not os.path.exists(SESSIONS_FILE):
+        with open(SESSIONS_FILE, 'w') as f:
+            json.dump({"sessions": {}}, f, indent=4)
 
-# Initialize sessions file if it doesn't exist
-if not os.path.exists(SESSIONS_FILE):
-    with open(SESSIONS_FILE, 'w') as f:
-        json.dump({"sessions": {}}, f)
-
-
-def hash_password(password, salt=None):
+def hash_password(password: str) -> Tuple[str, str]:
     """
-    Hash a password with a salt using SHA-256.
+    Hash a password with a random salt.
     
     Args:
         password: The password to hash
-        salt: Optional salt to use (generates new one if None)
         
     Returns:
-        Tuple of (hash, salt)
+        Tuple containing (password_hash, salt)
     """
-    if salt is None:
-        salt = secrets.token_hex(16)
+    # Generate a random salt
+    salt = os.urandom(32).hex()
     
-    password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
+    # Hash the password with the salt
+    password_hash = hmac.new(
+        salt.encode(),
+        password.encode(),
+        sha256
+    ).hexdigest()
+    
     return password_hash, salt
 
+def verify_password(password: str, password_hash: str, salt: str) -> bool:
+    """
+    Verify a password against a hash and salt.
+    
+    Args:
+        password: The password to verify
+        password_hash: The stored password hash
+        salt: The salt used to hash the password
+        
+    Returns:
+        True if the password is correct, False otherwise
+    """
+    # Hash the provided password with the stored salt
+    computed_hash = hmac.new(
+        salt.encode(),
+        password.encode(),
+        sha256
+    ).hexdigest()
+    
+    # Compare the computed hash with the stored hash
+    return hmac.compare_digest(computed_hash, password_hash)
 
-def create_user(username, password, role="user"):
+def create_user(username: str, password: str, role: str = "user") -> bool:
     """
     Create a new user.
     
     Args:
         username: Username for the new user
         password: Password for the new user
-        role: Role for the new user (default: "user")
+        role: Role for the new user (default: 'user')
         
     Returns:
-        True if user created successfully, False if username already exists
+        True if user was created successfully, False if username already exists
     """
+    # Ensure auth files exist
+    ensure_auth_files_exist()
+    
     # Load existing users
     with open(USERS_FILE, 'r') as f:
-        data = json.load(f)
+        user_data = json.load(f)
     
     # Check if username already exists
-    if username in data["users"]:
+    if username in user_data["users"]:
         return False
     
-    # Hash password with salt
+    # Hash the password
     password_hash, salt = hash_password(password)
     
-    # Create user
-    data["users"][username] = {
+    # Add the new user
+    user_data["users"][username] = {
         "password_hash": password_hash,
         "salt": salt,
         "role": role,
         "created_at": time.time()
     }
     
-    # Save updated users
+    # Save updated user data
     with open(USERS_FILE, 'w') as f:
-        json.dump(data, f, indent=4)
+        json.dump(user_data, f, indent=4)
     
     return True
 
-
-def authenticate(username, password):
+def authenticate_user(username: str, password: str) -> bool:
     """
-    Authenticate a user.
+    Authenticate a user with a username and password.
     
     Args:
-        username: Username to authenticate
-        password: Password to authenticate
+        username: The username to authenticate
+        password: The password to authenticate
         
     Returns:
-        Session token if authentication successful, None otherwise
+        True if authentication is successful, False otherwise
     """
+    # Ensure auth files exist
+    ensure_auth_files_exist()
+    
     # Load users
     with open(USERS_FILE, 'r') as f:
-        data = json.load(f)
+        user_data = json.load(f)
     
-    # Check if username exists
-    if username not in data["users"]:
-        return None
+    # Check if user exists
+    if username not in user_data["users"]:
+        return False
     
-    # Get user data
-    user = data["users"][username]
+    # Get user info
+    user_info = user_data["users"][username]
     
-    # Hash provided password with user's salt
-    password_hash, _ = hash_password(password, user["salt"])
-    
-    # Check if password matches
-    if password_hash != user["password_hash"]:
-        return None
-    
-    # Create session
-    session_token = create_session(username, user["role"])
-    
-    return session_token
+    # Verify password
+    return verify_password(
+        password,
+        user_info["password_hash"],
+        user_info["salt"]
+    )
 
-
-def create_session(username, role):
+def create_session(username: str) -> str:
     """
     Create a new session for a user.
     
     Args:
-        username: Username for the session
-        role: Role of the user
+        username: Username to create session for
         
     Returns:
         Session token
     """
-    # Generate session token
-    session_token = secrets.token_hex(32)
+    # Ensure auth files exist
+    ensure_auth_files_exist()
     
-    # Calculate expiry time
-    expiry = datetime.now() + timedelta(hours=SESSION_EXPIRY)
-    expiry_timestamp = expiry.timestamp()
-    
-    # Load existing sessions
+    # Load sessions
     with open(SESSIONS_FILE, 'r') as f:
-        data = json.load(f)
+        session_data = json.load(f)
     
-    # Add new session
-    data["sessions"][session_token] = {
+    # Generate a session token
+    session_token = str(uuid.uuid4())
+    
+    # Create session
+    session_data["sessions"][session_token] = {
         "username": username,
-        "role": role,
         "created_at": time.time(),
-        "expires_at": expiry_timestamp
+        "expires_at": time.time() + SESSION_EXPIRY
     }
     
-    # Save updated sessions
+    # Save updated session data
     with open(SESSIONS_FILE, 'w') as f:
-        json.dump(data, f, indent=4)
+        json.dump(session_data, f, indent=4)
     
     return session_token
 
-
-def validate_session(session_token):
+def validate_session(session_token: str) -> Optional[Dict[str, Any]]:
     """
-    Validate a session token.
+    Validate a session token and return user data if valid.
     
     Args:
         session_token: Session token to validate
@@ -171,134 +195,129 @@ def validate_session(session_token):
     Returns:
         User data if session is valid, None otherwise
     """
-    # If no token provided, session is invalid
+    # Check if session token is provided
     if not session_token:
         return None
     
+    # Ensure auth files exist
+    ensure_auth_files_exist()
+    
     # Load sessions
     with open(SESSIONS_FILE, 'r') as f:
-        data = json.load(f)
+        session_data = json.load(f)
     
     # Check if session exists
-    if session_token not in data["sessions"]:
+    if session_token not in session_data["sessions"]:
         return None
     
-    # Get session data
-    session = data["sessions"][session_token]
+    # Get session info
+    session_info = session_data["sessions"][session_token]
     
     # Check if session has expired
-    if session["expires_at"] < time.time():
+    if session_info["expires_at"] < time.time():
         # Remove expired session
-        del data["sessions"][session_token]
-        
-        # Save updated sessions
+        del session_data["sessions"][session_token]
         with open(SESSIONS_FILE, 'w') as f:
-            json.dump(data, f, indent=4)
-        
+            json.dump(session_data, f, indent=4)
         return None
-    
-    # Get user data
-    username = session["username"]
     
     # Load users
     with open(USERS_FILE, 'r') as f:
         user_data = json.load(f)
     
-    # Check if user still exists
+    # Check if user exists
+    username = session_info["username"]
     if username not in user_data["users"]:
-        # Remove session for non-existent user
-        del data["sessions"][session_token]
-        
-        # Save updated sessions
-        with open(SESSIONS_FILE, 'w') as f:
-            json.dump(data, f, indent=4)
-        
         return None
+    
+    # Get user info
+    user_info = user_data["users"][username]
     
     # Return user data
     return {
         "username": username,
-        "role": session["role"]
+        "role": user_info["role"]
     }
 
-
-def invalidate_session(session_token):
+def invalidate_session(session_token: str) -> None:
     """
-    Invalidate a session.
+    Invalidate a session token.
     
     Args:
         session_token: Session token to invalidate
-        
-    Returns:
-        True if session invalidated successfully, False otherwise
     """
+    # Ensure auth files exist
+    ensure_auth_files_exist()
+    
     # Load sessions
     with open(SESSIONS_FILE, 'r') as f:
-        data = json.load(f)
+        session_data = json.load(f)
     
     # Check if session exists
-    if session_token not in data["sessions"]:
-        return False
-    
-    # Remove session
-    del data["sessions"][session_token]
-    
-    # Save updated sessions
-    with open(SESSIONS_FILE, 'w') as f:
-        json.dump(data, f, indent=4)
-    
-    return True
+    if session_token in session_data["sessions"]:
+        # Remove session
+        del session_data["sessions"][session_token]
+        
+        # Save updated session data
+        with open(SESSIONS_FILE, 'w') as f:
+            json.dump(session_data, f, indent=4)
 
-
-def cleanup_expired_sessions():
+def get_all_users() -> Dict[str, Dict[str, Any]]:
     """
-    Clean up expired sessions.
+    Get all users.
     
     Returns:
-        Number of expired sessions removed
+        Dictionary mapping usernames to user data
     """
-    # Load sessions
-    with open(SESSIONS_FILE, 'r') as f:
-        data = json.load(f)
+    # Ensure auth files exist
+    ensure_auth_files_exist()
     
-    # Current time
-    current_time = time.time()
-    
-    # Find expired sessions
-    expired_sessions = [
-        token for token, session in data["sessions"].items()
-        if session["expires_at"] < current_time
-    ]
-    
-    # Remove expired sessions
-    for token in expired_sessions:
-        del data["sessions"][token]
-    
-    # Save updated sessions
-    with open(SESSIONS_FILE, 'w') as f:
-        json.dump(data, f, indent=4)
-    
-    return len(expired_sessions)
-
-
-def create_default_admin():
-    """
-    Create a default admin user if no users exist.
-    
-    Returns:
-        True if default admin created, False otherwise
-    """
     # Load users
     with open(USERS_FILE, 'r') as f:
-        data = json.load(f)
+        user_data = json.load(f)
     
-    # Check if any users exist
-    if data["users"]:
+    # Return users
+    return user_data["users"]
+
+def delete_user(username: str) -> bool:
+    """
+    Delete a user.
+    
+    Args:
+        username: Username of the user to delete
+        
+    Returns:
+        True if user was deleted successfully, False if user doesn't exist
+    """
+    # Ensure auth files exist
+    ensure_auth_files_exist()
+    
+    # Load users
+    with open(USERS_FILE, 'r') as f:
+        user_data = json.load(f)
+    
+    # Check if user exists
+    if username not in user_data["users"]:
         return False
     
-    # Create default admin
-    return create_user("admin", "terrafusion", "admin")
-
-
-# Create default admin user if no users exist
-create_default_admin()
+    # Remove user
+    del user_data["users"][username]
+    
+    # Save updated user data
+    with open(USERS_FILE, 'w') as f:
+        json.dump(user_data, f, indent=4)
+    
+    # Load sessions
+    with open(SESSIONS_FILE, 'r') as f:
+        session_data = json.load(f)
+    
+    # Remove any sessions for this user
+    for session_token, session_info in list(session_data["sessions"].items()):
+        if session_info["username"] == username:
+            del session_data["sessions"][session_token]
+    
+    # Save updated session data
+    with open(SESSIONS_FILE, 'w') as f:
+        json.dump(session_data, f, indent=4)
+    
+    return True

@@ -1,361 +1,373 @@
 """
 TerraFusionPlatform State Manager
 
-This module provides centralized state management for the application,
-ensuring consistent data flow and state updates throughout the platform.
+This module provides centralized state management for the TerraFusionPlatform,
+making data visibility and state transitions more explicit and manageable.
 """
 
-import json
 import os
+import json
 import time
-from datetime import datetime
+from typing import Dict, Any, Optional, List
 import streamlit as st
-from typing import Dict, List, Any, Optional, Union
-import logging
-
-# Import existing phase management functionality
-from phase_manager import load_phase_state, save_phase_state, complete_phase, update_phase_progress, get_next_phase
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 class StateManager:
     """
-    Central state manager for the TerraFusionPlatform.
+    Centralized state manager for the TerraFusionPlatform.
     
-    This class handles state loading, updating, and persistence across the application.
-    It provides a unified interface for state management and ensures data consistency.
+    This class provides methods for getting and setting application state,
+    as well as persisting state to disk for persistence between sessions.
     """
     
-    def __init__(self, project_name: str = "terra_fusion_platform"):
-        """
-        Initialize the state manager.
+    def __init__(self):
+        """Initialize the state manager."""
+        # Define the path to the state file
+        self.state_file = "state.json"
         
-        Args:
-            project_name: Name of the current project
-        """
-        self.project_name = project_name
-        self.last_updated = datetime.now()
-        self.loading_states: Dict[str, bool] = {}
-        self.error_states: Dict[str, Optional[str]] = {}
-        
-        # Load the initial state
+        # Initialize the state
         self._initialize_state()
-        
-        logger.info("StateManager initialized for project: %s", project_name)
     
-    def _initialize_state(self):
-        """Initialize all application state components."""
-        # Initialize phase data
-        self.phase_data = load_phase_state(self.project_name)
-        
-        # Calculate derived state
-        self._calculate_derived_state()
-        
-        # Initialize reports if needed
-        if not hasattr(st.session_state, 'reports'):
-            st.session_state.reports = []
-        
-        # Initialize metrics if needed
-        if not hasattr(st.session_state, 'metrics'):
-            st.session_state.metrics = {
-                "reports_generated": 0,
-                "phases_completed": 0,
-                "test_coverage": 0,
-                "code_quality": 0
-            }
-    
-    def _calculate_derived_state(self):
-        """Calculate derived state based on the current phase data."""
-        # Determine current phase
-        self.current_phase = "planning"  # Default
-        
-        # Find the first incomplete phase
-        for phase_id, phase_info in self.phase_data.items():
-            if not phase_info["completed"]:
-                self.current_phase = phase_id
-                break
-        
-        # Calculate phase statuses
-        self.phase_statuses = {}
-        for phase_id, phase_info in self.phase_data.items():
-            if phase_info["completed"]:
-                self.phase_statuses[phase_id] = "completed"
-            elif phase_id == self.current_phase:
-                self.phase_statuses[phase_id] = "in_progress"
+    def _initialize_state(self) -> None:
+        """Initialize application state."""
+        # Check if state exists in session state
+        if "app_state" not in st.session_state:
+            # Check if state file exists
+            if os.path.exists(self.state_file):
+                # Load state from file
+                with open(self.state_file, "r") as f:
+                    st.session_state.app_state = json.load(f)
             else:
-                self.phase_statuses[phase_id] = "pending"
+                # Create default state
+                st.session_state.app_state = {
+                    "current_phase": "planning",
+                    "phase_statuses": {
+                        "planning": "in_progress",
+                        "solution_design": "pending",
+                        "ticket_breakdown": "pending",
+                        "implementation": "pending",
+                        "testing": "pending",
+                        "reporting": "pending"
+                    },
+                    "phase_data": {
+                        "planning": {
+                            "progress": 35,
+                            "completed": False,
+                            "tasks": []
+                        },
+                        "solution_design": {
+                            "progress": 0,
+                            "completed": False,
+                            "tasks": []
+                        },
+                        "ticket_breakdown": {
+                            "progress": 0,
+                            "completed": False,
+                            "tasks": []
+                        },
+                        "implementation": {
+                            "progress": 0,
+                            "completed": False,
+                            "tasks": []
+                        },
+                        "testing": {
+                            "progress": 0,
+                            "completed": False,
+                            "tasks": []
+                        },
+                        "reporting": {
+                            "progress": 0,
+                            "completed": False,
+                            "tasks": []
+                        }
+                    },
+                    "tasks": {},
+                    "reports": {},
+                    "system_status": {
+                        "services": {
+                            "backend_api": "online",
+                            "database": "online",
+                            "storage": "online",
+                            "ai_service": "online"
+                        },
+                        "last_updated": time.time()
+                    }
+                }
+                
+                # Save initial state to file
+                self._save_state()
     
-    def get_phase_data(self) -> Dict[str, Any]:
-        """Get the current phase data."""
-        return self.phase_data
+    def _save_state(self) -> None:
+        """Save the current state to disk."""
+        with open(self.state_file, "w") as f:
+            json.dump(st.session_state.app_state, f, indent=4)
     
     def get_current_phase(self) -> str:
-        """Get the current active phase ID."""
-        return self.current_phase
+        """
+        Get the current phase.
+        
+        Returns:
+            Current phase ID
+        """
+        return st.session_state.app_state.get("current_phase", "planning")
+    
+    def set_current_phase(self, phase: str) -> None:
+        """
+        Set the current phase.
+        
+        Args:
+            phase: New phase ID
+        """
+        st.session_state.app_state["current_phase"] = phase
+        self._save_state()
     
     def get_phase_statuses(self) -> Dict[str, str]:
-        """Get the status of all phases."""
-        return self.phase_statuses
-    
-    def update_phase_progress(self, phase_id: str, progress: int) -> bool:
         """
-        Update the progress of a specific phase.
-        
-        Args:
-            phase_id: ID of the phase to update
-            progress: New progress value (0-100)
-            
-        Returns:
-            bool: True if update was successful, False otherwise
-        """
-        try:
-            # Set loading state
-            self.set_loading_state(f"update_phase_{phase_id}", True)
-            
-            # Clear any existing errors
-            self.clear_error(f"update_phase_{phase_id}")
-            
-            # Update the phase progress
-            update_phase_progress(self.project_name, phase_id, progress)
-            
-            # Reload phase data and recalculate derived state
-            self.phase_data = load_phase_state(self.project_name)
-            self._calculate_derived_state()
-            
-            # Update last updated timestamp
-            self.last_updated = datetime.now()
-            
-            logger.info("Updated progress for phase %s to %d%%", phase_id, progress)
-            return True
-        except Exception as e:
-            # Set error state
-            error_message = f"Failed to update phase progress: {str(e)}"
-            self.set_error(f"update_phase_{phase_id}", error_message)
-            logger.error(error_message)
-            return False
-        finally:
-            # Clear loading state
-            self.set_loading_state(f"update_phase_{phase_id}", False)
-    
-    def complete_current_phase(self) -> bool:
-        """
-        Mark the current phase as completed and advance to the next phase.
+        Get all phase statuses.
         
         Returns:
-            bool: True if completion was successful, False otherwise
+            Dictionary mapping phase IDs to their statuses
         """
-        try:
-            # Set loading state
-            self.set_loading_state("complete_phase", True)
-            
-            # Clear any existing errors
-            self.clear_error("complete_phase")
-            
-            current_phase = self.current_phase
-            
-            # Complete the current phase
-            complete_phase(self.project_name, current_phase)
-            
-            # Get the next phase
-            next_phase = get_next_phase(self.project_name, current_phase)
-            
-            # Update metrics
-            self.update_metric("phases_completed", st.session_state.metrics["phases_completed"] + 1)
-            
-            # Reload phase data and recalculate derived state
-            self.phase_data = load_phase_state(self.project_name)
-            self._calculate_derived_state()
-            
-            # Update last updated timestamp
-            self.last_updated = datetime.now()
-            
-            logger.info("Completed phase %s, next phase: %s", current_phase, next_phase)
-            return True
-        except Exception as e:
-            # Set error state
-            error_message = f"Failed to complete current phase: {str(e)}"
-            self.set_error("complete_phase", error_message)
-            logger.error(error_message)
-            return False
-        finally:
-            # Clear loading state
-            self.set_loading_state("complete_phase", False)
+        return st.session_state.app_state.get("phase_statuses", {})
     
-    def add_report(self, phase: str, title: str, filename: str, path: str) -> None:
+    def set_phase_status(self, phase: str, status: str) -> None:
         """
-        Add a new report to the reports list.
+        Set the status of a specific phase.
         
         Args:
-            phase: Phase the report belongs to
-            title: Report title
-            filename: Report filename
-            path: Path to the report file
+            phase: Phase ID
+            status: New status ('pending', 'in_progress', 'completed')
         """
-        if not hasattr(st.session_state, 'reports'):
-            st.session_state.reports = []
+        st.session_state.app_state["phase_statuses"][phase] = status
+        self._save_state()
+    
+    def get_phase_data(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get data for all phases.
         
-        new_report = {
+        Returns:
+            Dictionary containing phase data
+        """
+        return st.session_state.app_state.get("phase_data", {})
+    
+    def set_phase_progress(self, phase: str, progress: int) -> None:
+        """
+        Set the progress percentage for a specific phase.
+        
+        Args:
+            phase: Phase ID
+            progress: Progress percentage (0-100)
+        """
+        # Ensure progress is within bounds
+        progress = max(0, min(100, progress))
+        
+        # Update progress
+        if phase in st.session_state.app_state["phase_data"]:
+            st.session_state.app_state["phase_data"][phase]["progress"] = progress
+            
+            # Mark as completed if progress is 100%
+            if progress == 100:
+                st.session_state.app_state["phase_data"][phase]["completed"] = True
+            
+            self._save_state()
+    
+    def set_phase_completed(self, phase: str, completed: bool) -> None:
+        """
+        Set whether a phase is completed.
+        
+        Args:
+            phase: Phase ID
+            completed: Whether the phase is completed
+        """
+        if phase in st.session_state.app_state["phase_data"]:
+            st.session_state.app_state["phase_data"][phase]["completed"] = completed
+            
+            # Update progress to 100% if marked as completed
+            if completed:
+                st.session_state.app_state["phase_data"][phase]["progress"] = 100
+            
+            self._save_state()
+    
+    def add_task(self, phase: str, task: Dict[str, Any]) -> str:
+        """
+        Add a new task.
+        
+        Args:
+            phase: Phase ID
+            task: Task data
+            
+        Returns:
+            Task ID
+        """
+        # Generate a task ID
+        task_id = f"task_{int(time.time())}"
+        
+        # Initialize tasks dict if it doesn't exist
+        if "tasks" not in st.session_state.app_state:
+            st.session_state.app_state["tasks"] = {}
+        
+        # Add task
+        st.session_state.app_state["tasks"][task_id] = {
             "phase": phase,
-            "title": title,
-            "timestamp": datetime.now(),
-            "filename": filename,
-            "path": path
+            "created_at": time.time(),
+            **task
         }
         
-        st.session_state.reports.append(new_report)
-        self.update_metric("reports_generated", st.session_state.metrics["reports_generated"] + 1)
+        # Add task to phase
+        if phase in st.session_state.app_state["phase_data"]:
+            st.session_state.app_state["phase_data"][phase]["tasks"].append(task_id)
         
-        logger.info("Added new report: %s for phase %s", title, phase)
+        self._save_state()
+        return task_id
     
-    def get_reports(self, phase_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+    def update_task(self, task_id: str, task_data: Dict[str, Any]) -> None:
         """
-        Get all reports, optionally filtered by phase.
+        Update a task.
         
         Args:
-            phase_filter: Optional phase to filter reports by
+            task_id: Task ID
+            task_data: New task data
+        """
+        if "tasks" in st.session_state.app_state and task_id in st.session_state.app_state["tasks"]:
+            # Update task
+            st.session_state.app_state["tasks"][task_id].update(task_data)
+            self._save_state()
+    
+    def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a task by ID.
+        
+        Args:
+            task_id: Task ID
             
         Returns:
-            List of report dictionaries
+            Task data or None if not found
         """
-        if not hasattr(st.session_state, 'reports'):
-            return []
-        
-        if phase_filter:
-            return [r for r in st.session_state.reports if r["phase"] == phase_filter]
-        else:
-            return st.session_state.reports
+        if "tasks" in st.session_state.app_state and task_id in st.session_state.app_state["tasks"]:
+            return st.session_state.app_state["tasks"][task_id]
+        return None
     
-    def get_metrics(self) -> Dict[str, Union[int, float]]:
-        """Get the current metrics."""
-        return st.session_state.metrics
-    
-    def update_metric(self, metric_name: str, value: Union[int, float]) -> None:
+    def get_tasks_by_phase(self, phase: str) -> List[Dict[str, Any]]:
         """
-        Update a specific metric.
+        Get all tasks for a specific phase.
         
         Args:
-            metric_name: Name of the metric to update
-            value: New value for the metric
-        """
-        if metric_name in st.session_state.metrics:
-            st.session_state.metrics[metric_name] = value
-            logger.info("Updated metric %s to %s", metric_name, value)
-    
-    def set_loading_state(self, key: str, is_loading: bool) -> None:
-        """
-        Set the loading state for a specific operation.
-        
-        Args:
-            key: Identifier for the operation
-            is_loading: True if operation is loading, False otherwise
-        """
-        self.loading_states[key] = is_loading
-    
-    def is_loading(self, key: str) -> bool:
-        """
-        Check if an operation is in loading state.
-        
-        Args:
-            key: Identifier for the operation
+            phase: Phase ID
             
         Returns:
-            bool: True if operation is loading, False otherwise
+            List of task data
         """
-        return self.loading_states.get(key, False)
+        tasks = []
+        
+        if "tasks" in st.session_state.app_state:
+            for task_id, task_data in st.session_state.app_state["tasks"].items():
+                if task_data.get("phase") == phase:
+                    tasks.append({
+                        "id": task_id,
+                        **task_data
+                    })
+        
+        return tasks
     
-    def set_error(self, key: str, error_message: str) -> None:
+    def add_report(self, phase: str, report: Dict[str, Any]) -> str:
         """
-        Set an error state for a specific operation.
+        Add a new report.
         
         Args:
-            key: Identifier for the operation
-            error_message: Error message
-        """
-        self.error_states[key] = error_message
-    
-    def clear_error(self, key: str) -> None:
-        """
-        Clear the error state for a specific operation.
-        
-        Args:
-            key: Identifier for the operation
-        """
-        if key in self.error_states:
-            self.error_states[key] = None
-    
-    def get_error(self, key: str) -> Optional[str]:
-        """
-        Get the error message for a specific operation.
-        
-        Args:
-            key: Identifier for the operation
+            phase: Phase ID
+            report: Report data
             
         Returns:
-            Optional[str]: Error message if one exists, None otherwise
+            Report ID
         """
-        return self.error_states.get(key)
+        # Generate a report ID
+        report_id = f"report_{int(time.time())}"
+        
+        # Initialize reports dict if it doesn't exist
+        if "reports" not in st.session_state.app_state:
+            st.session_state.app_state["reports"] = {}
+        
+        # Add report
+        st.session_state.app_state["reports"][report_id] = {
+            "phase": phase,
+            "created_at": time.time(),
+            **report
+        }
+        
+        self._save_state()
+        return report_id
     
-    def has_error(self, key: str) -> bool:
+    def get_reports_by_phase(self, phase: str) -> List[Dict[str, Any]]:
         """
-        Check if an operation has an error.
+        Get all reports for a specific phase.
         
         Args:
-            key: Identifier for the operation
+            phase: Phase ID
             
         Returns:
-            bool: True if operation has an error, False otherwise
+            List of report data
         """
-        return self.error_states.get(key) is not None
+        reports = []
+        
+        if "reports" in st.session_state.app_state:
+            for report_id, report_data in st.session_state.app_state["reports"].items():
+                if report_data.get("phase") == phase:
+                    reports.append({
+                        "id": report_id,
+                        **report_data
+                    })
+        
+        return reports
     
-    def reset_errors(self) -> None:
-        """Clear all error states."""
-        self.error_states = {}
+    def update_system_status(self, service: str, status: str) -> None:
+        """
+        Update the status of a system service.
+        
+        Args:
+            service: Service name
+            status: Service status
+        """
+        if "system_status" not in st.session_state.app_state:
+            st.session_state.app_state["system_status"] = {
+                "services": {},
+                "last_updated": time.time()
+            }
+        
+        # Update service status
+        st.session_state.app_state["system_status"]["services"][service] = status
+        st.session_state.app_state["system_status"]["last_updated"] = time.time()
+        
+        self._save_state()
     
-    def get_last_updated(self) -> datetime:
-        """Get the timestamp of the last state update."""
-        return self.last_updated
+    def get_system_status(self) -> Dict[str, Any]:
+        """
+        Get the system status.
+        
+        Returns:
+            System status data
+        """
+        return st.session_state.app_state.get("system_status", {
+            "services": {},
+            "last_updated": time.time()
+        })
 
+# Global state manager instance
+_state_manager = None
 
-# Singleton instance of the StateManager
-_state_manager_instance = None
+def initialize_state_management() -> None:
+    """Initialize the state management system."""
+    global _state_manager
+    _state_manager = StateManager()
 
-def get_state_manager(force_refresh=False) -> StateManager:
+def get_state_manager() -> StateManager:
     """
-    Get or create the singleton StateManager instance.
+    Get the state manager instance.
     
-    Args:
-        force_refresh: Force a refresh of the state manager
-        
     Returns:
         StateManager instance
     """
-    global _state_manager_instance
+    global _state_manager
     
-    if _state_manager_instance is None or force_refresh:
-        project_name = st.session_state.get("project_name", "terra_fusion_platform")
-        _state_manager_instance = StateManager(project_name)
+    if _state_manager is None:
+        initialize_state_management()
     
-    return _state_manager_instance
-
-
-# Initialize state manager in session state if needed
-def initialize_state_management():
-    """Initialize the state management system."""
-    if 'state_manager_initialized' not in st.session_state:
-        # Initialize a project name if not already set
-        if 'project_name' not in st.session_state:
-            st.session_state.project_name = "terra_fusion_platform"
-            
-        # Create the state manager
-        state_manager = get_state_manager(force_refresh=True)
-        
-        # Mark as initialized
-        st.session_state.state_manager_initialized = True
-        
-        logger.info("State management system initialized")
-        
-        return state_manager
-    else:
-        return get_state_manager()
+    return _state_manager

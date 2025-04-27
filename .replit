@@ -33,7 +33,7 @@ agentRequireRestartOnSave = false
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "streamlit run terraflow_enhanced_new.py --server.port 5000"
+args = "streamlit run terraflow_enhanced_refactored.py --server.port 5000"
 waitForPort = 5000
 
 [[workflows.workflow]]

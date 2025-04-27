@@ -1,27 +1,23 @@
 """
-TerraFusion UI Components Package
+TerraFusionPlatform Components Package
+
+This package provides reusable UI components for building consistent UIs across the platform.
 """
 
-from components.navigation import (
-    render_sidebar_navigation,
-    render_breadcrumbs,
-    render_page_header
-)
-
-from components.styling import (
-    apply_terraflow_style,
-    render_logo
-)
-
-from components.ui_components import (
-    render_card,
-    render_metric_card,
-    render_alert,
-    render_info_tooltip,
-    render_progress_bar,
-    render_tag,
-    render_timeline,
-    render_code_block,
-    render_tabs,
-    create_gradient_chart
+# Import all component functions to make them available from the package
+from .ui import (
+    display_logo,
+    display_user_info,
+    display_phase_indicator,
+    display_phase_progress_bars,
+    create_phase_status_chart,
+    create_phase_progress_chart,
+    display_phase_actions,
+    display_metric_card,
+    display_task_suggestions,
+    display_phase_preview,
+    display_report_card,
+    display_system_status,
+    create_report_generation_form,
+    create_mcp_command_console,
 )
