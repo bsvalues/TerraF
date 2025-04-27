@@ -1,19 +1,17 @@
 /**
  * Levy calculation routes
  */
-import { Router, Request, Response } from 'express';
-import { LevyCalculation, ApiResponse } from '../models/levy';
-
-const router = Router();
+const express = require('express');
+const router = express.Router();
 
 /**
  * @route   GET /api/v1/levy
  * @desc    Calculate property levy
  * @access  Public
  */
-router.get('/levy', function(req: Request, res: Response) {
+router.get('/levy', (req, res) => {
   try {
-    const propertyId = req.query.propertyId as string;
+    const propertyId = req.query.propertyId;
     
     if (!propertyId) {
       return res.status(400).json({
@@ -30,7 +28,7 @@ router.get('/levy', function(req: Request, res: Response) {
     const propertyValue = 250000 + (parseInt(propertyId) * 1000); // Mock value based on ID
     const amount = Math.round(propertyValue * baseRate * 100) / 100;
     
-    const levyResult: LevyCalculation = {
+    const levyResult = {
       propertyId,
       amount,
       taxYear: new Date().getFullYear(),
@@ -43,13 +41,13 @@ router.get('/levy', function(req: Request, res: Response) {
       data: levyResult,
       timestamp: new Date()
     });
-  } catch (error: any) {
+  } catch (error) {
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error: error.message || 'Internal Server Error',
       timestamp: new Date()
     });
   }
 });
 
-export default router;
+module.exports = router;

@@ -1,17 +1,15 @@
 /**
  * Main API routes
  */
-import { Router, Request, Response } from 'express';
-import { ApiResponse } from '../models/levy';
-
-const router = Router();
+const express = require('express');
+const router = express.Router();
 
 /**
  * @route   GET /api/status
  * @desc    Get API status information
  * @access  Public
  */
-router.get('/status', function(req: Request, res: Response) {
+router.get('/status', (req, res) => {
   res.json({
     success: true,
     data: {
@@ -24,4 +22,4 @@ router.get('/status', function(req: Request, res: Response) {
   });
 });
 
-export default router;
+module.exports = router;
