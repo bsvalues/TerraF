@@ -15,6 +15,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 import random
 
+# Import authentication modules
+from login_page import display_login_page
+from auth_manager import validate_session, invalidate_session
+from user_management import display_user_management_page
+
 # Configure the Streamlit page
 st.set_page_config(
     page_title="TerraFusionPlatform ICSF",
@@ -500,14 +505,62 @@ def get_report_stats():
     
     return stats
 
-# Sidebar navigation
-with st.sidebar:
-    st.markdown("""
-    <div class="logo-container">
-        <div style="font-size: 2rem;">🚀</div>
-        <div class="logo-text">TerraFusionPlatform</div>
-    </div>
-    """, unsafe_allow_html=True)
+# Main app function
+def main():
+    # Check if user is authenticated
+    if not display_login_page():
+        return
+    
+    # User is authenticated, display main app
+    display_main_app()
+
+def display_main_app():
+    # Get user data from session token
+    user_data = validate_session(st.session_state.get("auth_token", ""))
+    if not user_data:
+        # Invalid or expired session, clear session state and return to login
+        if "auth_token" in st.session_state:
+            del st.session_state["auth_token"]
+        if "username" in st.session_state:
+            del st.session_state["username"]
+        st.experimental_rerun()
+        return
+    
+    # Sidebar navigation
+    with st.sidebar:
+        st.markdown("""
+        <div class="logo-container">
+            <div style="font-size: 2rem;">🚀</div>
+            <div class="logo-text">TerraFusionPlatform</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Show logged in user
+        st.markdown(f"""
+        <div style="margin-bottom: 1.5rem; padding: 0.75rem; background-color: rgba(124, 77, 255, 0.1); border-radius: 0.5rem;">
+            <div style="font-size: 0.875rem; opacity: 0.7;">Logged in as</div>
+            <div style="font-weight: 600; display: flex; align-items: center;">
+                <span style="margin-right: 0.5rem;">👤</span> {user_data['username']}
+                <span style="margin-left: 0.5rem; font-size: 0.75rem; padding: 0.25rem 0.5rem; background-color: rgba(124, 77, 255, 0.2); border-radius: 0.25rem; text-transform: uppercase;">{user_data['role']}</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Admin section
+        if user_data["role"] == "admin":
+            with st.expander("🔧 Admin Tools", expanded=False):
+                if st.button("User Management"):
+                    st.session_state.current_view = "user_management"
+        
+        # Logout button
+        if st.button("🚪 Logout", key="logout_button"):
+            # Invalidate session
+            if "auth_token" in st.session_state:
+                invalidate_session(st.session_state["auth_token"])
+                del st.session_state["auth_token"]
+            if "username" in st.session_state:
+                del st.session_state["username"]
+            st.experimental_rerun()
     
     st.markdown("### ICSF AI-Driven DevOps")
     
