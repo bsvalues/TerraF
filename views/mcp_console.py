@@ -16,6 +16,9 @@ from design_system import section_title
 # Import UI components
 from components import create_mcp_command_console
 
+# Import MCP Core
+from mcp_core import execute_mission
+
 def display_mcp_console() -> None:
     """Display the MCP console interface."""
     # Display section title
@@ -107,7 +110,40 @@ def on_execute_mission(mission_type: str, params: Dict[str, str]) -> None:
     # Add to mission logs
     st.session_state.mission_logs.insert(0, mission_log)
     
-    # Start a "simulated" mission execution
+    try:
+        # Execute the actual mission using MCP Core
+        result = execute_mission(mission_type, params)
+        
+        # Add success log entry
+        mission_log["logs"].append({
+            "timestamp": datetime.now(),
+            "agent": "MCP Core",
+            "message": result
+        })
+        
+        # Mark mission as completed
+        mission_log["status"] = "completed"
+        mission_log["end_time"] = datetime.now()
+        
+        # Display success message
+        st.success(result)
+        
+    except Exception as e:
+        # Add error log entry
+        mission_log["logs"].append({
+            "timestamp": datetime.now(),
+            "agent": "MCP Core",
+            "message": f"Error: {str(e)}"
+        })
+        
+        # Mark mission as failed
+        mission_log["status"] = "failed"
+        mission_log["end_time"] = datetime.now()
+        
+        # Display error message
+        st.error(f"Mission failed: {str(e)}")
+        
+    # Add additional simulated log entries for richer UI
     simulate_mission_execution(mission_type, params)
 
 def simulate_mission_execution(mission_type: str, params: Dict[str, str]) -> None:
