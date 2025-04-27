@@ -12,7 +12,7 @@ import requests
 from typing import Dict, Any, Optional, Union, List
 
 # Default configuration
-DEFAULT_API_URL = "http://localhost:4000"
+DEFAULT_API_URL = "http://localhost:5001"
 API_URL = os.environ.get("TF_API_URL", DEFAULT_API_URL)
 
 class TerraFusionBridge:
@@ -26,7 +26,7 @@ class TerraFusionBridge:
         
         Args:
             api_url: Base URL for the API. If not provided, uses environment variable 
-                    TF_API_URL or falls back to default (http://localhost:4000)
+                    TF_API_URL or falls back to default (http://localhost:5001)
         """
         self.api_url = api_url or API_URL
     
