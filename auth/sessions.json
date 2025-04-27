@@ -5,6 +5,12 @@
             "role": "admin",
             "created_at": 1745781465.3869617,
             "expires_at": 1745867865.386795
+        },
+        "75928175e07d1ca389c69c4a7009429dc7e59a0275acff00fcb589593c817476": {
+            "username": "admin",
+            "role": "admin",
+            "created_at": 1745781555.3329422,
+            "expires_at": 1745867955.332725
         }
     }
 }
