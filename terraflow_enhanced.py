@@ -231,8 +231,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Import phase manager
+# Import phase manager and task suggestion agent
 from phase_manager import load_phase_state, save_phase_state, complete_phase, update_phase_progress, get_next_phase
+from task_suggestion_agent import suggest_next_tasks, get_next_phase_preview
 
 # Initialize project name
 if 'project_name' not in st.session_state:
@@ -815,6 +816,30 @@ with main_tabs[0]:  # DevOps Workflow tab
             st.warning("You need to create at least one document before completing this phase.")
     
     with col2:
+        # Task Suggestion Agent Section
+        st.markdown("### 🧠 Task Suggestion Engine")
+        
+        # Get task suggestions based on current phase progress
+        suggested_tasks = suggest_next_tasks(st.session_state.phase_data)
+        
+        # Display suggestions in a card
+        suggestion_card_html = '<div class="tf-card">'
+        suggestion_card_html += '<h4>Suggested Next Tasks</h4>'
+        suggestion_card_html += '<ul style="padding-left: 1.5rem;">'
+        
+        for task in suggested_tasks:
+            suggestion_card_html += f'<li style="margin-bottom: 0.75rem;">{task}</li>'
+        
+        suggestion_card_html += '</ul>'
+        
+        # Get next phase preview
+        next_phase_preview = get_next_phase_preview(st.session_state.phase_data)
+        if next_phase_preview:
+            suggestion_card_html += f'<div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(124, 77, 255, 0.2);">{next_phase_preview}</div>'
+        
+        suggestion_card_html += '</div>'
+        st.markdown(suggestion_card_html, unsafe_allow_html=True)
+        
         st.markdown("### Current Phase Documents")
         
         # Get reports for the current phase
@@ -897,6 +922,52 @@ with main_tabs[1]:  # Project Dashboard tab
             </div>
         </div>
         """.format(quality=st.session_state.metrics["code_quality"]), unsafe_allow_html=True)
+    
+    # Task Suggestion Section in Dashboard
+    st.markdown("### 🧠 AI Task Suggestion Engine")
+    
+    # Create columns for task suggestions
+    task_col1, task_col2 = st.columns([3, 2])
+    
+    with task_col1:
+        # Get task suggestions
+        suggested_tasks = suggest_next_tasks(st.session_state.phase_data)
+        
+        suggestion_card_html = '<div class="tf-card">'
+        suggestion_card_html += '<h4>Suggested Next Tasks</h4>'
+        suggestion_card_html += '<ul style="padding-left: 1.5rem;">'
+        
+        for task in suggested_tasks:
+            suggestion_card_html += f'<li style="margin-bottom: 0.75rem;">{task}</li>'
+        
+        suggestion_card_html += '</ul>'
+        suggestion_card_html += '</div>'
+        st.markdown(suggestion_card_html, unsafe_allow_html=True)
+    
+    with task_col2:
+        # Show next phase preview and adaptive guidance
+        next_phase_preview = get_next_phase_preview(st.session_state.phase_data)
+        
+        preview_card_html = '<div class="tf-card">'
+        preview_card_html += '<h4>Adaptive Guidance</h4>'
+        
+        if next_phase_preview:
+            preview_card_html += f'<p>{next_phase_preview}</p>'
+        
+        # Add some general TerraFusion guidance
+        preview_card_html += '''
+        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(124, 77, 255, 0.2);">
+            <h5>TerraFusion Framework Tips</h5>
+            <ul style="padding-left: 1.5rem;">
+                <li>Create documents for each major decision point</li>
+                <li>Maintain consistent documentation format</li>
+                <li>Use PR generation for code reviews</li>
+            </ul>
+        </div>
+        '''
+        
+        preview_card_html += '</div>'
+        st.markdown(preview_card_html, unsafe_allow_html=True)
     
     # Create visualization of report distribution by phase
     st.markdown("### Report Distribution by Phase")
