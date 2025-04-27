@@ -9,7 +9,7 @@ including the Levy Calculator POC that demonstrates Python ↔ Node connectivity
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import json
 from bridge import bridge
@@ -96,12 +96,18 @@ if page == "Dashboard":
     
     # Recent activity
     st.markdown("<h2 class='sub-header'>Recent Activity</h2>", unsafe_allow_html=True)
+    # Get current time and generate relative timestamps
+    current_time = datetime.now()
+    five_min_ago = (current_time - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    fifteen_min_ago = (current_time - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+    thirty_min_ago = (current_time - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+    
     activity_data = {
         "Timestamp": [
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            (datetime.now().replace(minute=datetime.now().minute-5)).strftime("%Y-%m-%d %H:%M:%S"),
-            (datetime.now().replace(minute=datetime.now().minute-15)).strftime("%Y-%m-%d %H:%M:%S"),
-            (datetime.now().replace(minute=datetime.now().minute-30)).strftime("%Y-%m-%d %H:%M:%S"),
+            current_time.strftime("%Y-%m-%d %H:%M:%S"),
+            five_min_ago,
+            fifteen_min_ago,
+            thirty_min_ago,
         ],
         "Agent": ["Documentation Agent", "Code Analyzer", "Workflow Mapper", "AI Integration Agent"],
         "Action": [
@@ -178,7 +184,7 @@ elif page == "API Status":
     
     # Refresh button
     if st.button("Refresh Status"):
-        st.experimental_rerun()
+        st.rerun()
     
     # Display API status
     api_status = bridge.get_api_status()
@@ -224,4 +230,4 @@ else:
     
     # Back to dashboard button
     if st.button("Back to Dashboard"):
-        st.experimental_rerun()  # Will rerun the app, effectively going back to the dashboard
+        st.rerun()  # Will rerun the app, effectively going back to the dashboard

@@ -1,24 +1,44 @@
 # TerraFusion Bridge Package
 
-This package provides connectivity between Streamlit applications and the TerraFusion Node.js backend.
+This package provides Python connectivity to the TerraFusion API server, enabling seamless integration between Python applications (like Streamlit) and the Node.js backend.
 
 ## Installation
 
 ```bash
-pip install -e packages/streamlit-bridge
+pip install -e .
 ```
 
 ## Usage
 
 ```python
-from tf_bridge import call_api
-import streamlit as st
+from tf_bridge import get_bridge
 
-# Make an API call to the TerraFusion backend
-data = call_api("/api/v1/levy?propertyId=123")
-st.json(data)
+# Get a bridge instance with the default API URL
+bridge = get_bridge()
+
+# Or specify a custom API URL
+bridge = get_bridge("http://localhost:4000")
+
+# Check API status
+status = bridge.get_api_status()
+print(status)
+
+# Calculate property levy
+result = bridge.calculate_property_levy("123")
+print(result)
 ```
 
-## Development
+## Features
 
-This package is part of the TerraFusion monorepo. It enables the migration from the pure Streamlit application to the new TypeScript-based microservices architecture while maintaining compatibility.
+- Seamless Python-to-Node connectivity
+- Easy API access from Python applications
+- Error handling and response formatting
+- Configurable API URL
+
+## Levy Calculator POC
+
+This package includes a Proof of Concept (POC) Streamlit application that demonstrates the Python-to-Node connectivity by calculating property taxes. To run it:
+
+```bash
+streamlit run src/levy_app.py
+```
