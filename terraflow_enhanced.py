@@ -10,7 +10,7 @@ import subprocess
 import pandas as pd
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 import random
@@ -231,19 +231,31 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state for workflow status
+# Import phase manager
+from phase_manager import load_phase_state, save_phase_state, complete_phase, update_phase_progress, get_next_phase
+
+# Initialize project name
+if 'project_name' not in st.session_state:
+    st.session_state.project_name = "terra_fusion_platform"
+
+# Initialize session state for workflow status with persistent storage
 if 'current_phase' not in st.session_state:
     st.session_state.current_phase = "planning"
     
+# Load phases from storage
+if 'phase_data' not in st.session_state:
+    st.session_state.phase_data = load_phase_state(st.session_state.project_name)
+    
+# Initialize phase statuses based on the loaded data
 if 'phase_statuses' not in st.session_state:
-    st.session_state.phase_statuses = {
-        "planning": "in_progress",
-        "solution_design": "pending",
-        "ticket_breakdown": "pending",
-        "implementation": "pending",
-        "testing": "pending",
-        "reporting": "pending"
-    }
+    st.session_state.phase_statuses = {}
+    for phase_key, phase_info in st.session_state.phase_data.items():
+        if phase_info["completed"]:
+            st.session_state.phase_statuses[phase_key] = "completed"
+        elif phase_key == st.session_state.current_phase:
+            st.session_state.phase_statuses[phase_key] = "in_progress"
+        else:
+            st.session_state.phase_statuses[phase_key] = "pending"
     
 if 'reports' not in st.session_state:
     st.session_state.reports = []
@@ -446,25 +458,36 @@ def complete_current_phase():
     """Mark the current phase as completed and advance to the next phase."""
     current_phase = st.session_state.current_phase
     
-    # Update phase statuses
+    # Update phase statuses in session
     st.session_state.phase_statuses[current_phase] = "completed"
+    
+    # Update persistent storage
+    complete_phase(st.session_state.project_name, current_phase)
     
     # Update metrics
     st.session_state.metrics["phases_completed"] += 1
     
-    # Determine the next phase
-    phases = list(st.session_state.phase_statuses.keys())
-    current_index = phases.index(current_phase)
+    # Get the next phase using phase manager
+    next_phase = get_next_phase(st.session_state.project_name, current_phase)
     
-    if current_index < len(phases) - 1:
-        next_phase = phases[current_index + 1]
+    if next_phase:
+        # Update session state
         st.session_state.current_phase = next_phase
         st.session_state.phase_statuses[next_phase] = "in_progress"
+        
+        # Update progress in persistent storage
+        phase_data = st.session_state.phase_data
+        phase_data[next_phase]["progress"] = 20  # Start with some progress
+        save_phase_state(st.session_state.project_name, phase_data)
+        st.session_state.phase_data = phase_data
     
     # If we completed the final phase, generate the PR
     if current_phase == "reporting":
         run_script("batch_pr_generator.py")
         st.session_state.pr_generated = True
+        
+    # Reload phase data from storage
+    st.session_state.phase_data = load_phase_state(st.session_state.project_name)
 
 def get_report_stats():
     """Get statistics about reports."""
@@ -565,6 +588,34 @@ with main_tabs[0]:  # DevOps Workflow tab
     phase_html += '</div>'
     
     st.markdown(phase_html, unsafe_allow_html=True)
+    
+    # Display phase progress from persistent storage
+    st.markdown("### Phase Progress")
+    for phase_id, phase_info in st.session_state.phase_data.items():
+        phase_name = phases[phase_id]
+        progress = phase_info["progress"]
+        completed = phase_info["completed"]
+        
+        # Determine color based on status
+        if completed:
+            bar_color = "#00e676"  # Green for completed
+        elif phase_id == st.session_state.current_phase:
+            bar_color = "#7c4dff"  # Purple for in-progress
+        else:
+            bar_color = "#555555"  # Grey for pending
+        
+        # Create a custom progress bar with HTML/CSS
+        st.markdown(f"""
+        <div style="margin-bottom: 10px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                <span>{phase_name}</span>
+                <span>{progress}%</span>
+            </div>
+            <div style="height: 10px; background-color: #303030; border-radius: 5px; overflow: hidden;">
+                <div style="height: 100%; width: {progress}%; background-color: {bar_color};"></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
     # Current phase content
     current_phase = st.session_state.current_phase
@@ -736,6 +787,15 @@ with main_tabs[0]:  # DevOps Workflow tab
                 if doc_title:
                     with st.spinner("Creating document..."):
                         filepath = create_sample_report(current_phase, doc_title)
+                        
+                        # Update phase progress in persistent storage (increase by 20% for each doc, max 80%)
+                        phase_data = st.session_state.phase_data
+                        current_progress = phase_data[current_phase]["progress"]
+                        new_progress = min(80, current_progress + 20)  # Max 80% before completion
+                        phase_data[current_phase]["progress"] = new_progress
+                        save_phase_state(st.session_state.project_name, phase_data)
+                        st.session_state.phase_data = phase_data
+                        
                         st.success(f"Document created: {doc_title}")
                 else:
                     st.error("Please enter a document title")

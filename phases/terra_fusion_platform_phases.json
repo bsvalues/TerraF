@@ -1,0 +1,32 @@
+{
+    "planning": {
+        "name": "Planning",
+        "completed": false,
+        "progress": 0
+    },
+    "solution_design": {
+        "name": "Solution Design",
+        "completed": false,
+        "progress": 0
+    },
+    "ticket_breakdown": {
+        "name": "Ticket Breakdown",
+        "completed": false,
+        "progress": 0
+    },
+    "implementation": {
+        "name": "Implementation",
+        "completed": false,
+        "progress": 0
+    },
+    "testing": {
+        "name": "Testing",
+        "completed": false,
+        "progress": 0
+    },
+    "reporting": {
+        "name": "Reporting",
+        "completed": false,
+        "progress": 0
+    }
+}
