@@ -1,45 +1,55 @@
 /**
- * Levy API Routes
- * 
- * This file defines API routes for the levy calculation proof-of-concept.
+ * Levy calculation routes
  */
+import { Router } from 'express';
+import { LevyCalculation } from '../../../shared/schema';
 
-import express from 'express';
-
-const router = express.Router();
+const router = Router();
 
 /**
- * Calculate property levy
- * 
- * This is a proof-of-concept endpoint that returns mock levy data for demonstration purposes.
- * In a real implementation, this would connect to a database or service to calculate actual levies.
+ * @route   GET /api/v1/levy
+ * @desc    Calculate property levy
+ * @access  Public
  */
 router.get('/levy', (req, res) => {
-  const propertyId = req.query.propertyId || '123';
-  
-  // Generate a deterministic but seemingly random levy amount based on property ID
-  // This ensures the same property ID always returns the same levy amount
-  const baseAmount = 500; // Base amount for all properties
-  
-  // Use a simple hash function on the property ID to get a pseudo-random modifier
-  let modifier = 0;
-  for (let i = 0; i < String(propertyId).length; i++) {
-    modifier += String(propertyId).charCodeAt(i);
-  }
-  
-  const amount = baseAmount + (modifier % 1000); // Add up to $1000 based on property ID
-  
-  // Simulate a short delay to mimic database or service call
-  setTimeout(() => {
-    res.json({
+  try {
+    const propertyId = req.query.propertyId as string;
+    
+    if (!propertyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'propertyId is required',
+        timestamp: new Date()
+      });
+    }
+    
+    // Mock calculation for POC
+    // In a real implementation, this would fetch property data from a database
+    // and perform an actual calculation based on complex rules
+    const baseRate = 0.015; // 1.5% base rate
+    const propertyValue = 250000 + (parseInt(propertyId) * 1000); // Mock value based on ID
+    const amount = Math.round(propertyValue * baseRate * 100) / 100;
+    
+    const levyResult: LevyCalculation = {
       propertyId,
       amount,
-      currency: 'USD',
-      calculatedAt: new Date().toISOString(),
-      dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days from now
-      status: 'pending'
+      taxYear: new Date().getFullYear(),
+      assessmentDate: new Date(),
+      calculatedAt: new Date()
+    };
+    
+    return res.json({
+      success: true,
+      data: levyResult,
+      timestamp: new Date()
     });
-  }, 500); // 500ms delay
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date()
+    });
+  }
 });
 
 export default router;
