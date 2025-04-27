@@ -56,7 +56,7 @@ def display_login_page():
                 st.session_state["username"] = username
                 
                 # Rerun the app to show the main interface
-                st.experimental_rerun()
+                st.rerun()
                 return True
             else:
                 st.error("Invalid username or password.")

@@ -1,1 +1,10 @@
-{"sessions": {}}
+{
+    "sessions": {
+        "907c91dbb1db4b025c9f955e5600ba35115af1e014c314d11852a918dcd92345": {
+            "username": "admin",
+            "role": "admin",
+            "created_at": 1745781465.3869617,
+            "expires_at": 1745867865.386795
+        }
+    }
+}

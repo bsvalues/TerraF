@@ -528,7 +528,7 @@ def display_main_app():
             del st.session_state["auth_token"]
         if "username" in st.session_state:
             del st.session_state["username"]
-        st.experimental_rerun()
+        st.rerun()
         return
     
     # Define phases - moved inside function to avoid global scope issues
@@ -585,7 +585,7 @@ def display_main_app():
             with st.expander("🔧 Admin Tools", expanded=False):
                 if st.button("User Management"):
                     st.session_state.current_view = "user_management"
-                    st.experimental_rerun()
+                    st.rerun()
         
         # Organization tools
         st.sidebar.markdown("### Tools")
@@ -629,7 +629,7 @@ def display_main_app():
                 del st.session_state["auth_token"]
             if "username" in st.session_state:
                 del st.session_state["username"]
-            st.experimental_rerun()
+            st.rerun()
     
     # Main content
     st.markdown('<h1 class="header">TerraFusionPlatform ICSF AI-Driven DevOps Framework</h1>', unsafe_allow_html=True)
@@ -849,7 +849,7 @@ def display_main_app():
                     update_phase_progress(st.session_state.project_name, current_phase, progress_value)
                     st.session_state.phase_data = load_phase_state(st.session_state.project_name)
                     st.success(f"Progress updated to {progress_value}%")
-                    st.experimental_rerun()
+                    st.rerun()
             
             with button_col2:
                 # Phase completion control
@@ -857,7 +857,7 @@ def display_main_app():
                 if st.button("Mark Phase as Complete"):
                     complete_current_phase()
                     st.success(f"Phase {current_phase_name} marked as complete!")
-                    st.experimental_rerun()
+                    st.rerun()
                 
         with col2:
             st.markdown("### Report Generation")
@@ -1134,7 +1134,7 @@ def display_user_management_view():
     # Back button
     if st.button("← Back to Main Dashboard", key="back_button"):
         st.session_state.current_view = "main"
-        st.experimental_rerun()
+        st.rerun()
 
 # Main entry point
 if __name__ == "__main__":
