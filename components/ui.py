@@ -455,14 +455,45 @@ def create_mcp_command_console(
     params = {}
 
     if mission == "scaffold":
-        params["plugin_name"] = st.text_input("Plugin Name", value="new_plugin")
-        params["base_path"] = st.text_input("Base Path", value="generated_plugins/")
+        # Scaffold mission parameters
+        scaffold_type = st.selectbox(
+            "Scaffold Type", 
+            ["plugin", "service", "test", "graphql"],
+            help="Type of code to scaffold"
+        )
+        params["scaffold_type"] = scaffold_type
+        
+        if scaffold_type == "plugin":
+            params["plugin_name"] = st.text_input("Plugin Name", value="new_plugin")
+            params["base_path"] = st.text_input("Base Path", value="generated_plugins/")
+            params["description"] = st.text_area("Description", value="A TerraFusionPlatform plugin")
+            
+        elif scaffold_type == "service":
+            params["service_name"] = st.text_input("Service Name", value="example_service")
+            params["base_path"] = st.text_input("Base Path", value="services/")
+            params["port"] = st.number_input("Service Port", value=5000, min_value=1024, max_value=65535)
+            params["description"] = st.text_area("Description", value="A microservice for TerraFusionPlatform")
+            
+        elif scaffold_type == "test":
+            params["module_name"] = st.text_input("Module Name", value="example_module")
+            params["base_path"] = st.text_input("Base Path", value="src/")
+            params["test_type"] = st.selectbox("Test Type", ["unit", "integration", "e2e"])
+            
+        elif scaffold_type == "graphql":
+            params["schema_name"] = st.text_input("Schema Name", value="example_schema")
+            params["base_path"] = st.text_input("Base Path", value="schemas/")
+            entity_types = st.text_input("Entity Types (comma-separated)", value="User,Post,Comment")
+            params["entity_types"] = [entity.strip() for entity in entity_types.split(",")]
 
     elif mission == "test":
         params["service"] = st.text_input("Service Name", value="valuation_service")
+        params["test_type"] = st.selectbox("Test Type", ["unit", "integration", "system", "all"])
+        params["verbose"] = st.checkbox("Verbose Output", value=True)
 
     elif mission == "secure":
         params["target_path"] = st.text_input("Target Directory", value="src/")
+        params["scan_type"] = st.selectbox("Scan Type", ["basic", "dependencies", "secrets", "all"])
+        params["fix_issues"] = st.checkbox("Auto-fix Issues", value=False)
 
     if st.button("🧠 Execute Mission"):
         on_execute(mission, params)
