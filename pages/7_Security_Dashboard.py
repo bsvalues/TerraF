@@ -2,1484 +2,986 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import requests
 import json
-from datetime import datetime
+import requests
 import time
+import random
+from datetime import datetime, timedelta
 import os
 import re
 
 # Set page configuration
-st.set_page_config(
-    page_title="TerraFusion Security Dashboard",
-    page_icon="🛡️",
-    layout="wide"
-)
+st.set_page_config(page_title="Security Dashboard", page_icon="🔒", layout="wide")
 
-# Define custom CSS
+# Apply custom CSS
 st.markdown("""
 <style>
-    /* Dashboard Container */
-    .dashboard-container {
-        padding: 20px;
+    .security-header {
+        color: #0f6cbd;
+        padding-bottom: 15px;
+    }
+    
+    .summary-card {
+        background-color: #f0f2f6;
         border-radius: 10px;
-        background-color: #0e1117;
+        padding: 20px;
         margin-bottom: 20px;
     }
     
-    /* Dashboard Title */
-    .dashboard-title {
-        font-size: 2.5rem;
-        font-weight: 700;
-        color: #00e5ff;
+    .vuln-card {
+        border-left: 4px solid #ff4b4b;
+        padding: 10px;
         margin-bottom: 10px;
+        background-color: #fafafa;
     }
     
-    .dashboard-subtitle {
-        font-size: 1.1rem;
-        color: rgba(255, 255, 255, 0.7);
-        margin-bottom: 30px;
+    .vuln-card.high {
+        border-left-color: #ff4b4b;
     }
     
-    /* Metric Container */
-    .metric-container {
-        background-color: #1a2032;
-        border-radius: 10px;
-        padding: 20px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        height: 100%;
+    .vuln-card.medium {
+        border-left-color: #ffa500;
     }
     
-    /* Metric Title */
-    .metric-title {
-        font-size: 0.9rem;
-        font-weight: 600;
-        color: rgba(255, 255, 255, 0.7);
-        margin-bottom: 5px;
+    .vuln-card.low {
+        border-left-color: #02b2e7;
     }
     
-    /* Metric Value */
-    .metric-value {
-        font-size: 2.2rem;
-        font-weight: 700;
-        color: #ffffff;
+    .code-block {
+        background-color: #272822;
+        color: #f8f8f2;
+        padding: 10px;
+        border-radius: 5px;
+        font-family: 'Courier New', monospace;
+        overflow-x: auto;
+        margin: 10px 0;
     }
     
-    /* Metric with Critical Color */
-    .metric-critical .metric-value {
-        color: #ff4d4d;
-    }
-    
-    /* Metric with Warning Color */
-    .metric-warning .metric-value {
-        color: #ffae00;
-    }
-    
-    /* Metric with Success Color */
-    .metric-good .metric-value {
-        color: #00d97e;
-    }
-    
-    /* Metric Details */
-    .metric-details {
-        font-size: 0.8rem;
-        color: rgba(255, 255, 255, 0.5);
+    .file-meta {
+        color: #666;
+        font-size: 0.9em;
         margin-top: 5px;
     }
     
-    /* Section Container */
-    .section-container {
-        background-color: #1a2032;
-        border-radius: 10px;
-        padding: 20px;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    }
-    
-    /* Section Title */
-    .section-title {
-        font-size: 1.2rem;
-        font-weight: 600;
-        color: #00e5ff;
-        margin-bottom: 15px;
-        border-bottom: 1px solid rgba(0, 229, 255, 0.3);
-        padding-bottom: 5px;
-    }
-    
-    /* Data Table */
-    .dataframe {
-        width: 100%;
-        font-size: 0.9rem;
-    }
-    
-    /* Vulnerability Badge */
-    .vuln-badge {
-        display: inline-block;
-        padding: 3px 8px;
-        border-radius: 4px;
-        font-size: 0.75rem;
-        font-weight: 600;
+    .metric-card {
         text-align: center;
-        min-width: 70px;
-    }
-    
-    .vuln-critical {
-        background-color: rgba(255, 77, 77, 0.2);
-        color: #ff4d4d;
-        border: 1px solid rgba(255, 77, 77, 0.3);
-    }
-    
-    .vuln-high {
-        background-color: rgba(255, 174, 0, 0.2);
-        color: #ffae00;
-        border: 1px solid rgba(255, 174, 0, 0.3);
-    }
-    
-    .vuln-medium {
-        background-color: rgba(255, 222, 51, 0.2);
-        color: #ffde33;
-        border: 1px solid rgba(255, 222, 51, 0.3);
-    }
-    
-    .vuln-low {
-        background-color: rgba(0, 217, 126, 0.2);
-        color: #00d97e;
-        border: 1px solid rgba(0, 217, 126, 0.3);
-    }
-    
-    .vuln-info {
-        background-color: rgba(0, 174, 255, 0.2);
-        color: #00aeff;
-        border: 1px solid rgba(0, 174, 255, 0.3);
-    }
-    
-    /* Code Block */
-    .code-block {
-        background-color: #0e1117;
-        border-radius: 5px;
-        padding: 10px;
-        font-family: monospace;
-        overflow-x: auto;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        font-size: 0.9rem;
-    }
-    
-    /* Recommendations */
-    .recommendation-item {
-        background-color: rgba(0, 229, 255, 0.05);
-        border-radius: 5px;
         padding: 15px;
-        margin-bottom: 10px;
-        border-left: 4px solid #00e5ff;
-    }
-    
-    .recommendation-title {
-        font-size: 1rem;
-        font-weight: 600;
-        color: #ffffff;
-        margin-bottom: 5px;
-    }
-    
-    .recommendation-description {
-        font-size: 0.9rem;
-        color: rgba(255, 255, 255, 0.7);
-    }
-    
-    .recommendation-high {
-        border-left-color: #ff4d4d;
-    }
-    
-    .recommendation-medium {
-        border-left-color: #ffae00;
-    }
-    
-    .recommendation-low {
-        border-left-color: #00d97e;
-    }
-    
-    /* Progress Bar */
-    .progress-bar-container {
-        width: 100%;
-        background-color: rgba(255, 255, 255, 0.1);
         border-radius: 10px;
-        height: 8px;
-        margin-top: 8px;
-        overflow: hidden;
+        margin: 5px;
     }
     
-    .progress-bar {
-        height: 100%;
-        border-radius: 10px;
+    .metric-card h3 {
+        margin: 0;
+        font-size: 1.5em;
     }
     
-    .progress-critical {
-        background-color: #ff4d4d;
+    .metric-card p {
+        margin: 0;
+        font-size: 0.9em;
+        color: #666;
     }
     
-    .progress-high {
-        background-color: #ffae00;
-    }
-    
-    .progress-medium {
-        background-color: #ffde33;
-    }
-    
-    .progress-low {
-        background-color: #00d97e;
-    }
-    
-    /* Scan List Item */
-    .scan-list-item {
-        background-color: rgba(255, 255, 255, 0.05);
-        border-radius: 5px;
-        padding: 12px;
-        margin-bottom: 8px;
-        cursor: pointer;
-        transition: all 0.2s ease-in-out;
-    }
-    
-    .scan-list-item:hover {
-        background-color: rgba(255, 255, 255, 0.1);
-        transform: translateY(-2px);
-    }
-    
-    .scan-list-item.active {
-        background-color: rgba(0, 229, 255, 0.1);
-        border-left: 3px solid #00e5ff;
-    }
-    
-    .scan-list-title {
-        font-size: 0.9rem;
-        font-weight: 600;
-        color: #ffffff;
-    }
-    
-    .scan-list-date {
-        font-size: 0.75rem;
-        color: rgba(255, 255, 255, 0.5);
-    }
-    
-    .scan-list-score {
-        font-size: 0.8rem;
-        font-weight: 600;
-    }
-    
-    .scan-list-count {
-        font-size: 0.8rem;
-        color: rgba(255, 255, 255, 0.7);
-    }
-    
-    /* Risk Score Meter */
-    .risk-score-container {
+    .security-score-container {
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        padding: 20px 0;
+        margin-bottom: 20px;
     }
     
-    .risk-score-value {
-        font-size: 3.5rem;
-        font-weight: 700;
+    .security-score {
+        font-size: 3em;
+        font-weight: bold;
+        padding: 10px;
     }
     
-    .risk-score-label {
-        font-size: 1rem;
-        color: rgba(255, 255, 255, 0.7);
-        margin-top: 5px;
+    .score-label {
+        font-size: 1.2em;
+        color: #666;
     }
     
-    /* Specific risk colors */
-    .risk-critical {
-        color: #ff4d4d;
+    .high-severity {
+        color: #ff4b4b;
     }
     
-    .risk-high {
-        color: #ffae00;
+    .medium-severity {
+        color: #ffa500;
     }
     
-    .risk-medium {
-        color: #ffde33;
-    }
-    
-    .risk-low {
-        color: #00d97e;
+    .low-severity {
+        color: #02b2e7;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# API base URL
-API_BASE_URL = "http://localhost:5001/api"
-SECURITY_API_URL = f"{API_BASE_URL}/security"
+# Initialize session state variables if not already set
+if "scan_results" not in st.session_state:
+    st.session_state.scan_results = None
 
-# Function to fetch security scan data
-def fetch_security_scans():
-    try:
-        response = requests.get(f"{SECURITY_API_URL}/scans")
-        if response.status_code == 200:
-            return response.json()["data"]
-        else:
-            st.error(f"Error fetching scan data: {response.status_code}")
-            return []
-    except Exception as e:
-        st.error(f"Error connecting to API: {e}")
-        return []
+if "scan_history" not in st.session_state:
+    st.session_state.scan_history = []
 
-# Function to fetch a specific scan
-def fetch_scan_details(scan_id):
-    try:
-        response = requests.get(f"{SECURITY_API_URL}/scan/{scan_id}")
-        if response.status_code == 200:
-            return response.json()["data"]
-        else:
-            st.error(f"Error fetching scan details: {response.status_code}")
-            return None
-    except Exception as e:
-        st.error(f"Error connecting to API: {e}")
-        return None
+if "selected_project" not in st.session_state:
+    st.session_state.selected_project = None
 
-# Function to initiate a security scan
-def initiate_security_scan(repository_path, languages, scan_depth):
-    try:
-        payload = {
-            "repositoryPath": repository_path,
-            "languages": languages,
-            "scanDepth": scan_depth
+if "scanning" not in st.session_state:
+    st.session_state.scanning = False
+
+if "scan_progress" not in st.session_state:
+    st.session_state.scan_progress = 0
+
+if "scan_log" not in st.session_state:
+    st.session_state.scan_log = []
+
+if "last_scan_time" not in st.session_state:
+    st.session_state.last_scan_time = None
+
+if "dependencies" not in st.session_state:
+    st.session_state.dependencies = []
+
+# Helper functions
+def run_security_scan(project, scan_type="full"):
+    """
+    Simulate running a security scan on a project
+    """
+    st.session_state.scanning = True
+    st.session_state.scan_progress = 0
+    st.session_state.scan_log = []
+    
+    # Clear previous results
+    st.session_state.scan_results = None
+    
+    # Simulate scanning phases
+    scan_phases = [
+        {"name": "Initializing scanner", "duration": 1},
+        {"name": "Setting up analysis environment", "duration": 1},
+        {"name": "Scanning project files", "duration": 2},
+        {"name": "Analyzing dependencies", "duration": 2},
+        {"name": "Running vulnerability detectors", "duration": 3},
+        {"name": "Checking for common security issues", "duration": 2},
+        {"name": "Analyzing results", "duration": 1},
+        {"name": "Generating report", "duration": 1}
+    ]
+    
+    # Generate simulated scan logs
+    total_duration = sum(phase["duration"] for phase in scan_phases)
+    progress_increment = 100 / total_duration
+    
+    # Simulate scan progress
+    for phase in scan_phases:
+        phase_name = phase["name"]
+        phase_duration = phase["duration"]
+        
+        # Add log entry
+        log_entry = f"{datetime.now().strftime('%H:%M:%S')} - {phase_name}..."
+        st.session_state.scan_log.append(log_entry)
+        
+        # Update progress in smaller increments
+        for _ in range(phase_duration):
+            time.sleep(0.2)  # Reduced sleep time
+            st.session_state.scan_progress += progress_increment / phase_duration
+            st.session_state.scan_progress = min(99, st.session_state.scan_progress)
+            
+            # Force a rerun to update the progress bar
+            st.experimental_rerun()
+    
+    # Generate simulated scan results
+    results = generate_scan_results(project, scan_type)
+    
+    # Complete the scan
+    st.session_state.scan_progress = 100
+    st.session_state.scan_results = results
+    st.session_state.scanning = False
+    st.session_state.last_scan_time = datetime.now()
+    
+    # Add to scan history
+    scan_summary = {
+        "id": len(st.session_state.scan_history) + 1,
+        "project": project,
+        "timestamp": st.session_state.last_scan_time,
+        "vulnerabilities": {
+            "critical": results["summary"]["vulnerabilities"]["critical"],
+            "high": results["summary"]["vulnerabilities"]["high"],
+            "medium": results["summary"]["vulnerabilities"]["medium"],
+            "low": results["summary"]["vulnerabilities"]["low"]
+        },
+        "score": results["summary"]["score"]
+    }
+    st.session_state.scan_history.append(scan_summary)
+    
+    # Force a rerun to update the UI
+    time.sleep(0.5)
+    st.experimental_rerun()
+
+def generate_scan_results(project, scan_type):
+    """
+    Generate simulated security scan results
+    """
+    # Define possible vulnerability types
+    vuln_types = [
+        {
+            "name": "SQL Injection",
+            "description": "SQL injection vulnerabilities allow attackers to manipulate database queries, potentially exposing or modifying sensitive data.",
+            "remediation": "Use parameterized queries or prepared statements instead of string concatenation for SQL queries.",
+            "cwe": "CWE-89",
+            "references": ["https://owasp.org/www-community/attacks/SQL_Injection"]
+        },
+        {
+            "name": "Cross-Site Scripting (XSS)",
+            "description": "XSS vulnerabilities allow attackers to inject malicious scripts into web pages viewed by other users.",
+            "remediation": "Properly sanitize and escape user input before rendering it in HTML, using context-appropriate encoding.",
+            "cwe": "CWE-79",
+            "references": ["https://owasp.org/www-community/attacks/xss/"]
+        },
+        {
+            "name": "Insecure Deserialization",
+            "description": "Insecure deserialization can allow attackers to execute arbitrary code when untrusted data is deserialized.",
+            "remediation": "Avoid deserializing data from untrusted sources, or use safer serialization formats.",
+            "cwe": "CWE-502",
+            "references": ["https://owasp.org/www-project-top-ten/2017/A8_2017-Insecure_Deserialization"]
+        },
+        {
+            "name": "Improper Authentication",
+            "description": "Weaknesses in authentication mechanisms that could allow unauthorized access.",
+            "remediation": "Implement strong authentication mechanisms and proper session management.",
+            "cwe": "CWE-287",
+            "references": ["https://owasp.org/www-project-top-ten/2017/A2_2017-Broken_Authentication"]
+        },
+        {
+            "name": "Sensitive Data Exposure",
+            "description": "Inadequate protection of sensitive information such as financial data, credentials, or personal information.",
+            "remediation": "Encrypt sensitive data at rest and in transit, and minimize exposure.",
+            "cwe": "CWE-200",
+            "references": ["https://owasp.org/www-project-top-ten/2017/A3_2017-Sensitive_Data_Exposure"]
+        },
+        {
+            "name": "Security Misconfiguration",
+            "description": "Improperly configured servers, frameworks, or applications that expose vulnerabilities.",
+            "remediation": "Implement a secure configuration process and maintain properly configured systems.",
+            "cwe": "CWE-1008",
+            "references": ["https://owasp.org/www-project-top-ten/2017/A6_2017-Security_Misconfiguration"]
+        },
+        {
+            "name": "Outdated Dependencies",
+            "description": "Using components with known vulnerabilities due to outdated dependencies.",
+            "remediation": "Regularly update dependencies and implement a process for tracking and resolving vulnerabilities.",
+            "cwe": "CWE-1026",
+            "references": ["https://owasp.org/www-project-top-ten/2017/A9_2017-Using_Components_with_Known_Vulnerabilities"]
+        },
+        {
+            "name": "Insecure File Handling",
+            "description": "Improper validation or handling of file operations that could lead to security issues.",
+            "remediation": "Validate file types, implement proper access controls, and sanitize filenames.",
+            "cwe": "CWE-73",
+            "references": ["https://owasp.org/www-community/vulnerabilities/Unrestricted_File_Upload"]
         }
-        response = requests.post(f"{SECURITY_API_URL}/scan", json=payload)
-        if response.status_code == 202:
-            return response.json()["data"]["scanId"]
-        else:
-            st.error(f"Error initiating scan: {response.status_code} - {response.text}")
-            return None
-    except Exception as e:
-        st.error(f"Error connecting to API: {e}")
-        return None
-
-# Function to check dependencies
-def check_dependencies(repository_path, languages):
-    try:
-        payload = {
-            "repositoryPath": repository_path,
-            "languages": languages
-        }
-        response = requests.post(f"{SECURITY_API_URL}/dependencies/check", json=payload)
-        if response.status_code == 200:
-            return response.json()["data"]
-        else:
-            st.error(f"Error checking dependencies: {response.status_code}")
-            return None
-    except Exception as e:
-        st.error(f"Error connecting to API: {e}")
-        return None
-
-# Function to detect secrets
-def detect_secrets(repository_path):
-    try:
-        payload = {
-            "repositoryPath": repository_path
-        }
-        response = requests.post(f"{SECURITY_API_URL}/secrets/detect", json=payload)
-        if response.status_code == 200:
-            return response.json()["data"]
-        else:
-            st.error(f"Error detecting secrets: {response.status_code}")
-            return None
-    except Exception as e:
-        st.error(f"Error connecting to API: {e}")
-        return None
-
-# Function to format timestamp
-def format_timestamp(timestamp):
-    return datetime.fromtimestamp(timestamp / 1000 if timestamp > 1e12 else timestamp).strftime("%Y-%m-%d %H:%M:%S")
-
-# Function to get severity badge HTML
-def get_severity_badge(severity):
-    return f'<span class="vuln-badge vuln-{severity.lower()}">{severity.capitalize()}</span>'
-
-# Function to determine risk color
-def get_risk_color(score):
-    if score >= 7.0:
-        return "critical"
-    elif score >= 5.0:
-        return "high"
-    elif score >= 3.0:
-        return "medium"
-    else:
-        return "low"
-
-# Function to determine metric color class
-def get_metric_color_class(value, thresholds):
-    if value >= thresholds["critical"]:
-        return "metric-critical"
-    elif value >= thresholds["warning"]:
-        return "metric-warning"
-    else:
-        return "metric-good"
-
-# Helper function to pluralize words
-def pluralize(word, count):
-    return word if count == 1 else f"{word}s"
-
-# Initialize session state
-if "show_scan_details" not in st.session_state:
-    st.session_state.show_scan_details = False
-
-if "current_scan_id" not in st.session_state:
-    st.session_state.current_scan_id = None
-
-if "dependency_check_results" not in st.session_state:
-    st.session_state.dependency_check_results = None
-
-if "secret_detection_results" not in st.session_state:
-    st.session_state.secret_detection_results = None
-
-if "active_tab" not in st.session_state:
-    st.session_state.active_tab = "overview"
-
-# Dashboard title
-st.markdown('<h1 class="dashboard-title">Security Dashboard 🛡️</h1>', unsafe_allow_html=True)
-st.markdown('<p class="dashboard-subtitle">Comprehensive security monitoring and vulnerability management for your codebase</p>', unsafe_allow_html=True)
-
-# Create two columns for layout
-col1, col2 = st.columns([3, 1])
-
-with col2:
-    # Scan controls
-    st.markdown('<div class="section-container">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">Security Scan Controls</div>', unsafe_allow_html=True)
+    ]
     
-    repository_path = st.text_input("Repository Path", value="./", help="Path to the code repository to scan")
+    # Generate a random security score (higher is better)
+    score = random.randint(50, 95)
     
-    languages = st.multiselect(
-        "Languages to Scan",
-        ["javascript", "python", "java", "csharp", "go", "ruby", "php"],
-        default=["javascript", "python"],
-        help="Select the programming languages to include in the scan"
-    )
+    # Determine the number of vulnerabilities based on the security score
+    # Lower score means more vulnerabilities
+    total_vulns = max(1, int((100 - score) / 5))
     
-    scan_depth = st.select_slider(
-        "Scan Depth",
-        options=["quick", "standard", "deep"],
-        value="standard",
-        help="Deeper scans are more thorough but take longer"
-    )
+    # Distribute vulnerabilities by severity
+    critical_count = max(0, int(total_vulns * 0.1))
+    high_count = max(0, int(total_vulns * 0.3))
+    medium_count = max(0, int(total_vulns * 0.4))
+    low_count = max(0, int(total_vulns * 0.2))
     
-    col1_button, col2_button = st.columns(2)
+    # Generate vulnerabilities
+    vulnerabilities = []
     
-    with col1_button:
-        if st.button("Run Security Scan", type="primary"):
-            with st.spinner("Initiating security scan..."):
-                scan_id = initiate_security_scan(repository_path, languages, scan_depth)
-                if scan_id:
-                    st.success(f"Scan initiated successfully!")
-                    st.session_state.current_scan_id = scan_id
-                    st.session_state.show_scan_details = True
-                    st.rerun()
+    # Sample file paths for the selected project
+    file_paths = [
+        "src/controllers/UserController.js",
+        "src/models/User.js",
+        "src/routes/api.js",
+        "src/middleware/auth.js",
+        "src/utils/validation.js",
+        "src/config/database.js",
+        "src/services/dataService.js",
+        "src/helpers/formatter.js",
+        "src/app.js",
+        "public/js/main.js"
+    ]
     
-    with col2_button:
-        if st.button("Check Dependencies"):
-            with st.spinner("Checking dependencies..."):
-                results = check_dependencies(repository_path, languages)
-                if results:
-                    st.session_state.dependency_check_results = results
-                    st.session_state.active_tab = "dependencies"
-                    st.rerun()
+    # Generate critical vulnerabilities
+    for i in range(critical_count):
+        vuln_type = random.choice(vuln_types)
+        file_path = random.choice(file_paths)
+        line = random.randint(10, 200)
+        
+        vulnerabilities.append({
+            "id": f"VUL-{len(vulnerabilities) + 1}",
+            "type": vuln_type["name"],
+            "severity": "critical",
+            "description": f"{vuln_type['description']} Found in {file_path}.",
+            "file": file_path,
+            "line": line,
+            "remediation": vuln_type["remediation"],
+            "cwe": vuln_type["cwe"],
+            "references": vuln_type["references"],
+            "code_snippet": "function authenticateUser(username, password) {\n  const query = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}'`;\n  return db.query(query);\n}"
+        })
     
-    if st.button("Detect Secrets"):
-        with st.spinner("Detecting secrets..."):
-            results = detect_secrets(repository_path)
-            if results:
-                st.session_state.secret_detection_results = results
-                st.session_state.active_tab = "secrets"
-                st.rerun()
+    # Generate high severity vulnerabilities
+    for i in range(high_count):
+        vuln_type = random.choice(vuln_types)
+        file_path = random.choice(file_paths)
+        line = random.randint(10, 200)
+        
+        vulnerabilities.append({
+            "id": f"VUL-{len(vulnerabilities) + 1}",
+            "type": vuln_type["name"],
+            "severity": "high",
+            "description": f"{vuln_type['description']} Found in {file_path}.",
+            "file": file_path,
+            "line": line,
+            "remediation": vuln_type["remediation"],
+            "cwe": vuln_type["cwe"],
+            "references": vuln_type["references"],
+            "code_snippet": "const userInput = req.body.userInput;\nres.send(`<div>${userInput}</div>`);"
+        })
     
-    st.markdown('</div>', unsafe_allow_html=True)
+    # Generate medium severity vulnerabilities
+    for i in range(medium_count):
+        vuln_type = random.choice(vuln_types)
+        file_path = random.choice(file_paths)
+        line = random.randint(10, 200)
+        
+        vulnerabilities.append({
+            "id": f"VUL-{len(vulnerabilities) + 1}",
+            "type": vuln_type["name"],
+            "severity": "medium",
+            "description": f"{vuln_type['description']} Found in {file_path}.",
+            "file": file_path,
+            "line": line,
+            "remediation": vuln_type["remediation"],
+            "cwe": vuln_type["cwe"],
+            "references": vuln_type["references"],
+            "code_snippet": "app.use(session({\n  secret: 'hardcoded-secret-key',\n  resave: false,\n  saveUninitialized: true\n}));"
+        })
     
-    # Recent scans list
-    st.markdown('<div class="section-container">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">Recent Scans</div>', unsafe_allow_html=True)
+    # Generate low severity vulnerabilities
+    for i in range(low_count):
+        vuln_type = random.choice(vuln_types)
+        file_path = random.choice(file_paths)
+        line = random.randint(10, 200)
+        
+        vulnerabilities.append({
+            "id": f"VUL-{len(vulnerabilities) + 1}",
+            "type": vuln_type["name"],
+            "severity": "low",
+            "description": f"{vuln_type['description']} Found in {file_path}.",
+            "file": file_path,
+            "line": line,
+            "remediation": vuln_type["remediation"],
+            "cwe": vuln_type["cwe"],
+            "references": vuln_type["references"],
+            "code_snippet": "// TODO: Implement proper error handling\nconsole.log('Error occurred');"
+        })
     
-    scans = fetch_security_scans()
+    # Generate dependency vulnerabilities
+    dependencies = [
+        {"name": "express", "version": "4.17.1", "vulnerabilities": []},
+        {"name": "mongoose", "version": "5.12.3", "vulnerabilities": []},
+        {"name": "jsonwebtoken", "version": "8.5.1", "vulnerabilities": []},
+        {"name": "lodash", "version": "4.17.20", "vulnerabilities": [
+            {"id": "CVE-2021-23337", "severity": "high", "description": "Command injection vulnerability in lodash before 4.17.21"}
+        ]},
+        {"name": "axios", "version": "0.21.0", "vulnerabilities": [
+            {"id": "CVE-2020-28168", "severity": "medium", "description": "Server-side request forgery vulnerability in axios before 0.21.1"}
+        ]},
+        {"name": "moment", "version": "2.29.1", "vulnerabilities": []},
+        {"name": "react", "version": "17.0.1", "vulnerabilities": []},
+        {"name": "react-dom", "version": "17.0.1", "vulnerabilities": []}
+    ]
     
-    if not scans:
-        st.info("No security scans found. Run a scan to get started.")
-    else:
-        for scan in scans[:10]:  # Show most recent 10 scans
-            scan_timestamp = scan.get("timestamp", 0)
-            formatted_time = format_timestamp(scan_timestamp)
-            scan_id = scan.get("scanId", "")
-            vuln_count = scan.get("vulnerabilityCount", 0)
-            risk_score = scan.get("riskScore", 0)
-            repo_path = scan.get("repositoryPath", "./")
-            
-            # Generate a truncated repo path
-            short_repo = repo_path
-            if len(short_repo) > 20:
-                short_repo = f"{short_repo[:10]}...{short_repo[-10:]}"
-            
-            # Generate risk score color
-            risk_color = get_risk_color(risk_score)
-            
-            is_active = scan_id == st.session_state.current_scan_id
-            active_class = "active" if is_active else ""
-            
-            html = f"""
-            <div class="scan-list-item {active_class}" onclick="handleScanClick('{scan_id}')">
-                <div class="scan-list-title">{short_repo}</div>
-                <div class="scan-list-date">{formatted_time}</div>
-                <div style="display: flex; justify-content: space-between; margin-top: 5px;">
-                    <span class="scan-list-score risk-{risk_color}">Risk: {risk_score:.1f}</span>
-                    <span class="scan-list-count">Issues: {vuln_count}</span>
-                </div>
+    # Save dependencies for the dependency scanning tab
+    st.session_state.dependencies = dependencies
+    
+    # Generate pass/fail checks for the compliance section
+    compliance_checks = [
+        {"id": "SEC-1", "name": "Input Validation", "status": random.choice(["pass", "fail", "warning"])},
+        {"id": "SEC-2", "name": "Output Encoding", "status": random.choice(["pass", "fail", "warning"])},
+        {"id": "SEC-3", "name": "Authentication", "status": random.choice(["pass", "fail", "warning"])},
+        {"id": "SEC-4", "name": "Session Management", "status": random.choice(["pass", "fail", "warning"])},
+        {"id": "SEC-5", "name": "Access Control", "status": random.choice(["pass", "fail", "warning"])},
+        {"id": "SEC-6", "name": "Cryptographic Practices", "status": random.choice(["pass", "fail", "warning"])},
+        {"id": "SEC-7", "name": "Error Handling", "status": random.choice(["pass", "fail", "warning"])},
+        {"id": "SEC-8", "name": "Data Protection", "status": random.choice(["pass", "fail", "warning"])},
+        {"id": "SEC-9", "name": "Communication Security", "status": random.choice(["pass", "fail", "warning"])},
+        {"id": "SEC-10", "name": "System Configuration", "status": random.choice(["pass", "fail", "warning"])}
+    ]
+    
+    # Create the full scan results
+    results = {
+        "summary": {
+            "project": project,
+            "scan_type": scan_type,
+            "scan_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "score": score,
+            "vulnerabilities": {
+                "critical": critical_count,
+                "high": high_count,
+                "medium": medium_count,
+                "low": low_count,
+                "total": total_vulns
+            }
+        },
+        "vulnerabilities": vulnerabilities,
+        "dependencies": dependencies,
+        "compliance": compliance_checks
+    }
+    
+    return results
+
+# Sidebar - Project selector and scan controls
+st.sidebar.title("Security Dashboard")
+
+# Project selector
+projects = ["E-commerce API", "User Management System", "Payment Gateway", "Inventory Management", "Analytics Dashboard"]
+selected_project = st.sidebar.selectbox("Select Project", projects)
+
+# Store selected project in session state
+st.session_state.selected_project = selected_project
+
+# Scan controls
+st.sidebar.subheader("Scan Controls")
+
+scan_type = st.sidebar.selectbox(
+    "Scan Type",
+    ["Full Scan", "Quick Scan", "Dependency Scan", "Compliance Check"],
+    help="Full Scan: Complete security analysis\nQuick Scan: Focuses on critical vulnerabilities\nDependency Scan: Checks for vulnerable dependencies\nCompliance Check: Verifies security compliance"
+)
+
+# Start scan button
+if st.sidebar.button("Start Security Scan"):
+    # Run the scan
+    scan_type_map = {
+        "Full Scan": "full",
+        "Quick Scan": "quick",
+        "Dependency Scan": "dependencies",
+        "Compliance Check": "compliance"
+    }
+    run_security_scan(selected_project, scan_type_map[scan_type])
+
+# Show scan history
+st.sidebar.subheader("Scan History")
+
+if st.session_state.scan_history:
+    for i, scan in enumerate(st.session_state.scan_history[-5:]):  # Show last 5 scans
+        vuln_count = sum(scan["vulnerabilities"].values())
+        
+        st.sidebar.markdown(
+            f"""
+            <div style="border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 5px;">
+                <span style="color: #666; font-size: 0.8em;">{scan["timestamp"].strftime("%Y-%m-%d %H:%M")}</span>
+                <div><strong>{scan["project"]}</strong></div>
+                <div>Score: {scan["score"]}/100</div>
+                <div>Vulnerabilities: {vuln_count}</div>
             </div>
-            """
-            
-            st.markdown(html, unsafe_allow_html=True)
-            
-            # Create a button using the scan ID that won't display but will capture clicks
-            if st.button(f"Select {scan_id}", key=f"btn_{scan_id}", label_visibility="collapsed"):
-                st.session_state.current_scan_id = scan_id
-                st.session_state.show_scan_details = True
-                st.rerun()
-    
-    st.markdown('</div>', unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True
+        )
 
-with col1:
-    # Define tabs for different security views
-    tabs = st.tabs(["Overview", "Vulnerabilities", "Dependencies", "Secrets", "Recommendations"])
+# Main content area
+st.title("Security Dashboard")
+
+# Show scanning progress if a scan is in progress
+if st.session_state.scanning:
+    st.info("Security scan in progress...")
     
-    with tabs[0]:  # Overview tab
-        st.session_state.active_tab = "overview"
+    # Show progress bar
+    st.progress(st.session_state.scan_progress / 100)
+    
+    # Show scan log
+    st.subheader("Scan Log")
+    
+    scan_log_text = "\n".join(st.session_state.scan_log)
+    st.text_area("Log Output", scan_log_text, height=200)
+
+# Show scan results if available
+elif st.session_state.scan_results:
+    # Get scan results
+    results = st.session_state.scan_results
+    summary = results["summary"]
+    vulnerabilities = results["vulnerabilities"]
+    dependencies = results["dependencies"]
+    compliance_checks = results["compliance"]
+    
+    # Display scan info and security score
+    col1, col2, col3 = st.columns([2, 3, 2])
+    
+    with col1:
+        st.subheader("Scan Information")
+        st.write(f"**Project:** {summary['project']}")
+        st.write(f"**Scan Type:** {summary['scan_type'].capitalize()}")
+        st.write(f"**Scan Time:** {summary['scan_time']}")
+    
+    with col2:
+        # Security score gauge and metrics
+        st.subheader("Security Score")
         
-        if st.session_state.show_scan_details and st.session_state.current_scan_id:
-            scan_data = fetch_scan_details(st.session_state.current_scan_id)
-            
-            if scan_data:
-                # Summary metrics
-                st.markdown('<div style="display: flex; gap: 20px; margin-bottom: 20px;">', unsafe_allow_html=True)
-                
-                # Get summary data
-                summary = scan_data.get("summary", {})
-                risk_score = summary.get("risk_score", 0)
-                vuln_count = summary.get("vulnerability_count", 0)
-                total_files = summary.get("total_files_scanned", 0)
-                severity_counts = summary.get("severity_counts", {})
-                
-                # Metric columns
-                cols = st.columns(4)
-                
-                # Risk Score Metric
-                risk_color = get_risk_color(risk_score)
-                with cols[0]:
-                    st.markdown(f"""
-                    <div class="metric-container">
-                        <div class="metric-title">Overall Risk Score</div>
-                        <div class="risk-score-container">
-                            <div class="risk-score-value risk-{risk_color}">{risk_score:.1f}</div>
-                            <div class="risk-score-label">out of 10.0</div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                # Vulnerability Count Metric
-                vuln_color_class = get_metric_color_class(vuln_count, {"critical": 10, "warning": 5})
-                with cols[1]:
-                    st.markdown(f"""
-                    <div class="metric-container {vuln_color_class}">
-                        <div class="metric-title">Vulnerabilities</div>
-                        <div class="metric-value">{vuln_count}</div>
-                        <div class="metric-details">Across {total_files} files</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                # Critical Issues Metric
-                critical_count = severity_counts.get("critical", 0)
-                high_count = severity_counts.get("high", 0)
-                critical_color_class = get_metric_color_class(critical_count, {"critical": 1, "warning": 0})
-                with cols[2]:
-                    st.markdown(f"""
-                    <div class="metric-container {critical_color_class}">
-                        <div class="metric-title">Critical Issues</div>
-                        <div class="metric-value">{critical_count}</div>
-                        <div class="metric-details">+ {high_count} high severity</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                # Scan Timestamp Metric
-                timestamp = scan_data.get("timestamp", 0)
-                formatted_time = format_timestamp(timestamp)
-                with cols[3]:
-                    # Format the scan ID appropriately
-                    scan_id_display = st.session_state.current_scan_id[:8] + "..." if st.session_state.current_scan_id else "N/A"
-                    
-                    st.markdown(f"""
-                    <div class="metric-container">
-                        <div class="metric-title">Scan Completed</div>
-                        <div class="metric-value" style="font-size: 1.5rem;">{formatted_time}</div>
-                        <div class="metric-details">Scan ID: {scan_id_display}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                st.markdown('</div>', unsafe_allow_html=True)
-                
-                # Vulnerability Distribution Chart
-                st.markdown('<div class="section-container">', unsafe_allow_html=True)
-                st.markdown('<div class="section-title">Vulnerability Distribution</div>', unsafe_allow_html=True)
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Severity distribution
-                    severity_data = []
-                    for severity, count in severity_counts.items():
-                        if count > 0:
-                            severity_data.append({"severity": severity.capitalize(), "count": count})
-                    
-                    if severity_data:
-                        df_severity = pd.DataFrame(severity_data)
-                        
-                        # Customize colors
-                        severity_colors = {
-                            "Critical": "#ff4d4d",
-                            "High": "#ffae00",
-                            "Medium": "#ffde33",
-                            "Low": "#00d97e",
-                            "Info": "#00aeff"
-                        }
-                        
-                        # Create pie chart
-                        fig = px.pie(
-                            df_severity,
-                            values="count",
-                            names="severity",
-                            title="Vulnerabilities by Severity",
-                            color="severity",
-                            color_discrete_map=severity_colors,
-                            hole=0.4
-                        )
-                        
-                        # Update layout
-                        fig.update_layout(
-                            showlegend=True,
-                            legend=dict(
-                                orientation="h",
-                                yanchor="bottom",
-                                y=-0.2,
-                                xanchor="center",
-                                x=0.5
-                            ),
-                            plot_bgcolor="rgba(0,0,0,0)",
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            font=dict(color="white"),
-                            margin=dict(l=20, r=20, t=30, b=0),
-                            height=300
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.info("No vulnerability data available for the severity distribution chart.")
-                
-                with col2:
-                    # Get vulnerabilities and group by type
-                    vulnerabilities = scan_data.get("vulnerabilities", [])
-                    vuln_types = {}
-                    
-                    for vuln in vulnerabilities:
-                        vuln_name = vuln.get("name", "Unknown")
-                        # Extract the general type from the name (e.g., "SQL Injection Vulnerability" -> "SQL Injection")
-                        vuln_type = re.sub(r"Vulnerability$", "", vuln_name).strip()
-                        
-                        if vuln_type not in vuln_types:
-                            vuln_types[vuln_type] = 0
-                        vuln_types[vuln_type] += 1
-                    
-                    if vuln_types:
-                        # Convert to DataFrame
-                        df_types = pd.DataFrame([
-                            {"type": t, "count": c} for t, c in vuln_types.items()
-                        ])
-                        
-                        # Sort by count
-                        df_types = df_types.sort_values("count", ascending=False)
-                        
-                        # Create bar chart
-                        fig = px.bar(
-                            df_types,
-                            x="count",
-                            y="type",
-                            title="Vulnerabilities by Type",
-                            orientation="h",
-                            text="count"
-                        )
-                        
-                        # Update layout
-                        fig.update_layout(
-                            yaxis=dict(
-                                title="",
-                                autorange="reversed"
-                            ),
-                            xaxis=dict(title=""),
-                            plot_bgcolor="rgba(0,0,0,0)",
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            font=dict(color="white"),
-                            margin=dict(l=20, r=20, t=30, b=0),
-                            height=300
-                        )
-                        
-                        # Update traces
-                        fig.update_traces(
-                            marker_color="#00e5ff",
-                            textposition="outside"
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.info("No vulnerability data available for the type distribution chart.")
-                
-                st.markdown('</div>', unsafe_allow_html=True)
-                
-                # Files with Most Vulnerabilities
-                st.markdown('<div class="section-container">', unsafe_allow_html=True)
-                st.markdown('<div class="section-title">Files with Most Vulnerabilities</div>', unsafe_allow_html=True)
-                
-                # Group vulnerabilities by file
-                file_vulns = {}
-                for vuln in vulnerabilities:
-                    file_path = vuln.get("file_path", "Unknown")
-                    if file_path not in file_vulns:
-                        file_vulns[file_path] = {"total": 0, "critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
-                    
-                    file_vulns[file_path]["total"] += 1
-                    severity = vuln.get("severity", "low").lower()
-                    file_vulns[file_path][severity] += 1
-                
-                # Convert to DataFrame
-                if file_vulns:
-                    df_files = pd.DataFrame([
-                        {
-                            "file": f,
-                            "total": d["total"],
-                            "critical": d["critical"],
-                            "high": d["high"],
-                            "medium": d["medium"],
-                            "low": d["low"],
-                            "info": d["info"]
-                        } for f, d in file_vulns.items()
-                    ])
-                    
-                    # Sort and get top 10
-                    df_files = df_files.sort_values("total", ascending=False).head(10)
-                    
-                    # Shorten file paths for display
-                    df_files["display_file"] = df_files["file"].apply(
-                        lambda x: f"...{x[-40:]}" if len(x) > 40 else x
-                    )
-                    
-                    # Create a stacked bar chart
-                    fig = go.Figure()
-                    
-                    # Add traces for each severity
-                    fig.add_trace(go.Bar(
-                        y=df_files["display_file"],
-                        x=df_files["critical"],
-                        name="Critical",
-                        orientation="h",
-                        marker=dict(color="#ff4d4d"),
-                        hovertemplate="%{y}<br>Critical: %{x}<extra></extra>"
-                    ))
-                    
-                    fig.add_trace(go.Bar(
-                        y=df_files["display_file"],
-                        x=df_files["high"],
-                        name="High",
-                        orientation="h",
-                        marker=dict(color="#ffae00"),
-                        hovertemplate="%{y}<br>High: %{x}<extra></extra>"
-                    ))
-                    
-                    fig.add_trace(go.Bar(
-                        y=df_files["display_file"],
-                        x=df_files["medium"],
-                        name="Medium",
-                        orientation="h",
-                        marker=dict(color="#ffde33"),
-                        hovertemplate="%{y}<br>Medium: %{x}<extra></extra>"
-                    ))
-                    
-                    fig.add_trace(go.Bar(
-                        y=df_files["display_file"],
-                        x=df_files["low"],
-                        name="Low",
-                        orientation="h",
-                        marker=dict(color="#00d97e"),
-                        hovertemplate="%{y}<br>Low: %{x}<extra></extra>"
-                    ))
-                    
-                    fig.add_trace(go.Bar(
-                        y=df_files["display_file"],
-                        x=df_files["info"],
-                        name="Info",
-                        orientation="h",
-                        marker=dict(color="#00aeff"),
-                        hovertemplate="%{y}<br>Info: %{x}<extra></extra>"
-                    ))
-                    
-                    # Update layout
-                    fig.update_layout(
-                        barmode="stack",
-                        title="Top 10 Files by Vulnerability Count",
-                        yaxis=dict(
-                            title="",
-                            autorange="reversed"
-                        ),
-                        xaxis=dict(title="Vulnerability Count"),
-                        legend=dict(
-                            orientation="h",
-                            yanchor="bottom",
-                            y=1.02,
-                            xanchor="center",
-                            x=0.5
-                        ),
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        font=dict(color="white"),
-                        margin=dict(l=20, r=20, t=50, b=20),
-                        height=500
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("No file vulnerability data available for the chart.")
-                
-                st.markdown('</div>', unsafe_allow_html=True)
-            else:
-                st.warning("Failed to load scan details. The scan may still be in progress.")
+        score = summary["score"]
+        
+        # Determine score color
+        if score >= 80:
+            score_color = "green"
+        elif score >= 60:
+            score_color = "orange"
         else:
-            st.info("Select a scan from the list or run a new security scan to view results.")
-    
-    with tabs[1]:  # Vulnerabilities tab
-        st.session_state.active_tab = "vulnerabilities"
+            score_color = "red"
         
-        if st.session_state.show_scan_details and st.session_state.current_scan_id:
-            scan_data = fetch_scan_details(st.session_state.current_scan_id)
+        # Create gauge chart
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=score,
+            domain={"x": [0, 1], "y": [0, 1]},
+            title={"text": "Security Score"},
+            gauge={
+                "axis": {"range": [0, 100]},
+                "bar": {"color": score_color},
+                "steps": [
+                    {"range": [0, 50], "color": "lightgray"},
+                    {"range": [50, 75], "color": "lightgray"},
+                    {"range": [75, 100], "color": "lightgray"}
+                ],
+                "threshold": {
+                    "line": {"color": "red", "width": 4},
+                    "thickness": 0.75,
+                    "value": 90
+                }
+            }
+        ))
+        
+        fig.update_layout(height=250, margin=dict(l=20, r=20, t=50, b=20))
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col3:
+        st.subheader("Vulnerability Summary")
+        
+        vuln_data = {
+            "Severity": ["Critical", "High", "Medium", "Low"],
+            "Count": [
+                summary["vulnerabilities"]["critical"],
+                summary["vulnerabilities"]["high"],
+                summary["vulnerabilities"]["medium"],
+                summary["vulnerabilities"]["low"]
+            ]
+        }
+        
+        vuln_df = pd.DataFrame(vuln_data)
+        
+        # Set colors for each severity level
+        colors = ["#ff4b4b", "#ffa500", "#ffdf00", "#02b2e7"]
+        
+        # Create horizontal bar chart
+        fig = px.bar(
+            vuln_df,
+            x="Count",
+            y="Severity",
+            orientation="h",
+            color="Severity",
+            color_discrete_map={
+                "Critical": "#ff4b4b",
+                "High": "#ffa500",
+                "Medium": "#ffdf00",
+                "Low": "#02b2e7"
+            }
+        )
+        
+        fig.update_layout(height=250, margin=dict(l=20, r=20, t=30, b=20))
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Create tabs for different sections of the report
+    tab1, tab2, tab3, tab4 = st.tabs(["Vulnerabilities", "Dependencies", "Compliance", "Recommendations"])
+    
+    with tab1:  # Vulnerabilities tab
+        st.subheader("Detected Vulnerabilities")
+        
+        # Filter controls
+        severity_filter = st.multiselect(
+            "Filter by Severity",
+            ["Critical", "High", "Medium", "Low"],
+            default=["Critical", "High", "Medium", "Low"]
+        )
+        
+        # Convert selections to lowercase for filtering
+        severity_filter_lower = [s.lower() for s in severity_filter]
+        
+        # Filter vulnerabilities
+        filtered_vulns = [v for v in vulnerabilities if v["severity"].lower() in severity_filter_lower]
+        
+        if filtered_vulns:
+            # Display vulnerabilities in a scrollable container
+            vuln_container = st.container()
             
-            if scan_data:
-                vulnerabilities = scan_data.get("vulnerabilities", [])
-                
-                if vulnerabilities:
-                    # Filter controls
-                    st.markdown('<div class="section-container">', unsafe_allow_html=True)
+            with vuln_container:
+                # Display each vulnerability
+                for vuln in filtered_vulns:
+                    vuln_id = vuln["id"]
+                    vuln_type = vuln["type"]
+                    severity = vuln["severity"]
+                    description = vuln["description"]
+                    file = vuln["file"]
+                    line = vuln["line"]
                     
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        severity_filter = st.multiselect(
-                            "Filter by Severity",
-                            ["critical", "high", "medium", "low", "info"],
-                            default=["critical", "high"],
-                            key="vuln_severity_filter"
-                        )
-                    
-                    with col2:
-                        # Extract unique vulnerability types
-                        vuln_types = sorted(list(set([v.get("name", "Unknown") for v in vulnerabilities])))
-                        type_filter = st.multiselect(
-                            "Filter by Type",
-                            vuln_types,
-                            default=[],
-                            key="vuln_type_filter"
-                        )
-                    
-                    with col3:
-                        # Extract unique file extensions
-                        file_exts = []
-                        for vuln in vulnerabilities:
-                            file_path = vuln.get("file_path", "")
-                            _, ext = os.path.splitext(file_path)
-                            if ext and ext not in file_exts:
-                                file_exts.append(ext)
+                    # Create an expander for each vulnerability
+                    with st.expander(f"{vuln_id}: {vuln_type} ({severity.upper()})"):
+                        # Display vulnerability details
+                        st.markdown(f"**Description:** {description}")
+                        st.markdown(f"**File:** `{file}`")
+                        st.markdown(f"**Line:** {line}")
                         
-                        file_exts.sort()
-                        ext_filter = st.multiselect(
-                            "Filter by File Extension",
-                            file_exts,
-                            default=[],
-                            key="vuln_ext_filter"
-                        )
-                    
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    # Apply filters
-                    filtered_vulns = vulnerabilities
-                    
-                    if severity_filter:
-                        filtered_vulns = [v for v in filtered_vulns if v.get("severity", "").lower() in severity_filter]
-                    
-                    if type_filter:
-                        filtered_vulns = [v for v in filtered_vulns if v.get("name", "") in type_filter]
-                    
-                    if ext_filter:
-                        filtered_vulns = [v for v in filtered_vulns if os.path.splitext(v.get("file_path", ""))[1] in ext_filter]
-                    
-                    # Display vulnerability table
-                    st.markdown('<div class="section-container">', unsafe_allow_html=True)
-                    st.markdown(f'<div class="section-title">Vulnerabilities ({len(filtered_vulns)} of {len(vulnerabilities)})</div>', unsafe_allow_html=True)
-                    
-                    if filtered_vulns:
-                        # Create a DataFrame for display
-                        vuln_data = []
-                        for v in filtered_vulns:
-                            file_path = v.get("file_path", "Unknown")
-                            file_name = os.path.basename(file_path)
+                        # Add a separator
+                        st.markdown("---")
+                        
+                        # Show code snippet if available
+                        if "code_snippet" in vuln:
+                            st.markdown("**Code Snippet:**")
                             
-                            vuln_data.append({
-                                "Severity": v.get("severity", "Unknown").capitalize(),
-                                "Type": v.get("name", "Unknown"),
-                                "File": file_name,
-                                "Line": v.get("line_number", "N/A"),
-                                "CWE": v.get("cwe_id", "N/A"),
-                                "Details": f"{v.get('description', 'No description available')[:100]}..."
-                            })
-                        
-                        df_vulns = pd.DataFrame(vuln_data)
-                        
-                        # Function to color severity
-                        def color_severity(val):
-                            if val == "Critical":
-                                return f'<span class="vuln-badge vuln-critical">{val}</span>'
-                            elif val == "High":
-                                return f'<span class="vuln-badge vuln-high">{val}</span>'
-                            elif val == "Medium":
-                                return f'<span class="vuln-badge vuln-medium">{val}</span>'
-                            elif val == "Low":
-                                return f'<span class="vuln-badge vuln-low">{val}</span>'
-                            else:
-                                return f'<span class="vuln-badge vuln-info">{val}</span>'
-                        
-                        # Apply styling
-                        df_styled = df_vulns.style.format({
-                            "Severity": lambda x: color_severity(x)
-                        })
-                        
-                        st.write(df_styled.to_html(escape=False), unsafe_allow_html=True)
-                        
-                        # Detailed view for selected vulnerability
-                        st.markdown('<div class="section-title" style="margin-top: 20px;">Vulnerability Details</div>', unsafe_allow_html=True)
-                        
-                        selected_idx = st.selectbox(
-                            "Select vulnerability to view details",
-                            range(len(filtered_vulns)),
-                            format_func=lambda i: f"{filtered_vulns[i].get('severity', 'Unknown').capitalize()} - {filtered_vulns[i].get('name', 'Unknown')} in {os.path.basename(filtered_vulns[i].get('file_path', 'Unknown'))}"
-                        )
-                        
-                        selected_vuln = filtered_vulns[selected_idx]
-                        
-                        # Display detailed information
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            severity = selected_vuln.get("severity", "Unknown").lower()
-                            st.markdown(f"""
-                            <div style="margin-bottom: 15px;">
-                                <span style="font-weight: 600;">Severity:</span> {get_severity_badge(severity)}
-                            </div>
-                            <div style="margin-bottom: 15px;">
-                                <span style="font-weight: 600;">Vulnerability:</span> {selected_vuln.get("name", "Unknown")}
-                            </div>
-                            <div style="margin-bottom: 15px;">
-                                <span style="font-weight: 600;">File:</span> {selected_vuln.get("file_path", "Unknown")}
-                            </div>
-                            <div style="margin-bottom: 15px;">
-                                <span style="font-weight: 600;">Line:</span> {selected_vuln.get("line_number", "N/A")}
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                            if selected_vuln.get("cwe_id"):
-                                st.markdown(f"""
-                                <div style="margin-bottom: 15px;">
-                                    <span style="font-weight: 600;">CWE:</span> {selected_vuln.get("cwe_id", "N/A")}
+                            # Style the code snippet with HTML/CSS
+                            snippet = vuln["code_snippet"].replace("\\n", "<br>").replace(" ", "&nbsp;")
+                            st.markdown(
+                                f"""
+                                <div style="background-color: #272822; color: #f8f8f2; padding: 10px; border-radius: 5px; font-family: 'Courier New', monospace; overflow-x: auto; margin: 10px 0;">
+                                {snippet}
                                 </div>
-                                """, unsafe_allow_html=True)
+                                """, 
+                                unsafe_allow_html=True
+                            )
                         
-                        with col2:
-                            st.markdown(f"""
-                            <div style="margin-bottom: 15px;">
-                                <span style="font-weight: 600;">Description:</span>
-                                <div style="margin-top: 5px;">{selected_vuln.get("description", "No description available")}</div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                            if selected_vuln.get("recommendation"):
-                                st.markdown(f"""
-                                <div style="margin-bottom: 15px;">
-                                    <span style="font-weight: 600;">Recommendation:</span>
-                                    <div style="margin-top: 5px;">{selected_vuln.get("recommendation", "")}</div>
-                                </div>
-                                """, unsafe_allow_html=True)
+                        # Display remediation
+                        st.markdown(f"**Remediation:** {vuln['remediation']}")
                         
-                        # Code snippet
-                        if selected_vuln.get("code_snippet"):
-                            st.markdown('<span style="font-weight: 600;">Code Snippet:</span>', unsafe_allow_html=True)
-                            st.markdown(f"""
-                            <div class="code-block">
-                            {selected_vuln.get("code_snippet", "").replace("\n", "<br>").replace(" ", "&nbsp;")}
-                            </div>
-                            """, unsafe_allow_html=True)
+                        # Display CWE reference
+                        st.markdown(f"**CWE:** {vuln['cwe']}")
                         
-                        # References
-                        if selected_vuln.get("references"):
-                            st.markdown('<span style="font-weight: 600;">References:</span>', unsafe_allow_html=True)
-                            for ref in selected_vuln.get("references", []):
-                                st.markdown(f"- [{ref}]({ref})", unsafe_allow_html=True)
-                    else:
-                        st.info("No vulnerabilities match the current filters.")
-                    
-                    st.markdown('</div>', unsafe_allow_html=True)
+                        # Display references
+                        if vuln.get("references"):
+                            st.markdown("**References:**")
+                            for ref in vuln["references"]:
+                                st.markdown(f"- [{ref}]({ref})")
+        else:
+            st.info("No vulnerabilities found matching the selected filters.")
+    
+    with tab2:  # Dependencies tab
+        st.subheader("Dependency Analysis")
+        
+        # Create a table of dependencies
+        dependency_data = []
+        
+        for dep in dependencies:
+            name = dep["name"]
+            version = dep["version"]
+            vuln_count = len(dep["vulnerabilities"])
+            highest_severity = "none"
+            
+            if vuln_count > 0:
+                # Determine highest severity
+                if any(v["severity"] == "critical" for v in dep["vulnerabilities"]):
+                    highest_severity = "critical"
+                elif any(v["severity"] == "high" for v in dep["vulnerabilities"]):
+                    highest_severity = "high"
+                elif any(v["severity"] == "medium" for v in dep["vulnerabilities"]):
+                    highest_severity = "medium"
                 else:
-                    st.success("No vulnerabilities found in this scan.")
-            else:
-                st.warning("Failed to load scan details. The scan may still be in progress.")
-        else:
-            st.info("Select a scan from the list or run a new security scan to view results.")
-    
-    with tabs[2]:  # Dependencies tab
-        st.session_state.active_tab = "dependencies"
+                    highest_severity = "low"
+            
+            dependency_data.append({
+                "Name": name,
+                "Version": version,
+                "Vulnerabilities": vuln_count,
+                "Highest Severity": highest_severity.capitalize()
+            })
         
-        # Check if we have dependency results
-        if st.session_state.dependency_check_results:
-            dependency_data = st.session_state.dependency_check_results
-            
-            # Summary metrics
-            st.markdown('<div style="display: flex; gap: 20px; margin-bottom: 20px;">', unsafe_allow_html=True)
-            
-            summary = dependency_data.get("summary", {})
-            vulnerable_deps = dependency_data.get("vulnerable_dependencies", [])
-            dep_files = dependency_data.get("dependency_files_found", [])
-            sev_dist = summary.get("severity_distribution", {})
-            
-            # Metric columns
-            cols = st.columns(4)
-            
-            # Total Vulnerable Dependencies
-            vuln_count = len(vulnerable_deps)
-            vuln_color_class = get_metric_color_class(vuln_count, {"critical": 5, "warning": 1})
-            with cols[0]:
-                st.markdown(f"""
-                <div class="metric-container {vuln_color_class}">
-                    <div class="metric-title">Vulnerable Dependencies</div>
-                    <div class="metric-value">{vuln_count}</div>
-                    <div class="metric-details">In {len(dep_files)} dependency files</div>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Critical/High Dependencies
-            critical_count = sev_dist.get("critical", 0)
-            high_count = sev_dist.get("high", 0)
-            critical_color_class = get_metric_color_class(critical_count + high_count, {"critical": 3, "warning": 1})
-            with cols[1]:
-                st.markdown(f"""
-                <div class="metric-container {critical_color_class}">
-                    <div class="metric-title">Critical/High Severity</div>
-                    <div class="metric-value">{critical_count + high_count}</div>
-                    <div class="metric-details">Dependencies requiring immediate action</div>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Languages Checked
-            languages = dependency_data.get("languages_checked", [])
-            languages_str = ", ".join(languages)
-            with cols[2]:
-                st.markdown(f"""
-                <div class="metric-container">
-                    <div class="metric-title">Languages Checked</div>
-                    <div class="metric-value" style="font-size: 1.5rem;">{languages_str}</div>
-                    <div class="metric-details">{len(languages)} languages in total</div>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Timestamp
-            timestamp = dependency_data.get("timestamp", 0)
-            formatted_time = format_timestamp(timestamp)
-            with cols[3]:
-                st.markdown(f"""
-                <div class="metric-container">
-                    <div class="metric-title">Check Completed</div>
-                    <div class="metric-value" style="font-size: 1.5rem;">{formatted_time}</div>
-                    <div class="metric-details">Dependency check results</div>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Vulnerable Dependencies Table
-            st.markdown('<div class="section-container">', unsafe_allow_html=True)
-            st.markdown('<div class="section-title">Vulnerable Dependencies</div>', unsafe_allow_html=True)
-            
-            if vulnerable_deps:
-                # Create DataFrame
-                dep_data = []
-                for dep in vulnerable_deps:
-                    dep_data.append({
-                        "Name": dep.get("name", "Unknown"),
-                        "Version": dep.get("version", "Unknown"),
-                        "Language": dep.get("language", "Unknown").capitalize(),
-                        "Severity": dep.get("severity", "Unknown").capitalize(),
-                        "File": os.path.basename(dep.get("file_path", "Unknown")),
-                        "Vulnerability": dep.get("vulnerability", "Unknown"),
-                        "Recommendation": dep.get("recommendation", "Update to the latest version")
-                    })
-                
-                df_deps = pd.DataFrame(dep_data)
-                
-                # Function to color severity
-                def color_severity_dep(val):
-                    if val == "Critical":
-                        return f'<span class="vuln-badge vuln-critical">{val}</span>'
-                    elif val == "High":
-                        return f'<span class="vuln-badge vuln-high">{val}</span>'
-                    elif val == "Medium":
-                        return f'<span class="vuln-badge vuln-medium">{val}</span>'
-                    elif val == "Low":
-                        return f'<span class="vuln-badge vuln-low">{val}</span>'
-                    else:
-                        return val
-                
-                # Apply styling
-                df_styled = df_deps.style.format({
-                    "Severity": lambda x: color_severity_dep(x)
-                })
-                
-                st.write(df_styled.to_html(escape=False), unsafe_allow_html=True)
-            else:
-                st.success("No vulnerable dependencies found.")
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Dependency Files
-            st.markdown('<div class="section-container">', unsafe_allow_html=True)
-            st.markdown('<div class="section-title">Scanned Dependency Files</div>', unsafe_allow_html=True)
-            
-            if dep_files:
-                # Create DataFrame
-                file_data = []
-                for file in dep_files:
-                    file_data.append({
-                        "File Path": file.get("file_path", "Unknown"),
-                        "File Type": file.get("file_type", "Unknown"),
-                        "Language": file.get("language", "Unknown").capitalize()
-                    })
-                
-                st.table(pd.DataFrame(file_data))
-            else:
-                st.info("No dependency files found.")
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-        else:
-            st.info("Run a dependency check to view results.")
-    
-    with tabs[3]:  # Secrets tab
-        st.session_state.active_tab = "secrets"
+        # Convert to DataFrame for display
+        dep_df = pd.DataFrame(dependency_data)
         
-        # Check if we have secret detection results
-        if st.session_state.secret_detection_results:
-            secrets_data = st.session_state.secret_detection_results
-            
-            # Summary metrics
-            st.markdown('<div style="display: flex; gap: 20px; margin-bottom: 20px;">', unsafe_allow_html=True)
-            
-            summary = secrets_data.get("summary", {})
-            secrets_found = secrets_data.get("secrets_found", [])
-            
-            # Metric columns
-            cols = st.columns(3)
-            
-            # Total Secrets
-            secrets_count = len(secrets_found)
-            secrets_color_class = get_metric_color_class(secrets_count, {"critical": 5, "warning": 1})
-            with cols[0]:
-                st.markdown(f"""
-                <div class="metric-container {secrets_color_class}">
-                    <div class="metric-title">Secrets Found</div>
-                    <div class="metric-value">{secrets_count}</div>
-                    <div class="metric-details">Potential credential leaks</div>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Files with Secrets
-            files_count = summary.get("files_with_secrets", 0)
-            files_color_class = get_metric_color_class(files_count, {"critical": 3, "warning": 1})
-            with cols[1]:
-                st.markdown(f"""
-                <div class="metric-container {files_color_class}">
-                    <div class="metric-title">Files with Secrets</div>
-                    <div class="metric-value">{files_count}</div>
-                    <div class="metric-details">Files containing credentials</div>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Timestamp
-            timestamp = secrets_data.get("timestamp", 0)
-            formatted_time = format_timestamp(timestamp)
-            with cols[2]:
-                st.markdown(f"""
-                <div class="metric-container">
-                    <div class="metric-title">Detection Completed</div>
-                    <div class="metric-value" style="font-size: 1.5rem;">{formatted_time}</div>
-                    <div class="metric-details">Secret detection results</div>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Secret Types Distribution
-            st.markdown('<div class="section-container">', unsafe_allow_html=True)
-            st.markdown('<div class="section-title">Secret Types Distribution</div>', unsafe_allow_html=True)
-            
-            type_dist = summary.get("type_distribution", {})
-            
-            if type_dist:
-                # Convert to DataFrame
-                type_data = []
-                for secret_type, count in type_dist.items():
-                    type_data.append({
-                        "Type": secret_type.replace("_", " ").title(),
-                        "Count": count
-                    })
-                
-                df_types = pd.DataFrame(type_data)
-                
-                # Create bar chart
-                fig = px.bar(
-                    df_types,
-                    x="Type",
-                    y="Count",
-                    text="Count",
-                    color_discrete_sequence=["#00e5ff"]
-                )
-                
-                # Update layout
-                fig.update_layout(
-                    xaxis=dict(title=""),
-                    yaxis=dict(title="Number of Secrets"),
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    font=dict(color="white"),
-                    margin=dict(l=20, r=20, t=30, b=20),
-                    height=300
-                )
-                
-                # Update traces
-                fig.update_traces(
-                    textposition="outside"
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No secret type distribution data available.")
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Secrets Found Table
-            st.markdown('<div class="section-container">', unsafe_allow_html=True)
-            st.markdown('<div class="section-title">Detected Secrets</div>', unsafe_allow_html=True)
-            
-            if secrets_found:
-                # Create DataFrame
-                secret_data = []
-                for secret in secrets_found:
-                    secret_data.append({
-                        "Type": secret.get("type", "Unknown").replace("_", " ").title(),
-                        "File": os.path.basename(secret.get("file_path", "Unknown")),
-                        "Line": secret.get("line_number", "N/A"),
-                        "Masked Value": secret.get("masked_value", "****"),
-                        "Severity": secret.get("severity", "Unknown").capitalize()
-                    })
-                
-                df_secrets = pd.DataFrame(secret_data)
-                
-                # Function to color severity
-                def color_severity_secret(val):
-                    if val == "Critical":
-                        return f'<span class="vuln-badge vuln-critical">{val}</span>'
-                    elif val == "High":
-                        return f'<span class="vuln-badge vuln-high">{val}</span>'
-                    elif val == "Medium":
-                        return f'<span class="vuln-badge vuln-medium">{val}</span>'
-                    elif val == "Low":
-                        return f'<span class="vuln-badge vuln-low">{val}</span>'
-                    else:
-                        return val
-                
-                # Apply styling
-                df_styled = df_secrets.style.format({
-                    "Severity": lambda x: color_severity_secret(x)
-                })
-                
-                st.write(df_styled.to_html(escape=False), unsafe_allow_html=True)
-                
-                # Secret details
-                st.markdown('<div class="section-title" style="margin-top: 20px;">Secret Details</div>', unsafe_allow_html=True)
-                
-                selected_idx = st.selectbox(
-                    "Select a secret to view details",
-                    range(len(secrets_found)),
-                    format_func=lambda i: f"{secrets_found[i].get('type', 'Unknown').replace('_', ' ').title()} in {os.path.basename(secrets_found[i].get('file_path', 'Unknown'))}"
-                )
-                
-                selected_secret = secrets_found[selected_idx]
-                
-                # Display code snippet with the secret
-                st.markdown(f"""
-                <div style="margin-bottom: 15px;">
-                    <span style="font-weight: 600;">File:</span> {selected_secret.get("file_path", "Unknown")}
-                </div>
-                <div style="margin-bottom: 15px;">
-                    <span style="font-weight: 600;">Line:</span> {selected_secret.get("line_number", "N/A")}
-                </div>
-                <div style="margin-bottom: 15px;">
-                    <span style="font-weight: 600;">Secret Type:</span> {selected_secret.get("type", "Unknown").replace("_", " ").title()}
-                </div>
-                <div style="margin-bottom: 15px;">
-                    <span style="font-weight: 600;">Severity:</span> {get_severity_badge(selected_secret.get("severity", "high"))}
-                </div>
-                <div style="margin-bottom: 15px;">
-                    <span style="font-weight: 600;">Line Content:</span>
-                    <div class="code-block">
-                    {selected_secret.get("line_content", "").replace("<", "&lt;").replace(">", "&gt;")}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Display recommendations
-                st.markdown("""
-                <div class="recommendation-item recommendation-high">
-                    <div class="recommendation-title">Security Recommendation</div>
-                    <div class="recommendation-description">
-                    Remove hardcoded secrets from source code. Use environment variables, secret management services, or configuration files that are not checked into source control.
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-            else:
-                st.success("No secrets found in the code.")
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-        else:
-            st.info("Run a secret detection scan to view results.")
-    
-    with tabs[4]:  # Recommendations tab
-        st.session_state.active_tab = "recommendations"
+        # Apply conditional formatting to the table
+        styled_df = dep_df.style.apply(lambda x: [
+            f"background-color: {'#ffebee' if val == 'Critical' else '#fff8e1' if val == 'High' else '#e3f2fd' if val == 'Medium' else 'white'}"
+            if col == "Highest Severity" and val != "None" else ""
+            for col, val in zip(dep_df.columns, x)
+        ], axis=1)
         
-        if st.session_state.show_scan_details and st.session_state.current_scan_id:
-            scan_data = fetch_scan_details(st.session_state.current_scan_id)
+        # Display the table
+        st.dataframe(styled_df)
+        
+        # Show details for vulnerable dependencies
+        vulnerable_deps = [d for d in dependencies if d["vulnerabilities"]]
+        
+        if vulnerable_deps:
+            st.subheader("Vulnerable Dependencies")
             
-            if scan_data:
-                # Extract recommendations
-                vulnerabilities = scan_data.get("vulnerabilities", [])
+            for dep in vulnerable_deps:
+                name = dep["name"]
+                version = dep["version"]
+                vulns = dep["vulnerabilities"]
                 
-                if vulnerabilities:
-                    # Group vulnerabilities by type to generate recommendations
-                    vuln_types = {}
-                    for vuln in vulnerabilities:
-                        vuln_type = vuln.get("name", "Unknown")
-                        severity = vuln.get("severity", "low")
-                        recommendation = vuln.get("recommendation", "")
-                        
-                        if vuln_type not in vuln_types:
-                            vuln_types[vuln_type] = {
-                                "count": 0,
-                                "severity": severity,
-                                "recommendation": recommendation
-                            }
-                        
-                        vuln_types[vuln_type]["count"] += 1
-                        
-                        # Upgrade severity if higher
-                        sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
-                        if sev_rank.get(severity, 0) > sev_rank.get(vuln_types[vuln_type]["severity"], 0):
-                            vuln_types[vuln_type]["severity"] = severity
+                st.markdown(f"### {name} ({version})")
+                
+                for vuln in vulns:
+                    vuln_id = vuln["id"]
+                    severity = vuln["severity"]
+                    description = vuln["description"]
                     
-                    # Sort by severity and count
-                    sorted_types = sorted(
-                        vuln_types.items(),
-                        key=lambda x: (
-                            {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}.get(x[1]["severity"], 0),
-                            x[1]["count"]
-                        ),
-                        reverse=True
+                    st.markdown(
+                        f"""
+                        <div style="border-left: 4px solid {'#ff4b4b' if severity == 'critical' else '#ffa500' if severity == 'high' else '#ffdf00' if severity == 'medium' else '#02b2e7'}; padding: 10px; margin-bottom: 10px; background-color: #fafafa;">
+                            <strong>{vuln_id}</strong> ({severity.upper()})
+                            <div style="margin-top: 5px;">{description}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
                     )
-                    
-                    # Display recommendations
-                    st.markdown('<div class="section-container">', unsafe_allow_html=True)
-                    st.markdown('<div class="section-title">Security Recommendations</div>', unsafe_allow_html=True)
-                    
-                    for vuln_type, data in sorted_types:
-                        severity = data["severity"]
-                        count = data["count"]
-                        recommendation = data["recommendation"]
-                        
-                        st.markdown(f"""
-                        <div class="recommendation-item recommendation-{severity}">
-                            <div class="recommendation-title">
-                                {get_severity_badge(severity)} {vuln_type} ({count} {pluralize("instance", count)})
-                            </div>
-                            <div class="recommendation-description">
-                                {recommendation}
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    # General security recommendations
-                    st.markdown('<div class="section-container">', unsafe_allow_html=True)
-                    st.markdown('<div class="section-title">General Security Best Practices</div>', unsafe_allow_html=True)
-                    
-                    general_recs = [
-                        {
-                            "title": "Implement a Secure Development Lifecycle (SDLC)",
-                            "description": "Establish a formal secure development lifecycle process that includes security training, threat modeling, and security testing at each phase of development.",
-                            "severity": "medium"
-                        },
-                        {
-                            "title": "Conduct Regular Security Training",
-                            "description": "Provide regular security training for all developers to create awareness of common vulnerabilities and secure coding practices.",
-                            "severity": "medium"
-                        },
-                        {
-                            "title": "Use Static Code Analysis Tools",
-                            "description": "Integrate static code analysis tools into your CI/CD pipeline to automatically detect security issues early in the development process.",
-                            "severity": "high"
-                        },
-                        {
-                            "title": "Implement Security Headers",
-                            "description": "Add security headers to your web applications to prevent common attacks like XSS, clickjacking, and MIME sniffing.",
-                            "severity": "medium"
-                        },
-                        {
-                            "title": "Keep Dependencies Updated",
-                            "description": "Regularly update your dependencies to patch known vulnerabilities. Use tools like npm audit or Dependabot to automate this process.",
-                            "severity": "high"
-                        }
-                    ]
-                    
-                    for rec in general_recs:
-                        st.markdown(f"""
-                        <div class="recommendation-item recommendation-{rec['severity']}">
-                            <div class="recommendation-title">
-                                {rec['title']}
-                            </div>
-                            <div class="recommendation-description">
-                                {rec['description']}
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    
-                    st.markdown('</div>', unsafe_allow_html=True)
-                else:
-                    st.success("No vulnerabilities found. Your code is looking secure!")
-            else:
-                st.warning("Failed to load scan details. The scan may still be in progress.")
+                
+                # Recommended action
+                st.markdown(f"**Recommended Action:** Update {name} to the latest version")
+                st.markdown("---")
         else:
-            st.info("Select a scan from the list or run a new security scan to view recommendations.")
+            st.success("No vulnerabilities found in dependencies.")
+    
+    with tab3:  # Compliance tab
+        st.subheader("Security Compliance Checks")
+        
+        # Count results by status
+        pass_count = sum(1 for check in compliance_checks if check["status"] == "pass")
+        fail_count = sum(1 for check in compliance_checks if check["status"] == "fail")
+        warning_count = sum(1 for check in compliance_checks if check["status"] == "warning")
+        total_count = len(compliance_checks)
+        
+        # Calculate compliance percentage
+        compliance_percentage = int((pass_count / total_count) * 100)
+        
+        # Display compliance score
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            # Create gauge chart for compliance score
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=compliance_percentage,
+                domain={"x": [0, 1], "y": [0, 1]},
+                title={"text": "Compliance Score"},
+                gauge={
+                    "axis": {"range": [0, 100]},
+                    "bar": {"color": "green" if compliance_percentage >= 80 else "orange" if compliance_percentage >= 60 else "red"},
+                    "steps": [
+                        {"range": [0, 50], "color": "lightgray"},
+                        {"range": [50, 75], "color": "lightgray"},
+                        {"range": [75, 100], "color": "lightgray"}
+                    ],
+                    "threshold": {
+                        "line": {"color": "red", "width": 4},
+                        "thickness": 0.75,
+                        "value": 90
+                    }
+                }
+            ))
+            
+            fig.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20))
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            # Create pie chart for compliance status distribution
+            status_data = {
+                "Status": ["Pass", "Warning", "Fail"],
+                "Count": [pass_count, warning_count, fail_count]
+            }
+            
+            status_df = pd.DataFrame(status_data)
+            
+            fig = px.pie(
+                status_df,
+                values="Count",
+                names="Status",
+                color="Status",
+                color_discrete_map={
+                    "Pass": "#4CAF50",
+                    "Warning": "#FFC107",
+                    "Fail": "#F44336"
+                },
+                hole=0.3
+            )
+            
+            fig.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20))
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Display compliance checks
+        st.subheader("Compliance Check Results")
+        
+        for check in compliance_checks:
+            check_id = check["id"]
+            name = check["name"]
+            status = check["status"]
+            
+            # Determine status color and icon
+            if status == "pass":
+                status_color = "#4CAF50"
+                status_icon = "✓"
+            elif status == "warning":
+                status_color = "#FFC107"
+                status_icon = "⚠"
+            else:  # fail
+                status_color = "#F44336"
+                status_icon = "✗"
+            
+            # Display check with formatted status
+            st.markdown(
+                f"""
+                <div style="display: flex; justify-content: space-between; padding: 10px; margin-bottom: 5px; background-color: #f9f9f9; border-radius: 5px;">
+                    <div>
+                        <strong>{check_id}:</strong> {name}
+                    </div>
+                    <div style="background-color: {status_color}; color: white; padding: 2px 10px; border-radius: 3px;">
+                        {status_icon} {status.upper()}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+    
+    with tab4:  # Recommendations tab
+        st.subheader("Security Recommendations")
+        
+        # Generate recommendations based on scan results
+        recommendations = []
+        
+        # Add recommendation for critical vulnerabilities
+        if summary["vulnerabilities"]["critical"] > 0:
+            recommendations.append({
+                "priority": "critical",
+                "title": "Fix Critical Vulnerabilities",
+                "description": f"Address the {summary['vulnerabilities']['critical']} critical vulnerabilities immediately to prevent potential security breaches."
+            })
+        
+        # Add recommendation for high vulnerabilities
+        if summary["vulnerabilities"]["high"] > 0:
+            recommendations.append({
+                "priority": "high",
+                "title": "Address High Severity Issues",
+                "description": f"Resolve the {summary['vulnerabilities']['high']} high severity vulnerabilities to significantly improve application security."
+            })
+        
+        # Add recommendation for vulnerable dependencies
+        vulnerable_deps = [d for d in dependencies if d["vulnerabilities"]]
+        if vulnerable_deps:
+            recommendations.append({
+                "priority": "high",
+                "title": "Update Vulnerable Dependencies",
+                "description": f"Update the {len(vulnerable_deps)} dependencies with known vulnerabilities to their latest secure versions."
+            })
+        
+        # Add recommendation for failed compliance checks
+        failed_checks = [c for c in compliance_checks if c["status"] == "fail"]
+        if failed_checks:
+            recommendations.append({
+                "priority": "medium",
+                "title": "Resolve Compliance Issues",
+                "description": f"Address the {len(failed_checks)} failed compliance checks to improve overall security posture."
+            })
+        
+        # Add general recommendations
+        recommendations.extend([
+            {
+                "priority": "medium",
+                "title": "Implement Input Validation",
+                "description": "Add comprehensive input validation to all user-facing interfaces to prevent injection attacks."
+            },
+            {
+                "priority": "medium",
+                "title": "Enhance Error Handling",
+                "description": "Implement consistent error handling that doesn't expose sensitive information."
+            },
+            {
+                "priority": "medium",
+                "title": "Implement Proper Authentication",
+                "description": "Ensure strong authentication mechanisms are in place with proper password policies."
+            },
+            {
+                "priority": "low",
+                "title": "Enable Security Headers",
+                "description": "Add security headers to HTTP responses to enhance browser-side protection."
+            },
+            {
+                "priority": "low",
+                "title": "Regular Security Scans",
+                "description": "Implement regular automated security scans in your CI/CD pipeline."
+            }
+        ])
+        
+        # Sort recommendations by priority
+        priority_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        recommendations.sort(key=lambda x: priority_order[x["priority"]])
+        
+        # Display recommendations
+        for i, rec in enumerate(recommendations):
+            priority = rec["priority"]
+            title = rec["title"]
+            description = rec["description"]
+            
+            # Determine priority color
+            if priority == "critical":
+                priority_color = "#ff4b4b"
+            elif priority == "high":
+                priority_color = "#ffa500"
+            elif priority == "medium":
+                priority_color = "#ffdf00"
+            else:  # low
+                priority_color = "#02b2e7"
+            
+            # Display recommendation
+            st.markdown(
+                f"""
+                <div style="border-left: 4px solid {priority_color}; padding: 15px; margin-bottom: 15px; background-color: #f9f9f9; border-radius: 5px;">
+                    <h3 style="margin-top: 0;">{i+1}. {title}</h3>
+                    <div style="background-color: {priority_color}; color: white; display: inline-block; padding: 2px 10px; border-radius: 3px; margin-bottom: 10px; text-transform: uppercase; font-size: 0.8em;">{priority}</div>
+                    <p style="margin-bottom: 0;">{description}</p>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+else:
+    # Welcome message
+    st.info("""
+    ### Security Dashboard
+    
+    This dashboard provides comprehensive security analysis for your projects, including:
+    - Vulnerability detection and assessment
+    - Dependency security analysis
+    - Compliance checking against security standards
+    - Actionable security recommendations
+    
+    To get started:
+    1. Select a project from the sidebar
+    2. Choose a scan type
+    3. Click "Start Security Scan" to analyze your project
+    
+    The security scan will identify vulnerabilities, assess dependencies,
+    check compliance, and provide recommendations to improve your security posture.
+    """)
+    
+    # Example security metrics visualization
+    st.subheader("Example Security Insights")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Security Score", "85/100", "+12")
+    
+    with col2:
+        st.metric("Critical Issues", "0", "0")
+    
+    with col3:
+        st.metric("High Issues", "2", "-5")
+    
+    with col4:
+        st.metric("Compliance", "92%", "+8%")
+    
+    # Sample visualization
+    st.image("https://miro.medium.com/max/1400/1*RIrV8tSF-L-Gnh9G1qUjYQ.png", 
+             caption="Example security dashboard visualization", 
+             use_column_width=True)
