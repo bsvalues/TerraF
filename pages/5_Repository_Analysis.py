@@ -1,3105 +1,3173 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import time
-import re
+import plotly.graph_objects as go
+import plotly.express as px
+import matplotlib.pyplot as plt
+import networkx as nx
 import json
 import os
-import base64
+import re
+import time
 import random
-from model_interface import ModelInterface
-from io import StringIO
+from datetime import datetime
+import uuid
+import zipfile
+import io
+from collections import defaultdict
 
 # Set page configuration
-st.set_page_config(
-    page_title="Repository Analysis",
-    page_icon="📁",
-    layout="wide"
-)
+st.set_page_config(page_title="Repository Analysis", page_icon="📂", layout="wide")
 
 # Define custom CSS
 st.markdown("""
 <style>
-    .file-card {
-        border-radius: 5px;
-        padding: 15px;
-        margin-bottom: 15px;
-        border: 1px solid #ddd;
-        background-color: #f8f9fa;
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
     }
-    .file-name {
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        border-radius: 4px 4px 0px 0px;
+        padding: 10px 16px;
+        background-color: #111;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: #0E53A7 !important;
+    }
+    
+    /* Repository card styling */
+    .repo-card {
+        background-color: #1E1E1E;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+        border: 1px solid #333;
+    }
+    
+    .repo-title {
+        color: #4C9AFF;
+        font-size: 18px;
         font-weight: bold;
-        color: #333;
-        margin-bottom: 5px;
-    }
-    .file-path {
-        font-size: 12px;
-        color: #666;
         margin-bottom: 10px;
     }
-    .file-metrics {
-        display: flex;
-        flex-wrap: wrap;
-        margin-bottom: 10px;
-    }
-    .file-metric {
-        padding: 3px 10px;
-        margin-right: 10px;
-        margin-bottom: 5px;
-        border-radius: 12px;
-        font-size: 12px;
-        background-color: #e0e0e0;
-    }
-    .file-description {
-        margin-top: 10px;
+    
+    .repo-desc {
+        color: #CCC;
         font-size: 14px;
-    }
-    .insight-card {
-        border-radius: 5px;
-        padding: 15px;
         margin-bottom: 15px;
-        border-left: 4px solid #2196f3;
-        background-color: #e3f2fd;
     }
-    .insight-title {
-        font-weight: bold;
-        color: #333;
-        margin-bottom: 5px;
-    }
-    .quality-score {
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
+    
+    .repo-meta {
         display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-weight: bold;
-        margin-right: 10px;
+        justify-content: space-between;
+        color: #999;
+        font-size: 12px;
     }
-    .quality-score-container {
-        display: flex;
-        align-items: center;
-        margin-bottom: 10px;
-    }
-    .quality-label {
-        font-size: 16px;
-        font-weight: bold;
-    }
-    .repo-metric-card {
-        border-radius: 5px;
+    
+    /* Metrics styling */
+    .metric-container {
+        background-color: #1E1E1E;
+        border-radius: 10px;
         padding: 15px;
         text-align: center;
-        background-color: #f0f0f0;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         height: 100%;
     }
-    .repo-metric-value {
-        font-size: 24px;
+    
+    .metric-value {
+        font-size: 28px;
         font-weight: bold;
-        color: #333;
         margin: 10px 0;
     }
-    .repo-metric-label {
+    
+    .metric-label {
         font-size: 14px;
-        color: #666;
+        color: #AAA;
     }
-    .issue-container {
-        margin-top: 20px;
+    
+    .good {
+        color: #4CAF50;
     }
-    .issue-card {
-        padding: 10px;
-        margin-bottom: 10px;
-        border-radius: 5px;
-        background-color: #fff8e1;
-        border-left: 4px solid #ffc107;
+    
+    .average {
+        color: #FFC107;
     }
-    .issue-title {
+    
+    .poor {
+        color: #F44336;
+    }
+    
+    /* Summary box */
+    .summary-box {
+        background-color: #1E1E1E;
+        border-radius: 10px;
+        padding: 15px;
+        border-left: 4px solid #4C9AFF;
+        margin-bottom: 20px;
+    }
+    
+    .summary-title {
+        font-size: 16px;
         font-weight: bold;
-        color: #333;
+        margin-bottom: 10px;
+        color: #4C9AFF;
     }
-    .code-snippet {
-        padding: 10px;
-        font-family: monospace;
-        background-color: #f5f5f5;
+    
+    /* Issue/recommendation box */
+    .issue-box {
+        background-color: #1E1E1E;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 10px;
+        border-left: 4px solid #F44336;
+    }
+    
+    .strength-box {
+        background-color: #1E1E1E;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 10px;
+        border-left: 4px solid #4CAF50;
+    }
+    
+    .weakness-box {
+        background-color: #1E1E1E;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 10px;
+        border-left: 4px solid #FFC107;
+    }
+    
+    .recommendation-box {
+        background-color: #1E1E1E;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 10px;
+        border-left: 4px solid #4C9AFF;
+    }
+    
+    .issue-title {
+        font-size: 16px;
+        font-weight: bold;
+        margin-bottom: 5px;
+    }
+    
+    .critical {
+        color: #F44336;
+    }
+    
+    .high {
+        color: #FF9800;
+    }
+    
+    .medium {
+        color: #FFC107;
+    }
+    
+    .low {
+        color: #4CAF50;
+    }
+    
+    /* Badges */
+    .badge {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: bold;
+        margin-right: 5px;
+        margin-bottom: 5px;
+    }
+    
+    .badge-critical {
+        background-color: rgba(244, 67, 54, 0.2);
+        color: #F44336;
+        border: 1px solid rgba(244, 67, 54, 0.4);
+    }
+    
+    .badge-high {
+        background-color: rgba(255, 152, 0, 0.2);
+        color: #FF9800;
+        border: 1px solid rgba(255, 152, 0, 0.4);
+    }
+    
+    .badge-medium {
+        background-color: rgba(255, 193, 7, 0.2);
+        color: #FFC107;
+        border: 1px solid rgba(255, 193, 7, 0.4);
+    }
+    
+    .badge-low {
+        background-color: rgba(76, 175, 80, 0.2);
+        color: #4CAF50;
+        border: 1px solid rgba(76, 175, 80, 0.4);
+    }
+    
+    .badge-info {
+        background-color: rgba(76, 154, 255, 0.2);
+        color: #4C9AFF;
+        border: 1px solid rgba(76, 154, 255, 0.4);
+    }
+    
+    /* File browser */
+    .file-item {
+        padding: 8px 15px;
         border-radius: 5px;
-        overflow-x: auto;
+        cursor: pointer;
+        transition: background-color 0.2s;
+        margin-bottom: 5px;
+    }
+    
+    .file-item:hover {
+        background-color: #333;
+    }
+    
+    .file-item.selected {
+        background-color: #0E53A7;
+    }
+    
+    .file-name {
+        font-size: 14px;
+        color: #CCC;
+    }
+    
+    .directory {
+        color: #4C9AFF;
+        font-weight: bold;
+    }
+    
+    .file-meta {
+        font-size: 12px;
+        color: #999;
+    }
+    
+    /* Divider */
+    .divider {
+        height: 1px;
+        background-color: #333;
+        margin: 20px 0;
+    }
+    
+    /* Progress bar */
+    .progress-container {
+        width: 100%;
+        background-color: #222;
+        border-radius: 5px;
         margin: 10px 0;
+        height: 8px;
     }
-    .low-score {
-        background-color: #f44336;
+    
+    .progress-bar {
+        height: 100%;
+        border-radius: 5px;
     }
-    .medium-score {
-        background-color: #ff9800;
+    
+    .progress-good {
+        background-color: #4CAF50;
     }
-    .high-score {
-        background-color: #4caf50;
+    
+    .progress-average {
+        background-color: #FFC107;
+    }
+    
+    .progress-poor {
+        background-color: #F44336;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state
-if 'model_interface' not in st.session_state:
-    st.session_state.model_interface = ModelInterface()
-    
-if 'repo_analysis' not in st.session_state:
-    st.session_state.repo_analysis = None
-    
-if 'files_analysis' not in st.session_state:
-    st.session_state.files_analysis = {}
-    
-if 'current_file' not in st.session_state:
-    st.session_state.current_file = None
-    
-if 'file_contents' not in st.session_state:
-    st.session_state.file_contents = {}
-
-# Helper functions
-def get_score_class(score):
-    """Get the CSS class for a score"""
-    if score >= 8:
-        return "high-score"
-    elif score >= 5:
-        return "medium-score"
-    else:
-        return "low-score"
-
-def parse_repository_contents(file_contents):
-    """Parse the file contents to extract repository information"""
-    files = []
-    for file_path, content in file_contents.items():
-        # Skip directories
-        if not content:
-            continue
-        
-        file_info = {
-            "path": file_path,
-            "name": os.path.basename(file_path),
-            "extension": os.path.splitext(file_path)[1].lower(),
-            "content": content,
-            "size": len(content)
+# Hardcoded sample repositories
+sample_repositories = {
+    "nodejs-express-api": {
+        "name": "Node.js Express API",
+        "description": "A RESTful API built with Express.js and Node.js",
+        "language": "JavaScript",
+        "files": 12,
+        "loc": 1450,
+        "structure": {
+            "src": {
+                "controllers": {
+                    "userController.js": {
+                        "language": "JavaScript",
+                        "loc": 120,
+                        "complexity": 8
+                    },
+                    "authController.js": {
+                        "language": "JavaScript",
+                        "loc": 150,
+                        "complexity": 9
+                    },
+                    "productController.js": {
+                        "language": "JavaScript",
+                        "loc": 185,
+                        "complexity": 10
+                    }
+                },
+                "models": {
+                    "userModel.js": {
+                        "language": "JavaScript",
+                        "loc": 85,
+                        "complexity": 5
+                    },
+                    "productModel.js": {
+                        "language": "JavaScript",
+                        "loc": 95,
+                        "complexity": 6
+                    }
+                },
+                "middleware": {
+                    "authMiddleware.js": {
+                        "language": "JavaScript",
+                        "loc": 75,
+                        "complexity": 7
+                    },
+                    "errorHandler.js": {
+                        "language": "JavaScript",
+                        "loc": 60,
+                        "complexity": 6
+                    }
+                },
+                "routes": {
+                    "userRoutes.js": {
+                        "language": "JavaScript",
+                        "loc": 45,
+                        "complexity": 4
+                    },
+                    "authRoutes.js": {
+                        "language": "JavaScript",
+                        "loc": 35,
+                        "complexity": 3
+                    },
+                    "productRoutes.js": {
+                        "language": "JavaScript",
+                        "loc": 50,
+                        "complexity": 4
+                    }
+                },
+                "utils": {
+                    "logger.js": {
+                        "language": "JavaScript",
+                        "loc": 40,
+                        "complexity": 3
+                    },
+                    "validators.js": {
+                        "language": "JavaScript",
+                        "loc": 65,
+                        "complexity": 5
+                    }
+                },
+                "app.js": {
+                    "language": "JavaScript",
+                    "loc": 95,
+                    "complexity": 6
+                },
+                "server.js": {
+                    "language": "JavaScript",
+                    "loc": 45,
+                    "complexity": 4
+                }
+            },
+            "tests": {
+                "unit": {
+                    "userController.test.js": {
+                        "language": "JavaScript",
+                        "loc": 85,
+                        "complexity": 5
+                    },
+                    "authController.test.js": {
+                        "language": "JavaScript",
+                        "loc": 95,
+                        "complexity": 6
+                    }
+                },
+                "integration": {
+                    "auth.test.js": {
+                        "language": "JavaScript",
+                        "loc": 110,
+                        "complexity": 7
+                    },
+                    "products.test.js": {
+                        "language": "JavaScript",
+                        "loc": 130,
+                        "complexity": 8
+                    }
+                }
+            },
+            "package.json": {
+                "language": "JSON",
+                "loc": 35,
+                "complexity": 1
+            },
+            "README.md": {
+                "language": "Markdown",
+                "loc": 85,
+                "complexity": 1
+            }
         }
-        
-        # Get language based on file extension
-        ext = file_info["extension"]
-        if ext in ['.py']:
-            file_info["language"] = "Python"
-        elif ext in ['.js']:
-            file_info["language"] = "JavaScript"
-        elif ext in ['.ts']:
-            file_info["language"] = "TypeScript"
-        elif ext in ['.java']:
-            file_info["language"] = "Java"
-        elif ext in ['.go']:
-            file_info["language"] = "Go"
-        elif ext in ['.cs']:
-            file_info["language"] = "C#"
-        elif ext in ['.cpp', '.cc', '.c', '.h']:
-            file_info["language"] = "C/C++"
-        elif ext in ['.rb']:
-            file_info["language"] = "Ruby"
-        elif ext in ['.php']:
-            file_info["language"] = "PHP"
-        elif ext in ['.swift']:
-            file_info["language"] = "Swift"
-        elif ext in ['.rs']:
-            file_info["language"] = "Rust"
-        elif ext in ['.sql']:
-            file_info["language"] = "SQL"
-        elif ext in ['.html', '.htm']:
-            file_info["language"] = "HTML"
-        elif ext in ['.css', '.scss', '.sass']:
-            file_info["language"] = "CSS"
-        elif ext in ['.md', '.markdown']:
-            file_info["language"] = "Markdown"
-        elif ext in ['.json']:
-            file_info["language"] = "JSON"
-        elif ext in ['.xml']:
-            file_info["language"] = "XML"
-        elif ext in ['.yaml', '.yml']:
-            file_info["language"] = "YAML"
-        else:
-            file_info["language"] = "Other"
-        
-        files.append(file_info)
-    
-    return files
-
-def analyze_repository(file_contents):
-    """Analyze repository structure and quality"""
-    if not st.session_state.model_interface.check_openai_status() and not st.session_state.model_interface.check_anthropic_status():
-        st.error("No AI services available. Please configure API keys.")
-        return None
-    
-    # Parse repository
-    files = parse_repository_contents(file_contents)
-    
-    # Calculate repository metrics
-    languages = {}
-    file_count = len(files)
-    total_size = 0
-    
-    for file in files:
-        total_size += file["size"]
-        if file["language"] in languages:
-            languages[file["language"]] += 1
-        else:
-            languages[file["language"]] = 1
-    
-    # Create a summary of the repository structure
-    file_paths = "\n".join([f"{f['path']} ({f['language']})" for f in files[:20]])
-    if len(files) > 20:
-        file_paths += f"\n... and {len(files) - 20} more files"
-    
-    lang_summary = "\n".join([f"{lang}: {count} files" for lang, count in languages.items()])
-    
-    # Create prompt for repository analysis
-    prompt = f"""
-    Analyze the following repository structure:
-    
-    Number of files: {file_count}
-    Total size: {total_size} bytes
-    
-    Language distribution:
-    {lang_summary}
-    
-    Files (top 20):
-    {file_paths}
-    
-    Please provide a comprehensive analysis of this repository including:
-    1. Overall repository quality assessment
-    2. Repository architecture evaluation
-    3. Code organization insights
-    4. Potential issues or improvements
-    5. Best practices observed
-    
-    Format your response as a JSON object with the following structure:
-    {{
-        "quality_score": number from 1-10,
-        "overview": "Overall description of the repository",
-        "architecture": {{
-            "score": number from 1-10,
-            "evaluation": "Evaluation of the architecture",
-            "patterns": ["pattern1", "pattern2"]
-        }},
-        "organization": {{
-            "score": number from 1-10,
-            "evaluation": "Evaluation of code organization",
-            "strengths": ["strength1", "strength2"],
-            "weaknesses": ["weakness1", "weakness2"]
-        }},
-        "issues": [
-            {{
-                "title": "Issue title",
-                "description": "Issue description",
-                "severity": "high, medium, or low"
-            }}
-        ],
-        "recommendations": [
-            "recommendation1",
-            "recommendation2"
-        ]
-    }}
-    """
-    
-    try:
-        # Use available model
-        provider = "openai" if st.session_state.model_interface.check_openai_status() else "anthropic"
-        system_message = "You are an expert code quality analyst specializing in repository structure assessment."
-        
-        response = st.session_state.model_interface.generate_text(
-            prompt=prompt,
-            system_message=system_message,
-            provider=provider
-        )
-        
-        # Extract JSON from the response
-        json_match = re.search(r"```json\n(.*?)\n```", response, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            # Try to find JSON without the markdown code block
-            json_match = re.search(r"({.*})", response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                json_str = response
-        
-        # Remove any non-JSON text before or after
-        cleaned_json = re.sub(r"^[^{]*", "", json_str)
-        cleaned_json = re.sub(r"[^}]*$", "", cleaned_json)
-        
-        # Parse JSON
-        analysis = json.loads(cleaned_json)
-        
-        # Add repository stats
-        analysis["stats"] = {
-            "file_count": file_count,
-            "total_size": total_size,
-            "languages": languages
+    },
+    "django-web-app": {
+        "name": "Django Web Application",
+        "description": "A web application built with Django framework",
+        "language": "Python",
+        "files": 18,
+        "loc": 2250,
+        "structure": {
+            "myproject": {
+                "settings.py": {
+                    "language": "Python",
+                    "loc": 120,
+                    "complexity": 5
+                },
+                "urls.py": {
+                    "language": "Python",
+                    "loc": 45,
+                    "complexity": 3
+                },
+                "wsgi.py": {
+                    "language": "Python",
+                    "loc": 25,
+                    "complexity": 2
+                },
+                "asgi.py": {
+                    "language": "Python",
+                    "loc": 25,
+                    "complexity": 2
+                }
+            },
+            "apps": {
+                "users": {
+                    "models.py": {
+                        "language": "Python",
+                        "loc": 95,
+                        "complexity": 6
+                    },
+                    "views.py": {
+                        "language": "Python",
+                        "loc": 185,
+                        "complexity": 10
+                    },
+                    "forms.py": {
+                        "language": "Python",
+                        "loc": 75,
+                        "complexity": 5
+                    },
+                    "urls.py": {
+                        "language": "Python",
+                        "loc": 35,
+                        "complexity": 3
+                    },
+                    "admin.py": {
+                        "language": "Python",
+                        "loc": 45,
+                        "complexity": 4
+                    },
+                    "tests.py": {
+                        "language": "Python",
+                        "loc": 110,
+                        "complexity": 7
+                    }
+                },
+                "dashboard": {
+                    "models.py": {
+                        "language": "Python",
+                        "loc": 85,
+                        "complexity": 6
+                    },
+                    "views.py": {
+                        "language": "Python",
+                        "loc": 175,
+                        "complexity": 9
+                    },
+                    "forms.py": {
+                        "language": "Python",
+                        "loc": 65,
+                        "complexity": 5
+                    },
+                    "urls.py": {
+                        "language": "Python",
+                        "loc": 30,
+                        "complexity": 3
+                    },
+                    "admin.py": {
+                        "language": "Python",
+                        "loc": 40,
+                        "complexity": 4
+                    },
+                    "tests.py": {
+                        "language": "Python",
+                        "loc": 95,
+                        "complexity": 6
+                    }
+                }
+            },
+            "templates": {
+                "base.html": {
+                    "language": "HTML",
+                    "loc": 85,
+                    "complexity": 4
+                },
+                "users": {
+                    "login.html": {
+                        "language": "HTML",
+                        "loc": 65,
+                        "complexity": 3
+                    },
+                    "profile.html": {
+                        "language": "HTML",
+                        "loc": 75,
+                        "complexity": 4
+                    },
+                    "register.html": {
+                        "language": "HTML",
+                        "loc": 70,
+                        "complexity": 3
+                    }
+                },
+                "dashboard": {
+                    "index.html": {
+                        "language": "HTML",
+                        "loc": 95,
+                        "complexity": 5
+                    },
+                    "details.html": {
+                        "language": "HTML",
+                        "loc": 85,
+                        "complexity": 4
+                    }
+                }
+            },
+            "static": {
+                "css": {
+                    "main.css": {
+                        "language": "CSS",
+                        "loc": 150,
+                        "complexity": 5
+                    }
+                },
+                "js": {
+                    "main.js": {
+                        "language": "JavaScript",
+                        "loc": 120,
+                        "complexity": 6
+                    },
+                    "dashboard.js": {
+                        "language": "JavaScript",
+                        "loc": 135,
+                        "complexity": 7
+                    }
+                }
+            },
+            "requirements.txt": {
+                "language": "Text",
+                "loc": 25,
+                "complexity": 1
+            },
+            "manage.py": {
+                "language": "Python",
+                "loc": 20,
+                "complexity": 2
+            },
+            "README.md": {
+                "language": "Markdown",
+                "loc": 95,
+                "complexity": 1
+            }
         }
-        
-        return analysis
-    except Exception as e:
-        st.error(f"Error analyzing repository: {str(e)}")
-        return None
-
-def analyze_file(file_info):
-    """Analyze a single file for quality and insights"""
-    if not st.session_state.model_interface.check_openai_status() and not st.session_state.model_interface.check_anthropic_status():
-        st.error("No AI services available. Please configure API keys.")
-        return None
-    
-    # Extract file details
-    file_path = file_info["path"]
-    language = file_info["language"]
-    content = file_info["content"]
-    
-    # Create prompt for file analysis
-    prompt = f"""
-    Analyze the following {language} file:
-    
-    Path: {file_path}
-    
-    ```{language.lower()}
-    {content[:10000]}  # Limit to first 10,000 characters for token limits
-    {'...' if len(content) > 10000 else ''}
-    ```
-    
-    Please provide a comprehensive analysis of this file including:
-    1. Overall file quality assessment
-    2. Code complexity and maintainability
-    3. Documentation quality
-    4. Potential issues or improvements
-    5. Best practices observed or violated
-    
-    Format your response as a JSON object with the following structure:
-    {{
-        "quality_score": number from 1-10,
-        "summary": "Brief summary of the file's purpose",
-        "complexity": {{
-            "score": number from 1-10,
-            "evaluation": "Evaluation of code complexity"
-        }},
-        "documentation": {{
-            "score": number from 1-10,
-            "evaluation": "Evaluation of documentation quality"
-        }},
-        "maintainability": {{
-            "score": number from 1-10,
-            "evaluation": "Evaluation of code maintainability"
-        }},
-        "issues": [
-            {{
-                "title": "Issue title",
-                "description": "Issue description",
-                "severity": "high, medium, or low",
-                "line_numbers": [optional list of relevant line numbers]
-            }}
-        ],
-        "best_practices": [
-            {{
-                "title": "Practice title",
-                "observed": true or false,
-                "description": "Description of the practice"
-            }}
-        ],
-        "recommendations": [
-            "recommendation1",
-            "recommendation2"
-        ]
-    }}
-    """
-    
-    try:
-        # Use available model
-        provider = "openai" if st.session_state.model_interface.check_openai_status() else "anthropic"
-        system_message = f"You are an expert {language} developer specializing in code quality analysis."
-        
-        response = st.session_state.model_interface.generate_text(
-            prompt=prompt,
-            system_message=system_message,
-            provider=provider
-        )
-        
-        # Extract JSON from the response
-        json_match = re.search(r"```json\n(.*?)\n```", response, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            # Try to find JSON without the markdown code block
-            json_match = re.search(r"({.*})", response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                json_str = response
-        
-        # Remove any non-JSON text before or after
-        cleaned_json = re.sub(r"^[^{]*", "", json_str)
-        cleaned_json = re.sub(r"[^}]*$", "", cleaned_json)
-        
-        # Parse JSON
-        analysis = json.loads(cleaned_json)
-        
-        # Add file info
-        analysis["file_info"] = {
-            "path": file_path,
-            "name": os.path.basename(file_path),
-            "language": language,
-            "size": len(content)
+    },
+    "flutter-mobile-app": {
+        "name": "Flutter Mobile App",
+        "description": "A cross-platform mobile application built with Flutter",
+        "language": "Dart",
+        "files": 22,
+        "loc": 2850,
+        "structure": {
+            "lib": {
+                "main.dart": {
+                    "language": "Dart",
+                    "loc": 75,
+                    "complexity": 5
+                },
+                "screens": {
+                    "home_screen.dart": {
+                        "language": "Dart",
+                        "loc": 185,
+                        "complexity": 8
+                    },
+                    "login_screen.dart": {
+                        "language": "Dart",
+                        "loc": 165,
+                        "complexity": 7
+                    },
+                    "profile_screen.dart": {
+                        "language": "Dart",
+                        "loc": 175,
+                        "complexity": 7
+                    },
+                    "settings_screen.dart": {
+                        "language": "Dart",
+                        "loc": 155,
+                        "complexity": 6
+                    },
+                    "detail_screen.dart": {
+                        "language": "Dart",
+                        "loc": 145,
+                        "complexity": 6
+                    }
+                },
+                "widgets": {
+                    "custom_button.dart": {
+                        "language": "Dart",
+                        "loc": 85,
+                        "complexity": 4
+                    },
+                    "custom_text_field.dart": {
+                        "language": "Dart",
+                        "loc": 95,
+                        "complexity": 5
+                    },
+                    "item_card.dart": {
+                        "language": "Dart",
+                        "loc": 110,
+                        "complexity": 5
+                    },
+                    "loading_indicator.dart": {
+                        "language": "Dart",
+                        "loc": 45,
+                        "complexity": 3
+                    }
+                },
+                "models": {
+                    "user_model.dart": {
+                        "language": "Dart",
+                        "loc": 65,
+                        "complexity": 3
+                    },
+                    "item_model.dart": {
+                        "language": "Dart",
+                        "loc": 55,
+                        "complexity": 3
+                    },
+                    "settings_model.dart": {
+                        "language": "Dart",
+                        "loc": 45,
+                        "complexity": 2
+                    }
+                },
+                "services": {
+                    "api_service.dart": {
+                        "language": "Dart",
+                        "loc": 145,
+                        "complexity": 8
+                    },
+                    "auth_service.dart": {
+                        "language": "Dart",
+                        "loc": 165,
+                        "complexity": 9
+                    },
+                    "storage_service.dart": {
+                        "language": "Dart",
+                        "loc": 125,
+                        "complexity": 7
+                    }
+                },
+                "utils": {
+                    "constants.dart": {
+                        "language": "Dart",
+                        "loc": 35,
+                        "complexity": 1
+                    },
+                    "theme.dart": {
+                        "language": "Dart",
+                        "loc": 95,
+                        "complexity": 4
+                    },
+                    "validators.dart": {
+                        "language": "Dart",
+                        "loc": 85,
+                        "complexity": 5
+                    }
+                }
+            },
+            "test": {
+                "widget_test.dart": {
+                    "language": "Dart",
+                    "loc": 75,
+                    "complexity": 4
+                },
+                "unit_tests": {
+                    "auth_test.dart": {
+                        "language": "Dart",
+                        "loc": 110,
+                        "complexity": 6
+                    },
+                    "api_test.dart": {
+                        "language": "Dart",
+                        "loc": 130,
+                        "complexity": 7
+                    }
+                }
+            },
+            "pubspec.yaml": {
+                "language": "YAML",
+                "loc": 85,
+                "complexity": 3
+            },
+            "README.md": {
+                "language": "Markdown",
+                "loc": 120,
+                "complexity": 1
+            }
         }
-        
-        return analysis
-    except Exception as e:
-        st.error(f"Error analyzing file: {str(e)}")
-        return None
+    },
+    "spring-boot-microservice": {
+        "name": "Spring Boot Microservice",
+        "description": "A microservice built with Spring Boot",
+        "language": "Java",
+        "files": 25,
+        "loc": 3150,
+        "structure": {
+            "src": {
+                "main": {
+                    "java": {
+                        "com": {
+                            "example": {
+                                "microservice": {
+                                    "controllers": {
+                                        "UserController.java": {
+                                            "language": "Java",
+                                            "loc": 185,
+                                            "complexity": 9
+                                        },
+                                        "ProductController.java": {
+                                            "language": "Java",
+                                            "loc": 175,
+                                            "complexity": 8
+                                        },
+                                        "OrderController.java": {
+                                            "language": "Java",
+                                            "loc": 195,
+                                            "complexity": 10
+                                        }
+                                    },
+                                    "services": {
+                                        "UserService.java": {
+                                            "language": "Java",
+                                            "loc": 145,
+                                            "complexity": 8
+                                        },
+                                        "ProductService.java": {
+                                            "language": "Java",
+                                            "loc": 135,
+                                            "complexity": 7
+                                        },
+                                        "OrderService.java": {
+                                            "language": "Java",
+                                            "loc": 165,
+                                            "complexity": 9
+                                        }
+                                    },
+                                    "repositories": {
+                                        "UserRepository.java": {
+                                            "language": "Java",
+                                            "loc": 45,
+                                            "complexity": 3
+                                        },
+                                        "ProductRepository.java": {
+                                            "language": "Java",
+                                            "loc": 40,
+                                            "complexity": 3
+                                        },
+                                        "OrderRepository.java": {
+                                            "language": "Java",
+                                            "loc": 50,
+                                            "complexity": 4
+                                        }
+                                    },
+                                    "models": {
+                                        "User.java": {
+                                            "language": "Java",
+                                            "loc": 85,
+                                            "complexity": 4
+                                        },
+                                        "Product.java": {
+                                            "language": "Java",
+                                            "loc": 75,
+                                            "complexity": 4
+                                        },
+                                        "Order.java": {
+                                            "language": "Java",
+                                            "loc": 95,
+                                            "complexity": 5
+                                        }
+                                    },
+                                    "exceptions": {
+                                        "ResourceNotFoundException.java": {
+                                            "language": "Java",
+                                            "loc": 35,
+                                            "complexity": 2
+                                        },
+                                        "BadRequestException.java": {
+                                            "language": "Java",
+                                            "loc": 30,
+                                            "complexity": 2
+                                        }
+                                    },
+                                    "config": {
+                                        "SecurityConfig.java": {
+                                            "language": "Java",
+                                            "loc": 110,
+                                            "complexity": 6
+                                        },
+                                        "SwaggerConfig.java": {
+                                            "language": "Java",
+                                            "loc": 65,
+                                            "complexity": 4
+                                        }
+                                    },
+                                    "utils": {
+                                        "Constants.java": {
+                                            "language": "Java",
+                                            "loc": 25,
+                                            "complexity": 1
+                                        },
+                                        "DateUtils.java": {
+                                            "language": "Java",
+                                            "loc": 45,
+                                            "complexity": 3
+                                        }
+                                    },
+                                    "Application.java": {
+                                        "language": "Java",
+                                        "loc": 35,
+                                        "complexity": 2
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "resources": {
+                        "application.properties": {
+                            "language": "Properties",
+                            "loc": 45,
+                            "complexity": 2
+                        },
+                        "application-dev.properties": {
+                            "language": "Properties",
+                            "loc": 55,
+                            "complexity": 2
+                        },
+                        "application-prod.properties": {
+                            "language": "Properties",
+                            "loc": 50,
+                            "complexity": 2
+                        }
+                    }
+                },
+                "test": {
+                    "java": {
+                        "com": {
+                            "example": {
+                                "microservice": {
+                                    "controllers": {
+                                        "UserControllerTest.java": {
+                                            "language": "Java",
+                                            "loc": 175,
+                                            "complexity": 8
+                                        },
+                                        "ProductControllerTest.java": {
+                                            "language": "Java",
+                                            "loc": 165,
+                                            "complexity": 7
+                                        }
+                                    },
+                                    "services": {
+                                        "UserServiceTest.java": {
+                                            "language": "Java",
+                                            "loc": 145,
+                                            "complexity": 7
+                                        },
+                                        "ProductServiceTest.java": {
+                                            "language": "Java",
+                                            "loc": 135,
+                                            "complexity": 6
+                                        }
+                                    },
+                                    "integration": {
+                                        "ApiIntegrationTest.java": {
+                                            "language": "Java",
+                                            "loc": 195,
+                                            "complexity": 9
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "pom.xml": {
+                "language": "XML",
+                "loc": 95,
+                "complexity": 3
+            },
+            "README.md": {
+                "language": "Markdown",
+                "loc": 110,
+                "complexity": 1
+            }
+        }
+    }
+}
 
-# Sample code repositories for demos
-SAMPLE_REPOSITORIES = {
-    "E-commerce API": {
-        "src/api/index.js": """
-const express = require('express');
-const bodyParser = require('body-parser');
+# Sample file contents
+sample_file_contents = {
+    "nodejs-express-api": {
+        "src/app.js": """const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
+const errorHandler = require('./middleware/errorHandler');
+const userRoutes = require('./routes/userRoutes');
+const authRoutes = require('./routes/authRoutes');
+const productRoutes = require('./routes/productRoutes');
 
-const productRoutes = require('./routes/products');
-const userRoutes = require('./routes/users');
-const orderRoutes = require('./routes/orders');
-const authRoutes = require('./routes/auth');
-const cartRoutes = require('./routes/cart');
-
-const { errorHandler } = require('./middleware/errorHandler');
-const { authMiddleware } = require('./middleware/auth');
-
+// Initialize express app
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-// Apply security middleware
-app.use(helmet());
-app.use(cors());
+// Apply middleware
+app.use(helmet()); // Security headers
+app.use(cors()); // Enable CORS
+app.use(morgan('dev')); // Request logging
+app.use(express.json()); // Parse JSON bodies
 
-// Apply rate limiting
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
-});
-app.use('/api/', apiLimiter);
-
-// Logging
-app.use(morgan('dev'));
-
-// Parse JSON bodies
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-
-// API Routes
+// API routes
+app.use('/api/users', userRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
-app.use('/api/users', authMiddleware, userRoutes);
-app.use('/api/orders', authMiddleware, orderRoutes);
-app.use('/api/cart', authMiddleware, cartRoutes);
-
-// Error handling middleware
-app.use(errorHandler);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+  res.status(200).json({ status: 'UP', timestamp: new Date() });
 });
 
-// Start the server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// Not found handler
+app.use((req, res, next) => {
+  res.status(404).json({
+    error: 'Not Found',
+    message: `Route ${req.method} ${req.url} not found`,
+    path: req.url,
+    timestamp: new Date()
+  });
 });
+
+// Global error handler
+app.use(errorHandler);
 
 module.exports = app;
 """,
-        "src/api/routes/products.js": """
-const express = require('express');
-const router = express.Router();
-const ProductController = require('../controllers/productController');
-const { adminMiddleware } = require('../middleware/auth');
+        "src/controllers/userController.js": """const UserModel = require('../models/userModel');
+const logger = require('../utils/logger');
+const validators = require('../utils/validators');
 
 /**
- * @route GET /api/products
- * @desc Get all products with optional filtering
- * @access Public
+ * Get all users with pagination
  */
-router.get('/', ProductController.getAllProducts);
-
-/**
- * @route GET /api/products/:id
- * @desc Get a single product by ID
- * @access Public
- */
-router.get('/:id', ProductController.getProductById);
-
-/**
- * @route POST /api/products
- * @desc Create a new product
- * @access Admin only
- */
-router.post('/', adminMiddleware, ProductController.createProduct);
-
-/**
- * @route PUT /api/products/:id
- * @desc Update a product
- * @access Admin only
- */
-router.put('/:id', adminMiddleware, ProductController.updateProduct);
-
-/**
- * @route DELETE /api/products/:id
- * @desc Delete a product
- * @access Admin only
- */
-router.delete('/:id', adminMiddleware, ProductController.deleteProduct);
-
-/**
- * @route GET /api/products/category/:category
- * @desc Get products by category
- * @access Public
- */
-router.get('/category/:category', ProductController.getProductsByCategory);
-
-/**
- * @route GET /api/products/search/:query
- * @desc Search products
- * @access Public
- */
-router.get('/search/:query', ProductController.searchProducts);
-
-module.exports = router;
-""",
-        "src/api/controllers/productController.js": """
-const Product = require('../models/Product');
-const { asyncHandler } = require('../middleware/asyncHandler');
-const AppError = require('../utils/appError');
-
-// Get all products with filtering, sorting, and pagination
-exports.getAllProducts = asyncHandler(async (req, res) => {
-  const page = parseInt(req.query.page, 10) || 1;
-  const limit = parseInt(req.query.limit, 10) || 10;
-  const skip = (page - 1) * limit;
-  
-  // Build query
-  let query = {};
-  
-  // Filter by category if provided
-  if (req.query.category) {
-    query.category = req.query.category;
-  }
-  
-  // Filter by price range if provided
-  if (req.query.minPrice || req.query.maxPrice) {
-    query.price = {};
-    if (req.query.minPrice) query.price.$gte = parseFloat(req.query.minPrice);
-    if (req.query.maxPrice) query.price.$lte = parseFloat(req.query.maxPrice);
-  }
-  
-  // Filter by availability
-  if (req.query.inStock === 'true') {
-    query.stockQuantity = { $gt: 0 };
-  }
-  
-  // Execute query with pagination
-  const products = await Product.find(query)
-    .skip(skip)
-    .limit(limit)
-    .sort(req.query.sort || '-createdAt');
-  
-  // Get total count for pagination
-  const totalProducts = await Product.countDocuments(query);
-  
-  res.status(200).json({
-    success: true,
-    count: products.length,
-    totalPages: Math.ceil(totalProducts / limit),
-    currentPage: page,
-    data: products
-  });
-});
-
-// Get single product by ID
-exports.getProductById = asyncHandler(async (req, res, next) => {
-  const product = await Product.findById(req.params.id);
-  
-  if (!product) {
-    return next(new AppError(`Product not found with id ${req.params.id}`, 404));
-  }
-  
-  res.status(200).json({
-    success: true,
-    data: product
-  });
-});
-
-// Create new product
-exports.createProduct = asyncHandler(async (req, res) => {
-  const product = await Product.create(req.body);
-  
-  res.status(201).json({
-    success: true,
-    data: product
-  });
-});
-
-// Update product
-exports.updateProduct = asyncHandler(async (req, res, next) => {
-  let product = await Product.findById(req.params.id);
-  
-  if (!product) {
-    return next(new AppError(`Product not found with id ${req.params.id}`, 404));
-  }
-  
-  product = await Product.findByIdAndUpdate(req.params.id, req.body, {
-    new: true,
-    runValidators: true
-  });
-  
-  res.status(200).json({
-    success: true,
-    data: product
-  });
-});
-
-// Delete product
-exports.deleteProduct = asyncHandler(async (req, res, next) => {
-  const product = await Product.findById(req.params.id);
-  
-  if (!product) {
-    return next(new AppError(`Product not found with id ${req.params.id}`, 404));
-  }
-  
-  await product.remove();
-  
-  res.status(200).json({
-    success: true,
-    data: {}
-  });
-});
-
-// Get products by category
-exports.getProductsByCategory = asyncHandler(async (req, res) => {
-  const products = await Product.find({ category: req.params.category });
-  
-  res.status(200).json({
-    success: true,
-    count: products.length,
-    data: products
-  });
-});
-
-// Search products
-exports.searchProducts = asyncHandler(async (req, res) => {
-  const query = req.params.query;
-  
-  const products = await Product.find({
-    $or: [
-      { name: { $regex: query, $options: 'i' } },
-      { description: { $regex: query, $options: 'i' } },
-      { brand: { $regex: query, $options: 'i' } }
-    ]
-  });
-  
-  res.status(200).json({
-    success: true,
-    count: products.length,
-    data: products
-  });
-});
-""",
-        "src/api/models/Product.js": """
-const mongoose = require('mongoose');
-
-const ProductSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: [true, 'Please add a product name'],
-    trim: true,
-    maxlength: [100, 'Name cannot be more than 100 characters']
-  },
-  description: {
-    type: String,
-    required: [true, 'Please add a description'],
-    maxlength: [1000, 'Description cannot be more than 1000 characters']
-  },
-  price: {
-    type: Number,
-    required: [true, 'Please add a price'],
-    min: [0, 'Price must be positive']
-  },
-  category: {
-    type: String,
-    required: [true, 'Please add a category'],
-    enum: [
-      'electronics',
-      'clothing',
-      'furniture',
-      'books',
-      'beauty',
-      'sports',
-      'food',
-      'toys',
-      'other'
-    ]
-  },
-  brand: {
-    type: String,
-    required: false
-  },
-  stockQuantity: {
-    type: Number,
-    required: [true, 'Please add a stock quantity'],
-    min: [0, 'Stock quantity cannot be negative'],
-    default: 0
-  },
-  images: {
-    type: [String],
-    default: ['default.jpg']
-  },
-  featured: {
-    type: Boolean,
-    default: false
-  },
-  rating: {
-    type: Number,
-    min: [0, 'Rating must be at least 0'],
-    max: [5, 'Rating cannot be more than 5'],
-    default: 0
-  },
-  numReviews: {
-    type: Number,
-    default: 0
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
-});
-
-// Method to update the 'updatedAt' field on save
-ProductSchema.pre('save', function(next) {
-  this.updatedAt = Date.now();
-  next();
-});
-
-// Create a text index for search functionality
-ProductSchema.index({ name: 'text', description: 'text', brand: 'text' });
-
-module.exports = mongoose.model('Product', ProductSchema);
-""",
-        "src/api/middleware/auth.js": """
-const jwt = require('jsonwebtoken');
-const asyncHandler = require('./asyncHandler');
-const AppError = require('../utils/appError');
-const User = require('../models/User');
-
-// Protect routes
-exports.authMiddleware = asyncHandler(async (req, res, next) => {
-  let token;
-  
-  // Check for token in headers
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    token = req.headers.authorization.split(' ')[1];
-  } else if (req.cookies && req.cookies.token) {
-    // Check for token in cookies
-    token = req.cookies.token;
-  }
-  
-  // Make sure token exists
-  if (!token) {
-    return next(new AppError('Not authorized to access this route', 401));
-  }
-  
+exports.getUsers = async (req, res, next) => {
   try {
-    // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
     
-    // Get user from the token
-    req.user = await User.findById(decoded.id);
+    const users = await UserModel.find()
+      .select('-password')
+      .skip(skip)
+      .limit(limit);
+      
+    const total = await UserModel.countDocuments();
     
-    next();
-  } catch (err) {
-    return next(new AppError('Not authorized to access this route', 401));
+    logger.info(`Retrieved ${users.length} users`);
+    
+    res.status(200).json({
+      success: true,
+      count: users.length,
+      pagination: {
+        total,
+        page,
+        pages: Math.ceil(total / limit)
+      },
+      data: users
+    });
+  } catch (error) {
+    logger.error(`Error retrieving users: ${error.message}`);
+    next(error);
   }
-});
-
-// Grant access to specific roles
-exports.authorizeRoles = (...roles) => {
-  return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
-      return next(new AppError(`User role ${req.user.role} is not authorized to access this route`, 403));
-    }
-    next();
-  };
 };
 
-// Admin only middleware
-exports.adminMiddleware = [
-  exports.authMiddleware,
-  exports.authorizeRoles('admin')
-];
-""",
-        "src/api/utils/appError.js": """
-class AppError extends Error {
-  constructor(message, statusCode) {
-    super(message);
-    this.statusCode = statusCode;
-    this.status = `${statusCode}`.startsWith('4') ? 'fail' : 'error';
-    this.isOperational = true;
-
-    Error.captureStackTrace(this, this.constructor);
-  }
-}
-
-module.exports = AppError;
-""",
-    },
-    "Data Analysis Library": {
-        "data_processor/__init__.py": """
-"""
-"""
-Data Processor Library
-
-A comprehensive toolkit for data processing, transformation, and analysis.
-"""
-
-from .processor import DataProcessor
-from .transformers import DataTransformer, NumericTransformer, CategoricalTransformer, TextTransformer
-from .validators import DataValidator, SchemaValidator, RangeValidator, FormatValidator
-from .loaders import CsvLoader, JsonLoader, DatabaseLoader, ExcelLoader
-from .exporters import CsvExporter, JsonExporter, DatabaseExporter, ExcelExporter
-from .analyzers import DataAnalyzer, StatisticalAnalyzer, CorrelationAnalyzer, OutlierDetector
-from .visualization import DataVisualizer, TimeSeriesPlotter, DistributionPlotter, CorrelationPlotter
-
-__version__ = "0.1.0"
-""",
-        "data_processor/processor.py": """
-"""
-Main processor module that orchestrates data processing workflows.
-"""
-
-import pandas as pd
-import numpy as np
-from typing import List, Dict, Any, Optional, Union, Callable
-import logging
-
-from .transformers import DataTransformer
-from .validators import DataValidator
-from .analyzers import DataAnalyzer
-
-# Configure logging
-logger = logging.getLogger(__name__)
-
-class DataProcessor:
-    """
-    Main class for orchestrating data processing workflows.
+/**
+ * Get user by ID
+ */
+exports.getUserById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
     
-    This class serves as the central coordinator for data processing operations,
-    including loading, validation, transformation, analysis, and export.
-    
-    Attributes:
-        data (pd.DataFrame): The data being processed
-        transformers (List[DataTransformer]): List of transformers to apply
-        validators (List[DataValidator]): List of validators to apply
-        analyzers (List[DataAnalyzer]): List of analyzers to apply
-    """
-    
-    def __init__(self, data: Optional[pd.DataFrame] = None):
-        """
-        Initialize a new DataProcessor.
-        
-        Args:
-            data: Optional initial data to process
-        """
-        self.data = data if data is not None else pd.DataFrame()
-        self.transformers = []
-        self.validators = []
-        self.analyzers = []
-        self.processing_history = []
-        logger.info("DataProcessor initialized")
-        
-    def load_data(self, loader: Any) -> "DataProcessor":
-        """
-        Load data using the provided loader.
-        
-        Args:
-            loader: Data loader instance
-            
-        Returns:
-            Self for method chaining
-        """
-        self.data = loader.load()
-        self.processing_history.append({
-            "operation": "load_data",
-            "loader": loader.__class__.__name__,
-            "rows": len(self.data),
-            "columns": list(self.data.columns)
-        })
-        logger.info(f"Loaded data with {len(self.data)} rows and {len(self.data.columns)} columns")
-        return self
-        
-    def add_transformer(self, transformer: DataTransformer) -> "DataProcessor":
-        """
-        Add a transformer to the processing pipeline.
-        
-        Args:
-            transformer: Transformer to add
-            
-        Returns:
-            Self for method chaining
-        """
-        self.transformers.append(transformer)
-        logger.info(f"Added transformer: {transformer.__class__.__name__}")
-        return self
-        
-    def add_validator(self, validator: DataValidator) -> "DataProcessor":
-        """
-        Add a validator to the processing pipeline.
-        
-        Args:
-            validator: Validator to add
-            
-        Returns:
-            Self for method chaining
-        """
-        self.validators.append(validator)
-        logger.info(f"Added validator: {validator.__class__.__name__}")
-        return self
-        
-    def add_analyzer(self, analyzer: DataAnalyzer) -> "DataProcessor":
-        """
-        Add an analyzer to the processing pipeline.
-        
-        Args:
-            analyzer: Analyzer to add
-            
-        Returns:
-            Self for method chaining
-        """
-        self.analyzers.append(analyzer)
-        logger.info(f"Added analyzer: {analyzer.__class__.__name__}")
-        return self
-        
-    def transform(self) -> "DataProcessor":
-        """
-        Apply all transformers to the data.
-        
-        Returns:
-            Self for method chaining
-        """
-        for transformer in self.transformers:
-            self.data = transformer.transform(self.data)
-            self.processing_history.append({
-                "operation": "transform",
-                "transformer": transformer.__class__.__name__
-            })
-        logger.info(f"Applied {len(self.transformers)} transformers")
-        return self
-        
-    def validate(self) -> Dict[str, Any]:
-        """
-        Apply all validators to the data.
-        
-        Returns:
-            Dictionary with validation results
-        """
-        results = {}
-        for validator in self.validators:
-            result = validator.validate(self.data)
-            results[validator.__class__.__name__] = result
-            self.processing_history.append({
-                "operation": "validate",
-                "validator": validator.__class__.__name__,
-                "result": result
-            })
-        logger.info(f"Applied {len(self.validators)} validators")
-        return results
-        
-    def analyze(self) -> Dict[str, Any]:
-        """
-        Apply all analyzers to the data.
-        
-        Returns:
-            Dictionary with analysis results
-        """
-        results = {}
-        for analyzer in self.analyzers:
-            result = analyzer.analyze(self.data)
-            results[analyzer.__class__.__name__] = result
-            self.processing_history.append({
-                "operation": "analyze",
-                "analyzer": analyzer.__class__.__name__
-            })
-        logger.info(f"Applied {len(self.analyzers)} analyzers")
-        return results
-        
-    def export_data(self, exporter: Any) -> Any:
-        """
-        Export data using the provided exporter.
-        
-        Args:
-            exporter: Data exporter instance
-            
-        Returns:
-            Result of the export operation
-        """
-        result = exporter.export(self.data)
-        self.processing_history.append({
-            "operation": "export_data",
-            "exporter": exporter.__class__.__name__
-        })
-        logger.info(f"Exported data using {exporter.__class__.__name__}")
-        return result
-        
-    def get_history(self) -> List[Dict[str, Any]]:
-        """
-        Get the processing history.
-        
-        Returns:
-            List of processing steps
-        """
-        return self.processing_history
-        
-    def get_data_summary(self) -> Dict[str, Any]:
-        """
-        Get a summary of the current data.
-        
-        Returns:
-            Dictionary with data summary
-        """
-        summary = {
-            "rows": len(self.data),
-            "columns": list(self.data.columns),
-            "dtypes": {col: str(dtype) for col, dtype in self.data.dtypes.items()},
-            "missing_values": self.data.isnull().sum().to_dict(),
-            "memory_usage": self.data.memory_usage(deep=True).sum()
-        }
-        logger.info(f"Generated data summary")
-        return summary
-""",
-        "data_processor/transformers.py": """
-"""
-Data transformation modules for various data types.
-"""
-
-import pandas as pd
-import numpy as np
-from typing import List, Dict, Any, Optional, Union, Callable
-from abc import ABC, abstractmethod
-import logging
-
-# Configure logging
-logger = logging.getLogger(__name__)
-
-class DataTransformer(ABC):
-    """
-    Abstract base class for data transformers.
-    
-    All data transformers should inherit from this class and implement
-    the transform method.
-    """
-    
-    @abstractmethod
-    def transform(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Transform the input data.
-        
-        Args:
-            data: Input DataFrame to transform
-            
-        Returns:
-            Transformed DataFrame
-        """
-        pass
-
-    def fit(self, data: pd.DataFrame) -> "DataTransformer":
-        """
-        Fit the transformer to the data (if needed).
-        
-        This method is optional and does nothing by default.
-        Subclasses that need to learn parameters from the data
-        should override this method.
-        
-        Args:
-            data: Input DataFrame to fit to
-            
-        Returns:
-            Self for method chaining
-        """
-        return self
-        
-    def fit_transform(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Fit the transformer to the data and then transform it.
-        
-        Args:
-            data: Input DataFrame to fit and transform
-            
-        Returns:
-            Transformed DataFrame
-        """
-        self.fit(data)
-        return self.transform(data)
-
-class NumericTransformer(DataTransformer):
-    """
-    Transformer for numeric data operations.
-    
-    This transformer handles operations like scaling, normalization,
-    and other numeric transformations.
-    """
-    
-    def __init__(self, 
-                 columns: List[str],
-                 operation: str = "scale",
-                 params: Optional[Dict[str, Any]] = None):
-        """
-        Initialize a new NumericTransformer.
-        
-        Args:
-            columns: List of column names to transform
-            operation: Transformation operation to apply
-            params: Additional parameters for the operation
-        """
-        self.columns = columns
-        self.operation = operation
-        self.params = params or {}
-        self.fitted_params = {}
-        logger.info(f"NumericTransformer initialized with operation: {operation}")
-        
-    def fit(self, data: pd.DataFrame) -> "NumericTransformer":
-        """
-        Fit the transformer to the data.
-        
-        For operations like scaling, this computes the necessary
-        statistics (e.g., mean and standard deviation).
-        
-        Args:
-            data: Input DataFrame to fit to
-            
-        Returns:
-            Self for method chaining
-        """
-        # Check that all columns exist
-        missing_cols = [col for col in self.columns if col not in data.columns]
-        if missing_cols:
-            raise ValueError(f"Columns not found in data: {missing_cols}")
-        
-        if self.operation == "scale":
-            # Compute mean and std for scaling
-            self.fitted_params["mean"] = {col: data[col].mean() for col in self.columns}
-            self.fitted_params["std"] = {col: data[col].std() for col in self.columns}
-            
-        elif self.operation == "normalize":
-            # Compute min and max for normalization
-            self.fitted_params["min"] = {col: data[col].min() for col in self.columns}
-            self.fitted_params["max"] = {col: data[col].max() for col in self.columns}
-            
-        elif self.operation == "log":
-            # Nothing to fit
-            pass
-            
-        logger.info(f"NumericTransformer fitted for {len(self.columns)} columns")
-        return self
-        
-    def transform(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Transform the numeric columns.
-        
-        Args:
-            data: Input DataFrame to transform
-            
-        Returns:
-            DataFrame with transformed columns
-        """
-        # Make a copy to avoid modifying the original
-        result = data.copy()
-        
-        # Apply the chosen operation
-        if self.operation == "scale":
-            if not self.fitted_params:
-                raise ValueError("Transformer not fitted. Call fit() first.")
-            
-            for col in self.columns:
-                mean = self.fitted_params["mean"][col]
-                std = self.fitted_params["std"][col]
-                result[col] = (result[col] - mean) / (std if std > 0 else 1)
-                
-        elif self.operation == "normalize":
-            if not self.fitted_params:
-                raise ValueError("Transformer not fitted. Call fit() first.")
-            
-            for col in self.columns:
-                min_val = self.fitted_params["min"][col]
-                max_val = self.fitted_params["max"][col]
-                range_val = max_val - min_val
-                result[col] = (result[col] - min_val) / (range_val if range_val > 0 else 1)
-                
-        elif self.operation == "log":
-            for col in self.columns:
-                # Handle non-positive values
-                if (result[col] <= 0).any():
-                    min_val = result[col].min()
-                    offset = abs(min_val) + 1 if min_val <= 0 else 0
-                    result[col] = np.log(result[col] + offset)
-                else:
-                    result[col] = np.log(result[col])
-        
-        logger.info(f"NumericTransformer applied {self.operation} to {len(self.columns)} columns")
-        return result
-
-class CategoricalTransformer(DataTransformer):
-    """
-    Transformer for categorical data operations.
-    
-    This transformer handles operations like one-hot encoding,
-    label encoding, and other categorical transformations.
-    """
-    
-    def __init__(self, 
-                 columns: List[str],
-                 operation: str = "one_hot",
-                 params: Optional[Dict[str, Any]] = None):
-        """
-        Initialize a new CategoricalTransformer.
-        
-        Args:
-            columns: List of column names to transform
-            operation: Transformation operation to apply
-            params: Additional parameters for the operation
-        """
-        self.columns = columns
-        self.operation = operation
-        self.params = params or {}
-        self.fitted_params = {}
-        logger.info(f"CategoricalTransformer initialized with operation: {operation}")
-        
-    def fit(self, data: pd.DataFrame) -> "CategoricalTransformer":
-        """
-        Fit the transformer to the data.
-        
-        For operations like label encoding, this determines
-        the unique categories and their mappings.
-        
-        Args:
-            data: Input DataFrame to fit to
-            
-        Returns:
-            Self for method chaining
-        """
-        # Check that all columns exist
-        missing_cols = [col for col in self.columns if col not in data.columns]
-        if missing_cols:
-            raise ValueError(f"Columns not found in data: {missing_cols}")
-        
-        if self.operation == "label_encode":
-            # Create mapping from categories to integers
-            self.fitted_params["mappings"] = {}
-            for col in self.columns:
-                unique_values = data[col].dropna().unique()
-                self.fitted_params["mappings"][col] = {
-                    val: i for i, val in enumerate(unique_values)
-                }
-        
-        logger.info(f"CategoricalTransformer fitted for {len(self.columns)} columns")
-        return self
-        
-    def transform(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Transform the categorical columns.
-        
-        Args:
-            data: Input DataFrame to transform
-            
-        Returns:
-            DataFrame with transformed columns
-        """
-        # Make a copy to avoid modifying the original
-        result = data.copy()
-        
-        # Apply the chosen operation
-        if self.operation == "one_hot":
-            # Use pandas get_dummies for one-hot encoding
-            dummies = pd.get_dummies(result[self.columns], drop_first=self.params.get("drop_first", False))
-            # Drop original columns and join encoded ones
-            result = result.drop(columns=self.columns)
-            result = pd.concat([result, dummies], axis=1)
-                
-        elif self.operation == "label_encode":
-            if not self.fitted_params:
-                raise ValueError("Transformer not fitted. Call fit() first.")
-            
-            for col in self.columns:
-                mapping = self.fitted_params["mappings"][col]
-                # Apply mapping and handle unknown values
-                result[col] = result[col].map(mapping)
-                if self.params.get("handle_unknown", "error") == "ignore":
-                    result[col] = result[col].fillna(-1).astype(int)
-                
-        logger.info(f"CategoricalTransformer applied {self.operation} to {len(self.columns)} columns")
-        return result
-
-class TextTransformer(DataTransformer):
-    """
-    Transformer for text data operations.
-    
-    This transformer handles operations like tokenization,
-    stemming, and other text transformations.
-    """
-    
-    def __init__(self, 
-                 columns: List[str],
-                 operation: str = "lowercase",
-                 params: Optional[Dict[str, Any]] = None):
-        """
-        Initialize a new TextTransformer.
-        
-        Args:
-            columns: List of column names to transform
-            operation: Transformation operation to apply
-            params: Additional parameters for the operation
-        """
-        self.columns = columns
-        self.operation = operation
-        self.params = params or {}
-        logger.info(f"TextTransformer initialized with operation: {operation}")
-        
-    def transform(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Transform the text columns.
-        
-        Args:
-            data: Input DataFrame to transform
-            
-        Returns:
-            DataFrame with transformed columns
-        """
-        # Make a copy to avoid modifying the original
-        result = data.copy()
-        
-        # Apply the chosen operation
-        if self.operation == "lowercase":
-            for col in self.columns:
-                result[col] = result[col].str.lower()
-                
-        elif self.operation == "strip":
-            for col in self.columns:
-                result[col] = result[col].str.strip()
-                
-        elif self.operation == "replace":
-            pattern = self.params.get("pattern", "")
-            replacement = self.params.get("replacement", "")
-            if not pattern:
-                raise ValueError("Pattern parameter required for replace operation")
-            
-            for col in self.columns:
-                result[col] = result[col].str.replace(pattern, replacement, regex=True)
-        
-        logger.info(f"TextTransformer applied {self.operation} to {len(self.columns)} columns")
-        return result
-""",
-        "data_processor/validators.py": """
-"""
-Data validation modules for various validation rules.
-"""
-
-import pandas as pd
-import numpy as np
-from typing import List, Dict, Any, Optional, Union, Callable
-from abc import ABC, abstractmethod
-import logging
-import re
-
-# Configure logging
-logger = logging.getLogger(__name__)
-
-class DataValidator(ABC):
-    """
-    Abstract base class for data validators.
-    
-    All data validators should inherit from this class and implement
-    the validate method.
-    """
-    
-    @abstractmethod
-    def validate(self, data: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Validate the input data.
-        
-        Args:
-            data: Input DataFrame to validate
-            
-        Returns:
-            Dictionary with validation results
-        """
-        pass
-
-class SchemaValidator(DataValidator):
-    """
-    Validator for checking data schema conformity.
-    
-    This validator checks that the data conforms to a specified schema,
-    including column presence, data types, and optionally non-null constraints.
-    """
-    
-    def __init__(self, 
-                 schema: Dict[str, Any],
-                 require_all_columns: bool = True,
-                 allow_extra_columns: bool = False):
-        """
-        Initialize a new SchemaValidator.
-        
-        Args:
-            schema: Dictionary mapping column names to expected data types
-            require_all_columns: Whether all schema columns must be present
-            allow_extra_columns: Whether extra columns not in schema are allowed
-        """
-        self.schema = schema
-        self.require_all_columns = require_all_columns
-        self.allow_extra_columns = allow_extra_columns
-        logger.info(f"SchemaValidator initialized with {len(schema)} columns")
-        
-    def validate(self, data: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Validate the data against the schema.
-        
-        Args:
-            data: Input DataFrame to validate
-            
-        Returns:
-            Dictionary with validation results
-        """
-        results = {
-            "valid": True,
-            "errors": [],
-            "warnings": []
-        }
-        
-        # Check for required columns
-        if self.require_all_columns:
-            missing_cols = [col for col in self.schema if col not in data.columns]
-            if missing_cols:
-                results["valid"] = False
-                results["errors"].append({
-                    "type": "missing_columns",
-                    "columns": missing_cols
-                })
-        
-        # Check for extra columns
-        if not self.allow_extra_columns:
-            extra_cols = [col for col in data.columns if col not in self.schema]
-            if extra_cols:
-                results["valid"] = False
-                results["errors"].append({
-                    "type": "extra_columns",
-                    "columns": extra_cols
-                })
-        
-        # Check column data types
-        dtype_errors = []
-        for col, expected_type in self.schema.items():
-            if col in data.columns:
-                # Get actual type and check compatibility
-                actual_type = data[col].dtype
-                if not self._check_type_compatibility(actual_type, expected_type):
-                    dtype_errors.append({
-                        "column": col,
-                        "expected_type": str(expected_type),
-                        "actual_type": str(actual_type)
-                    })
-        
-        if dtype_errors:
-            results["valid"] = False
-            results["errors"].append({
-                "type": "dtype_mismatch",
-                "mismatches": dtype_errors
-            })
-        
-        logger.info(f"Schema validation completed: {'valid' if results['valid'] else 'invalid'}")
-        return results
-    
-    def _check_type_compatibility(self, actual_type, expected_type) -> bool:
-        """
-        Check if the actual data type is compatible with the expected type.
-        
-        Args:
-            actual_type: Actual data type
-            expected_type: Expected data type
-            
-        Returns:
-            True if compatible, False otherwise
-        """
-        # Convert types to strings for comparison
-        actual_str = str(actual_type).lower()
-        expected_str = str(expected_type).lower()
-        
-        # Direct match
-        if actual_str == expected_str:
-            return True
-        
-        # Check for broader categories
-        if expected_str in ["int", "integer"] and "int" in actual_str:
-            return True
-        if expected_str in ["float", "double"] and ("float" in actual_str or "double" in actual_str):
-            return True
-        if expected_str in ["str", "string", "object"] and ("object" in actual_str or "str" in actual_str):
-            return True
-        if expected_str in ["bool", "boolean"] and ("bool" in actual_str):
-            return True
-        
-        return False
-
-class RangeValidator(DataValidator):
-    """
-    Validator for checking data values within specified ranges.
-    
-    This validator checks that the data values in specified columns
-    fall within expected ranges.
-    """
-    
-    def __init__(self, 
-                 ranges: Dict[str, Dict[str, Any]]):
-        """
-        Initialize a new RangeValidator.
-        
-        Args:
-            ranges: Dictionary mapping column names to range constraints
-                   Each constraint can have 'min', 'max', 'include_min', 'include_max'
-        """
-        self.ranges = ranges
-        logger.info(f"RangeValidator initialized with {len(ranges)} columns")
-        
-    def validate(self, data: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Validate the data against the specified ranges.
-        
-        Args:
-            data: Input DataFrame to validate
-            
-        Returns:
-            Dictionary with validation results
-        """
-        results = {
-            "valid": True,
-            "errors": [],
-            "column_results": {}
-        }
-        
-        for col, range_spec in self.ranges.items():
-            if col not in data.columns:
-                results["errors"].append({
-                    "type": "missing_column",
-                    "column": col
-                })
-                results["valid"] = False
-                continue
-            
-            # Extract range specifications with defaults
-            min_val = range_spec.get("min")
-            max_val = range_spec.get("max")
-            include_min = range_spec.get("include_min", True)
-            include_max = range_spec.get("include_max", True)
-            
-            # Prepare result for this column
-            col_result = {
-                "valid": True,
-                "out_of_range_count": 0
-            }
-            
-            # Validate minimum
-            if min_val is not None:
-                if include_min:
-                    invalid_mask = data[col] < min_val
-                else:
-                    invalid_mask = data[col] <= min_val
-                
-                num_invalid = invalid_mask.sum()
-                if num_invalid > 0:
-                    col_result["valid"] = False
-                    col_result["out_of_range_count"] += num_invalid
-                    col_result["min_violations"] = num_invalid
-            
-            # Validate maximum
-            if max_val is not None:
-                if include_max:
-                    invalid_mask = data[col] > max_val
-                else:
-                    invalid_mask = data[col] >= max_val
-                
-                num_invalid = invalid_mask.sum()
-                if num_invalid > 0:
-                    col_result["valid"] = False
-                    col_result["out_of_range_count"] += num_invalid
-                    col_result["max_violations"] = num_invalid
-            
-            # Update overall result
-            results["column_results"][col] = col_result
-            if not col_result["valid"]:
-                results["valid"] = False
-        
-        logger.info(f"Range validation completed: {'valid' if results['valid'] else 'invalid'}")
-        return results
-
-class FormatValidator(DataValidator):
-    """
-    Validator for checking data format conformity.
-    
-    This validator checks that the data values in specified columns
-    conform to expected formats, such as email, phone number, etc.
-    """
-    
-    # Predefined regex patterns for common formats
-    PATTERNS = {
-        "email": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
-        "phone": r"^\+?[0-9]{10,15}$",
-        "date_iso": r"^\d{4}-\d{2}-\d{2}$",
-        "datetime_iso": r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}",
-        "url": r"^(http|https)://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(/.*)?$",
-        "zipcode_us": r"^\d{5}(-\d{4})?$"
+    if (!validators.isValidId(id)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID format'
+      });
     }
     
-    def __init__(self, 
-                 formats: Dict[str, str]):
-        """
-        Initialize a new FormatValidator.
-        
-        Args:
-            formats: Dictionary mapping column names to format names or regex patterns
-        """
-        self.formats = formats
-        # Compile patterns for efficiency
-        self.compiled_patterns = {}
-        for col, format_spec in formats.items():
-            pattern = self.PATTERNS.get(format_spec, format_spec)
-            self.compiled_patterns[col] = re.compile(pattern)
-        
-        logger.info(f"FormatValidator initialized with {len(formats)} columns")
-        
-    def validate(self, data: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Validate the data against the specified formats.
-        
-        Args:
-            data: Input DataFrame to validate
-            
-        Returns:
-            Dictionary with validation results
-        """
-        results = {
-            "valid": True,
-            "errors": [],
-            "column_results": {}
-        }
-        
-        for col, pattern in self.compiled_patterns.items():
-            if col not in data.columns:
-                results["errors"].append({
-                    "type": "missing_column",
-                    "column": col
-                })
-                results["valid"] = False
-                continue
-            
-            # Convert column to string for regex validation
-            str_series = data[col].astype(str)
-            
-            # Apply regex validation
-            invalid_mask = ~str_series.str.match(pattern)
-            
-            # Handle NaN values (they don't match any pattern)
-            if data[col].isna().any():
-                # Adjust mask to not count NaN as invalid
-                invalid_mask = invalid_mask & ~data[col].isna()
-            
-            num_invalid = invalid_mask.sum()
-            
-            # Prepare result for this column
-            col_result = {
-                "valid": num_invalid == 0,
-                "invalid_count": num_invalid
-            }
-            
-            if num_invalid > 0:
-                # Get examples of invalid values (limit to 5)
-                invalid_examples = str_series[invalid_mask].head(5).tolist()
-                col_result["invalid_examples"] = invalid_examples
-            
-            # Update overall result
-            results["column_results"][col] = col_result
-            if not col_result["valid"]:
-                results["valid"] = False
-        
-        logger.info(f"Format validation completed: {'valid' if results['valid'] else 'invalid'}")
-        return results
-""",
-    },
-    "Fitness Tracking App": {
-        "lib/main.dart": """
-import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+    const user = await UserModel.findById(id).select('-password');
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    logger.info(`Retrieved user: ${id}`);
+    
+    res.status(200).json({
+      success: true,
+      data: user
+    });
+  } catch (error) {
+    logger.error(`Error retrieving user by ID: ${error.message}`);
+    next(error);
+  }
+};
 
+/**
+ * Create new user
+ */
+exports.createUser = async (req, res, next) => {
+  try {
+    const { name, email, password, role } = req.body;
+    
+    // Validate required fields
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide name, email and password'
+      });
+    }
+    
+    // Check if email is valid
+    if (!validators.isValidEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide a valid email'
+      });
+    }
+    
+    // Check if user with this email already exists
+    const existingUser = await UserModel.findOne({ email });
+    
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email already in use'
+      });
+    }
+    
+    // Create new user
+    const user = await UserModel.create({
+      name,
+      email,
+      password, // Password will be hashed in the model
+      role: role || 'user'
+    });
+    
+    logger.info(`Created new user: ${user._id}`);
+    
+    // Remove password from response
+    const userResponse = {
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      createdAt: user.createdAt
+    };
+    
+    res.status(201).json({
+      success: true,
+      data: userResponse
+    });
+  } catch (error) {
+    logger.error(`Error creating user: ${error.message}`);
+    next(error);
+  }
+};
+
+/**
+ * Update user by ID
+ */
+exports.updateUser = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { name, email, role } = req.body;
+    
+    if (!validators.isValidId(id)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID format'
+      });
+    }
+    
+    // Find user first to check if exists
+    const user = await UserModel.findById(id);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    // Check if email is being updated and is already in use
+    if (email && email !== user.email) {
+      if (!validators.isValidEmail(email)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Please provide a valid email'
+        });
+      }
+      
+      const existingUser = await UserModel.findOne({ email });
+      
+      if (existingUser) {
+        return res.status(400).json({
+          success: false,
+          error: 'Email already in use'
+        });
+      }
+    }
+    
+    // Update user
+    const updatedUser = await UserModel.findByIdAndUpdate(
+      id,
+      { name, email, role },
+      { new: true, runValidators: true }
+    ).select('-password');
+    
+    logger.info(`Updated user: ${id}`);
+    
+    res.status(200).json({
+      success: true,
+      data: updatedUser
+    });
+  } catch (error) {
+    logger.error(`Error updating user: ${error.message}`);
+    next(error);
+  }
+};
+
+/**
+ * Delete user by ID
+ */
+exports.deleteUser = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    
+    if (!validators.isValidId(id)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID format'
+      });
+    }
+    
+    const user = await UserModel.findById(id);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    await user.remove();
+    
+    logger.info(`Deleted user: ${id}`);
+    
+    res.status(200).json({
+      success: true,
+      data: {}
+    });
+  } catch (error) {
+    logger.error(`Error deleting user: ${error.message}`);
+    next(error);
+  }
+};
+""",
+        "src/middleware/errorHandler.js": """const logger = require('../utils/logger');
+
+/**
+ * Global error handling middleware
+ */
+const errorHandler = (err, req, res, next) => {
+  // Log the error
+  logger.error(`${err.name}: ${err.message}`);
+  
+  // MongoDB duplicate key error
+  if (err.code === 11000) {
+    const field = Object.keys(err.keyValue)[0];
+    return res.status(400).json({
+      success: false,
+      error: `Duplicate value for ${field}. Please use another value.`,
+      errorCode: 'DUPLICATE_VALUE'
+    });
+  }
+  
+  // Mongoose validation error
+  if (err.name === 'ValidationError') {
+    const errors = Object.values(err.errors).map(val => val.message);
+    return res.status(400).json({
+      success: false,
+      error: errors.join(', '),
+      errorCode: 'VALIDATION_ERROR'
+    });
+  }
+  
+  // Mongoose cast error (usually invalid ID)
+  if (err.name === 'CastError') {
+    return res.status(400).json({
+      success: false,
+      error: `Invalid ${err.path}: ${err.value}`,
+      errorCode: 'INVALID_ID'
+    });
+  }
+  
+  // JSON parse error
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid JSON payload',
+      errorCode: 'INVALID_JSON'
+    });
+  }
+  
+  // Default server error
+  const statusCode = err.statusCode || 500;
+  
+  res.status(statusCode).json({
+    success: false,
+    error: statusCode === 500 ? 'Server Error' : err.message,
+    errorCode: err.errorCode || 'SERVER_ERROR',
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  });
+};
+
+module.exports = errorHandler;
+"""
+    },
+    "django-web-app": {
+        "apps/users/views.py": """from django.shortcuts import render, redirect
+from django.contrib import messages
+from django.contrib.auth import login, authenticate, logout
+from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_http_methods
+from django.http import JsonResponse
+from django.core.paginator import Paginator
+
+from .models import CustomUser
+from .forms import UserRegistrationForm, UserLoginForm, UserUpdateForm
+
+def register_view(request):
+    """Handle user registration"""
+    if request.user.is_authenticated:
+        return redirect('dashboard:index')
+        
+    if request.method == 'POST':
+        form = UserRegistrationForm(request.POST)
+        if form.is_valid():
+            user = form.save()
+            login(request, user)
+            messages.success(request, "Registration successful. Welcome!")
+            return redirect('dashboard:index')
+        else:
+            for error in form.errors.values():
+                messages.error(request, error)
+    else:
+        form = UserRegistrationForm()
+        
+    return render(request, 'users/register.html', {'form': form})
+
+def login_view(request):
+    """Handle user login"""
+    if request.user.is_authenticated:
+        return redirect('dashboard:index')
+        
+    if request.method == 'POST':
+        form = UserLoginForm(request.POST)
+        if form.is_valid():
+            email = form.cleaned_data.get('email')
+            password = form.cleaned_data.get('password')
+            user = authenticate(request, email=email, password=password)
+            
+            if user is not None:
+                login(request, user)
+                messages.success(request, "Login successful. Welcome back!")
+                
+                # Get the next page from query parameters
+                next_page = request.GET.get('next')
+                if next_page:
+                    return redirect(next_page)
+                return redirect('dashboard:index')
+            else:
+                messages.error(request, "Invalid email or password.")
+        else:
+            for error in form.errors.values():
+                messages.error(request, error)
+    else:
+        form = UserLoginForm()
+        
+    return render(request, 'users/login.html', {'form': form})
+
+@login_required
+def logout_view(request):
+    """Handle user logout"""
+    logout(request)
+    messages.success(request, "You have been logged out.")
+    return redirect('users:login')
+
+@login_required
+def profile_view(request):
+    """User profile view and update"""
+    if request.method == 'POST':
+        form = UserUpdateForm(request.POST, request.FILES, instance=request.user)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Your profile has been updated.")
+            return redirect('users:profile')
+        else:
+            for error in form.errors.values():
+                messages.error(request, error)
+    else:
+        form = UserUpdateForm(instance=request.user)
+        
+    return render(request, 'users/profile.html', {'form': form})
+
+@login_required
+@require_http_methods(["GET"])
+def user_list_view(request):
+    """Admin only view for listing all users"""
+    if not request.user.is_staff:
+        messages.error(request, "Permission denied.")
+        return redirect('dashboard:index')
+        
+    users = CustomUser.objects.all().order_by('-date_joined')
+    
+    # Pagination
+    page = request.GET.get('page', 1)
+    paginator = Paginator(users, 10)  # 10 users per page
+    users_page = paginator.get_page(page)
+    
+    return render(request, 'users/user_list.html', {'users': users_page})
+
+@login_required
+@require_http_methods(["GET"])
+def user_detail_view(request, user_id):
+    """Admin only view for user details"""
+    if not request.user.is_staff:
+        messages.error(request, "Permission denied.")
+        return redirect('dashboard:index')
+        
+    try:
+        user = CustomUser.objects.get(id=user_id)
+    except CustomUser.DoesNotExist:
+        messages.error(request, "User not found.")
+        return redirect('users:user_list')
+        
+    return render(request, 'users/user_detail.html', {'user_profile': user})
+
+@login_required
+@require_http_methods(["POST"])
+def toggle_user_status(request, user_id):
+    """Admin only view for activating/deactivating users"""
+    if not request.user.is_staff:
+        return JsonResponse({"success": False, "error": "Permission denied."}, status=403)
+        
+    try:
+        user = CustomUser.objects.get(id=user_id)
+        
+        # Don't allow deactivating yourself
+        if user == request.user:
+            return JsonResponse({"success": False, "error": "You cannot deactivate your own account."}, status=400)
+            
+        user.is_active = not user.is_active
+        user.save()
+        
+        status = "activated" if user.is_active else "deactivated"
+        
+        return JsonResponse({
+            "success": True, 
+            "message": f"User {user.email} has been {status}.",
+            "is_active": user.is_active
+        })
+    except CustomUser.DoesNotExist:
+        return JsonResponse({"success": False, "error": "User not found."}, status=404)
+    except Exception as e:
+        return JsonResponse({"success": False, "error": str(e)}, status=500)
+""",
+        "apps/users/models.py": """from django.db import models
+from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+from django.utils import timezone
+from django.core.validators import EmailValidator, MinLengthValidator
+import uuid
+
+class CustomUserManager(BaseUserManager):
+    """Manager for custom user model"""
+    
+    def create_user(self, email, password=None, **extra_fields):
+        """Create and save a regular user"""
+        if not email:
+            raise ValueError('Email is required')
+        
+        email = self.normalize_email(email)
+        user = self.model(email=email, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        
+        return user
+    
+    def create_superuser(self, email, password=None, **extra_fields):
+        """Create and save a superuser"""
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+        extra_fields.setdefault('is_active', True)
+        
+        if extra_fields.get('is_staff') is not True:
+            raise ValueError('Superuser must have is_staff=True')
+        if extra_fields.get('is_superuser') is not True:
+            raise ValueError('Superuser must have is_superuser=True')
+        
+        return self.create_user(email, password, **extra_fields)
+
+class CustomUser(AbstractBaseUser, PermissionsMixin):
+    """Custom user model that uses email instead of username"""
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    email = models.EmailField(
+        max_length=255, 
+        unique=True,
+        validators=[EmailValidator(message="Please enter a valid email address")]
+    )
+    first_name = models.CharField(
+        max_length=150, 
+        validators=[MinLengthValidator(2, message="First name must be at least 2 characters long")]
+    )
+    last_name = models.CharField(
+        max_length=150,
+        validators=[MinLengthValidator(2, message="Last name must be at least 2 characters long")]
+    )
+    is_active = models.BooleanField(default=True)
+    is_staff = models.BooleanField(default=False)
+    date_joined = models.DateTimeField(default=timezone.now)
+    last_login = models.DateTimeField(null=True, blank=True)
+    profile_picture = models.ImageField(upload_to='profile_pictures/', null=True, blank=True)
+    bio = models.TextField(max_length=500, blank=True)
+    
+    # Settings
+    email_notifications = models.BooleanField(default=True)
+    dark_mode = models.BooleanField(default=False)
+    
+    objects = CustomUserManager()
+    
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['first_name', 'last_name']
+    
+    class Meta:
+        verbose_name = 'user'
+        verbose_name_plural = 'users'
+        ordering = ['-date_joined']
+    
+    def __str__(self):
+        return self.email
+    
+    @property
+    def full_name(self):
+        """Return the full name of the user"""
+        return f"{self.first_name} {self.last_name}"
+    
+    def update_last_login(self):
+        """Update the last login timestamp"""
+        self.last_login = timezone.now()
+        self.save(update_fields=['last_login'])
+        
+    def has_profile_picture(self):
+        """Check if user has a profile picture"""
+        return bool(self.profile_picture)
+
+class UserActivity(models.Model):
+    """Model to track user activities"""
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='activities')
+    activity_type = models.CharField(max_length=50)
+    description = models.TextField()
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True)
+    timestamp = models.DateTimeField(default=timezone.now)
+    
+    class Meta:
+        verbose_name = 'user activity'
+        verbose_name_plural = 'user activities'
+        ordering = ['-timestamp']
+    
+    def __str__(self):
+        return f"{self.user.email} - {self.activity_type} - {self.timestamp}"
+"""
+    },
+    "flutter-mobile-app": {
+        "lib/main.dart": """import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'screens/home_screen.dart';
-import 'screens/workout_screen.dart';
-import 'screens/nutrition_screen.dart';
+import 'screens/login_screen.dart';
 import 'screens/profile_screen.dart';
-import 'screens/auth_screen.dart';
+import 'screens/settings_screen.dart';
+import 'screens/detail_screen.dart';
 import 'services/auth_service.dart';
-import 'services/workout_service.dart';
-import 'services/nutrition_service.dart';
-import 'services/user_service.dart';
-import 'models/user_model.dart';
-import 'theme/app_theme.dart';
+import 'services/api_service.dart';
+import 'services/storage_service.dart';
+import 'utils/theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
   
-  final prefs = await SharedPreferences.getInstance();
-  final bool useDarkMode = prefs.getBool('darkMode') ?? false;
+  // Initialize services
+  final storageService = await StorageService.init();
+  final authService = AuthService(storageService: storageService);
+  final apiService = ApiService(authService: authService);
   
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (ctx) => AuthService()),
-        ChangeNotifierProxyProvider<AuthService, UserService>(
-          create: (ctx) => UserService(null, null),
-          update: (ctx, auth, previous) => UserService(
-            auth.token,
-            auth.userId,
-          ),
-        ),
-        ChangeNotifierProxyProvider<UserService, WorkoutService>(
-          create: (ctx) => WorkoutService(null, null, null),
-          update: (ctx, userService, previous) => WorkoutService(
-            userService.token,
-            userService.userId,
-            userService.user,
-          ),
-        ),
-        ChangeNotifierProxyProvider<UserService, NutritionService>(
-          create: (ctx) => NutritionService(null, null, null),
-          update: (ctx, userService, previous) => NutritionService(
-            userService.token,
-            userService.userId,
-            userService.user,
-          ),
-        ),
-        ChangeNotifierProvider(
-          create: (ctx) => ThemeProvider(useDarkMode ? ThemeMode.dark : ThemeMode.light),
-        ),
+        ChangeNotifierProvider(create: (_) => authService),
+        Provider.value(value: apiService),
+        Provider.value(value: storageService),
       ],
-      child: FitnessApp(),
+      child: MyApp(),
     ),
   );
 }
 
-class FitnessApp extends StatelessWidget {
+class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    final themeProvider = Provider.of<ThemeProvider>(context);
+    final authService = context.watch<AuthService>();
     
     return MaterialApp(
-      title: 'Fitness Tracker',
+      title: 'Flutter Demo App',
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      themeMode: themeProvider.themeMode,
-      home: AuthWrapper(),
+      themeMode: authService.darkMode ? ThemeMode.dark : ThemeMode.light,
+      debugShowCheckedModeBanner: false,
+      initialRoute: authService.isAuthenticated ? '/home' : '/login',
       routes: {
-        HomeScreen.routeName: (ctx) => HomeScreen(),
-        WorkoutScreen.routeName: (ctx) => WorkoutScreen(),
-        NutritionScreen.routeName: (ctx) => NutritionScreen(),
-        ProfileScreen.routeName: (ctx) => ProfileScreen(),
-        AuthScreen.routeName: (ctx) => AuthScreen(),
+        '/login': (context) => LoginScreen(),
+        '/home': (context) => HomeScreen(),
+        '/profile': (context) => ProfileScreen(),
+        '/settings': (context) => SettingsScreen(),
+        '/detail': (context) => DetailScreen(),
       },
     );
-  }
-}
-
-class AuthWrapper extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    final authService = Provider.of<AuthService>(context);
-    
-    return StreamBuilder<UserModel?>(
-      stream: authService.user,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.active) {
-          final UserModel? user = snapshot.data;
-          
-          if (user == null) {
-            return AuthScreen();
-          }
-          
-          // User is logged in
-          return HomeScreen();
-        }
-        
-        // Checking authentication status
-        return Scaffold(
-          body: Center(
-            child: CircularProgressIndicator(),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class ThemeProvider with ChangeNotifier {
-  ThemeMode _themeMode;
-  
-  ThemeProvider(this._themeMode);
-  
-  ThemeMode get themeMode => _themeMode;
-  
-  bool get isDarkMode => _themeMode == ThemeMode.dark;
-  
-  Future<void> toggleTheme() async {
-    _themeMode = _themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
-    notifyListeners();
-    
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('darkMode', isDarkMode);
   }
 }
 """,
-        "lib/screens/home_screen.dart": """
-import 'package:flutter/material.dart';
+        "lib/screens/home_screen.dart": """import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:charts_flutter/flutter.dart' as charts;
-import 'package:intl/intl.dart';
-
-import '../widgets/main_drawer.dart';
-import '../widgets/workout_summary_card.dart';
-import '../widgets/nutrition_summary_card.dart';
-import '../widgets/activity_chart.dart';
-import '../widgets/goal_progress_card.dart';
-import '../services/workout_service.dart';
-import '../services/nutrition_service.dart';
-import '../services/user_service.dart';
-import '../models/workout_model.dart';
-import '../models/nutrition_model.dart';
-import '../models/user_model.dart';
-import 'workout_screen.dart';
-import 'nutrition_screen.dart';
+import '../models/item_model.dart';
+import '../services/api_service.dart';
+import '../services/auth_service.dart';
+import '../widgets/item_card.dart';
+import '../widgets/loading_indicator.dart';
+import '../widgets/custom_button.dart';
+import '../utils/constants.dart';
 
 class HomeScreen extends StatefulWidget {
-  static const routeName = '/home';
-
   @override
   _HomeScreenState createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = false;
-  List<WorkoutModel> _recentWorkouts = [];
-  List<NutritionModel> _recentMeals = [];
+  List<ItemModel> _items = [];
+  String? _error;
+  int _page = 1;
+  bool _hasMoreItems = true;
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
-    _loadData();
+    _loadItems();
+    
+    // Add scroll listener for pagination
+    _scrollController.addListener(() {
+      if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200 &&
+          !_isLoading &&
+          _hasMoreItems) {
+        _loadMoreItems();
+      }
+    });
   }
 
-  Future<void> _loadData() async {
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadItems() async {
+    if (_isLoading) return;
+    
     setState(() {
       _isLoading = true;
+      _error = null;
     });
-
+    
     try {
-      final workoutService = Provider.of<WorkoutService>(context, listen: false);
-      final nutritionService = Provider.of<NutritionService>(context, listen: false);
-
-      // Fetch recent workouts and meals in parallel
-      await Future.wait([
-        workoutService.fetchRecentWorkouts().then((workouts) {
-          _recentWorkouts = workouts;
-        }),
-        nutritionService.fetchRecentMeals().then((meals) {
-          _recentMeals = meals;
-        }),
-      ]);
-    } catch (error) {
-      print('Error loading data: $error');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to load your data. Please try again.'),
-          duration: Duration(seconds: 3),
-        ),
-      );
-    } finally {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      final items = await apiService.fetchItems(page: _page);
+      
       setState(() {
+        _items = items;
+        _isLoading = false;
+        _hasMoreItems = items.length >= Constants.itemsPerPage;
+      });
+    } catch (e) {
+      setState(() {
+        _error = 'Failed to load items: $e';
         _isLoading = false;
       });
     }
   }
 
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
+  Future<void> _loadMoreItems() async {
+    if (_isLoading) return;
+    
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    
+    try {
+      final apiService = Provider.of<ApiService>(context, listen: false);
+      final nextPage = _page + 1;
+      final newItems = await apiService.fetchItems(page: nextPage);
+      
+      setState(() {
+        _items.addAll(newItems);
+        _page = nextPage;
+        _isLoading = false;
+        _hasMoreItems = newItems.length >= Constants.itemsPerPage;
+      });
+    } catch (e) {
+      setState(() {
+        _error = 'Failed to load more items: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _refreshItems() async {
+    setState(() {
+      _page = 1;
+      _hasMoreItems = true;
+    });
+    await _loadItems();
+  }
+
+  void _navigateToItemDetail(ItemModel item) {
+    Navigator.pushNamed(
+      context,
+      '/detail',
+      arguments: item,
+    );
+  }
+
+  void _navigateToProfile() {
+    Navigator.pushNamed(context, '/profile');
+  }
+
+  void _navigateToSettings() {
+    Navigator.pushNamed(context, '/settings');
+  }
+
+  void _logout() {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    authService.logout();
   }
 
   @override
   Widget build(BuildContext context) {
-    final userService = Provider.of<UserService>(context);
-    final user = userService.user;
-    final now = DateTime.now();
-    final today = DateFormat('EEEE, MMMM d').format(now);
-
+    final authService = Provider.of<AuthService>(context);
+    final user = authService.currentUser;
+    
     return Scaffold(
       appBar: AppBar(
-        title: Text('Dashboard'),
+        title: Text('Home'),
         actions: [
           IconButton(
-            icon: Icon(Icons.refresh),
-            onPressed: _loadData,
+            icon: Icon(Icons.settings),
+            onPressed: _navigateToSettings,
+          ),
+          IconButton(
+            icon: Icon(Icons.person),
+            onPressed: _navigateToProfile,
           ),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: [
-            Tab(text: 'Daily'),
-            Tab(text: 'Weekly'),
-            Tab(text: 'Monthly'),
-          ],
-        ),
       ),
-      drawer: MainDrawer(),
-      body: _isLoading
-          ? Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _loadData,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildWelcomeHeader(user, today),
-                    SizedBox(height: 24),
-                    _buildGoalProgress(user),
-                    SizedBox(height: 24),
-                    _buildActivityChart(),
-                    SizedBox(height: 24),
-                    _buildRecentWorkouts(),
-                    SizedBox(height: 24),
-                    _buildRecentMeals(),
-                  ],
-                ),
+      drawer: Drawer(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: <Widget>[
+            DrawerHeader(
+              decoration: BoxDecoration(
+                color: Theme.of(context).primaryColor,
               ),
-            ),
-      floatingActionButton: FloatingActionButton(
-        child: Icon(Icons.add),
-        onPressed: () {
-          _showAddActivityDialog(context);
-        },
-      ),
-    );
-  }
-
-  Widget _buildWelcomeHeader(UserModel? user, String today) {
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 30,
-              backgroundImage: user?.profileImageUrl != null
-                  ? NetworkImage(user!.profileImageUrl!)
-                  : null,
-              child: user?.profileImageUrl == null
-                  ? Icon(Icons.person, size: 30)
-                  : null,
-            ),
-            SizedBox(width: 16),
-            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Hello, ${user?.displayName ?? "Fitness Enthusiast"}!',
-                    style: Theme.of(context).textTheme.headline6,
+                  CircleAvatar(
+                    radius: 30,
+                    backgroundImage: user?.profilePictureUrl != null
+                        ? NetworkImage(user!.profilePictureUrl!)
+                        : null,
+                    child: user?.profilePictureUrl == null
+                        ? Icon(Icons.person, size: 30)
+                        : null,
                   ),
-                  SizedBox(height: 4),
+                  SizedBox(height: 10),
                   Text(
-                    today,
-                    style: Theme.of(context).textTheme.subtitle1,
+                    user?.displayName ?? 'Guest',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                    ),
+                  ),
+                  SizedBox(height: 5),
+                  Text(
+                    user?.email ?? '',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                    ),
                   ),
                 ],
               ),
             ),
+            ListTile(
+              leading: Icon(Icons.home),
+              title: Text('Home'),
+              selected: true,
+              onTap: () {
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.person),
+              title: Text('Profile'),
+              onTap: () {
+                Navigator.pop(context);
+                _navigateToProfile();
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.settings),
+              title: Text('Settings'),
+              onTap: () {
+                Navigator.pop(context);
+                _navigateToSettings();
+              },
+            ),
+            Divider(),
+            ListTile(
+              leading: Icon(Icons.exit_to_app),
+              title: Text('Logout'),
+              onTap: () {
+                Navigator.pop(context);
+                _logout();
+              },
+            ),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildGoalProgress(UserModel? user) {
-    final goals = user?.fitnessGoals ?? [];
-    
-    if (goals.isEmpty) {
-      return Card(
-        elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Fitness Goals',
-                style: Theme.of(context).textTheme.headline6,
-              ),
-              SizedBox(height: 16),
-              Center(
-                child: Text(
-                  'You haven\'t set any fitness goals yet.',
-                  style: Theme.of(context).textTheme.subtitle1,
+      body: RefreshIndicator(
+        onRefresh: _refreshItems,
+        child: _error != null
+            ? Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(_error!, style: TextStyle(color: Colors.red)),
+                    SizedBox(height: 20),
+                    CustomButton(
+                      label: 'Retry',
+                      onPressed: _loadItems,
+                    ),
+                  ],
                 ),
-              ),
-              SizedBox(height: 8),
-              Center(
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.of(context).pushNamed(ProfileScreen.routeName);
-                  },
-                  child: Text('Set Goals'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Your Goals',
-          style: Theme.of(context).textTheme.headline6,
-        ),
-        SizedBox(height: 8),
-        GridView.builder(
-          shrinkWrap: true,
-          physics: NeverScrollableScrollPhysics(),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            childAspectRatio: 1.5,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-          ),
-          itemCount: goals.length > 4 ? 4 : goals.length,
-          itemBuilder: (ctx, index) => GoalProgressCard(goal: goals[index]),
-        ),
-        if (goals.length > 4)
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: () {
-                Navigator.of(context).pushNamed(ProfileScreen.routeName);
-              },
-              child: Text('View All Goals'),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildActivityChart() {
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Activity Overview',
-              style: Theme.of(context).textTheme.headline6,
-            ),
-            SizedBox(height: 16),
-            Container(
-              height: 200,
-              child: TabBarView(
-                controller: _tabController,
+              )
+            : Column(
                 children: [
-                  ActivityChart(period: 'daily'),
-                  ActivityChart(period: 'weekly'),
-                  ActivityChart(period: 'monthly'),
+                  Expanded(
+                    child: _items.isEmpty && _isLoading
+                        ? Center(child: LoadingIndicator())
+                        : _items.isEmpty
+                            ? Center(child: Text('No items found'))
+                            : GridView.builder(
+                                controller: _scrollController,
+                                padding: EdgeInsets.all(16),
+                                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 2,
+                                  childAspectRatio: 0.7,
+                                  crossAxisSpacing: 16,
+                                  mainAxisSpacing: 16,
+                                ),
+                                itemCount: _items.length,
+                                itemBuilder: (context, index) {
+                                  final item = _items[index];
+                                  return ItemCard(
+                                    item: item,
+                                    onTap: () => _navigateToItemDetail(item),
+                                  );
+                                },
+                              ),
+                  ),
+                  if (_isLoading && _items.isNotEmpty)
+                    Padding(
+                      padding: EdgeInsets.all(16),
+                      child: LoadingIndicator(),
+                    ),
                 ],
               ),
-            ),
-          ],
-        ),
       ),
-    );
-  }
-
-  Widget _buildRecentWorkouts() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Recent Workouts',
-              style: Theme.of(context).textTheme.headline6,
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pushNamed(WorkoutScreen.routeName);
-              },
-              child: Text('See All'),
-            ),
-          ],
-        ),
-        SizedBox(height: 8),
-        _recentWorkouts.isEmpty
-            ? Center(
-                child: Text('No recent workouts found.'),
-              )
-            : ListView.builder(
-                shrinkWrap: true,
-                physics: NeverScrollableScrollPhysics(),
-                itemCount: _recentWorkouts.length > 3
-                    ? 3
-                    : _recentWorkouts.length,
-                itemBuilder: (ctx, index) => WorkoutSummaryCard(
-                  workout: _recentWorkouts[index],
-                ),
-              ),
-      ],
-    );
-  }
-
-  Widget _buildRecentMeals() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Recent Meals',
-              style: Theme.of(context).textTheme.headline6,
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pushNamed(NutritionScreen.routeName);
-              },
-              child: Text('See All'),
-            ),
-          ],
-        ),
-        SizedBox(height: 8),
-        _recentMeals.isEmpty
-            ? Center(
-                child: Text('No recent meals found.'),
-              )
-            : ListView.builder(
-                shrinkWrap: true,
-                physics: NeverScrollableScrollPhysics(),
-                itemCount:
-                    _recentMeals.length > 3 ? 3 : _recentMeals.length,
-                itemBuilder: (ctx, index) => NutritionSummaryCard(
-                  meal: _recentMeals[index],
-                ),
-              ),
-      ],
-    );
-  }
-
-  void _showAddActivityDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Add Activity'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: Icon(Icons.fitness_center),
-              title: Text('Add Workout'),
-              onTap: () {
-                Navigator.of(ctx).pop();
-                Navigator.of(context).pushNamed(WorkoutScreen.routeName, arguments: {'addNew': true});
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.restaurant),
-              title: Text('Add Meal'),
-              onTap: () {
-                Navigator.of(ctx).pop();
-                Navigator.of(context).pushNamed(NutritionScreen.routeName, arguments: {'addNew': true});
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-            },
-            child: Text('Cancel'),
-          ),
-        ],
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          // Add new item functionality
+        },
+        child: Icon(Icons.add),
+        tooltip: 'Add new item',
       ),
     );
   }
 }
 """,
-        "lib/models/user_model.dart": """
-import 'package:cloud_firestore/cloud_firestore.dart';
+        "lib/models/user_model.dart": """import 'dart:convert';
 
 class UserModel {
   final String id;
   final String email;
-  final String? displayName;
-  final String? profileImageUrl;
-  final DateTime? dateOfBirth;
-  final double? height; // in cm
-  final double? weight; // in kg
-  final String? gender;
-  final List<FitnessGoal> fitnessGoals;
-  final UserPreferences preferences;
-  final UserStats stats;
+  final String displayName;
+  final String? profilePictureUrl;
+  final String? bio;
+  final bool emailNotifications;
+  final bool darkMode;
+  final DateTime createdAt;
+  final DateTime? lastLogin;
 
   UserModel({
     required this.id,
     required this.email,
-    this.displayName,
-    this.profileImageUrl,
-    this.dateOfBirth,
-    this.height,
-    this.weight,
-    this.gender,
-    List<FitnessGoal>? fitnessGoals,
-    UserPreferences? preferences,
-    UserStats? stats,
-  })  : this.fitnessGoals = fitnessGoals ?? [],
-        this.preferences = preferences ?? UserPreferences(),
-        this.stats = stats ?? UserStats();
-
-  factory UserModel.fromFirestore(DocumentSnapshot doc) {
-    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-    
-    List<FitnessGoal> goals = [];
-    if (data['fitnessGoals'] != null) {
-      goals = (data['fitnessGoals'] as List)
-          .map((goal) => FitnessGoal.fromMap(goal))
-          .toList();
-    }
-    
-    return UserModel(
-      id: doc.id,
-      email: data['email'] ?? '',
-      displayName: data['displayName'],
-      profileImageUrl: data['profileImageUrl'],
-      dateOfBirth: data['dateOfBirth'] != null
-          ? (data['dateOfBirth'] as Timestamp).toDate()
-          : null,
-      height: data['height']?.toDouble(),
-      weight: data['weight']?.toDouble(),
-      gender: data['gender'],
-      fitnessGoals: goals,
-      preferences: data['preferences'] != null
-          ? UserPreferences.fromMap(data['preferences'])
-          : null,
-      stats: data['stats'] != null
-          ? UserStats.fromMap(data['stats'])
-          : null,
-    );
-  }
-
-  Map<String, dynamic> toMap() {
-    return {
-      'email': email,
-      'displayName': displayName,
-      'profileImageUrl': profileImageUrl,
-      'dateOfBirth': dateOfBirth != null ? Timestamp.fromDate(dateOfBirth!) : null,
-      'height': height,
-      'weight': weight,
-      'gender': gender,
-      'fitnessGoals': fitnessGoals.map((goal) => goal.toMap()).toList(),
-      'preferences': preferences.toMap(),
-      'stats': stats.toMap(),
-    };
-  }
-
-  UserModel copyWith({
-    String? displayName,
-    String? profileImageUrl,
-    DateTime? dateOfBirth,
-    double? height,
-    double? weight,
-    String? gender,
-    List<FitnessGoal>? fitnessGoals,
-    UserPreferences? preferences,
-    UserStats? stats,
-  }) {
-    return UserModel(
-      id: this.id,
-      email: this.email,
-      displayName: displayName ?? this.displayName,
-      profileImageUrl: profileImageUrl ?? this.profileImageUrl,
-      dateOfBirth: dateOfBirth ?? this.dateOfBirth,
-      height: height ?? this.height,
-      weight: weight ?? this.weight,
-      gender: gender ?? this.gender,
-      fitnessGoals: fitnessGoals ?? this.fitnessGoals,
-      preferences: preferences ?? this.preferences,
-      stats: stats ?? this.stats,
-    );
-  }
-
-  String get bmi {
-    if (height == null || weight == null || height! <= 0) return 'N/A';
-    final heightInMeters = height! / 100;
-    final bmiValue = weight! / (heightInMeters * heightInMeters);
-    return bmiValue.toStringAsFixed(1);
-  }
-
-  String get bmiCategory {
-    if (height == null || weight == null || height! <= 0) return 'Unknown';
-    
-    final bmiValue = double.parse(bmi);
-    
-    if (bmiValue < 18.5) return 'Underweight';
-    if (bmiValue < 25) return 'Normal';
-    if (bmiValue < 30) return 'Overweight';
-    return 'Obese';
-  }
-
-  int get age {
-    if (dateOfBirth == null) return 0;
-    
-    final now = DateTime.now();
-    int age = now.year - dateOfBirth!.year;
-    
-    if (now.month < dateOfBirth!.month || 
-        (now.month == dateOfBirth!.month && now.day < dateOfBirth!.day)) {
-      age--;
-    }
-    
-    return age;
-  }
-}
-
-class FitnessGoal {
-  final String id;
-  final String title;
-  final String description;
-  final DateTime targetDate;
-  final double targetValue;
-  final double currentValue;
-  final String unit;
-  final String type; // weight, steps, workout, etc.
-  final bool completed;
-
-  FitnessGoal({
-    required this.id,
-    required this.title,
-    required this.description,
-    required this.targetDate,
-    required this.targetValue,
-    required this.currentValue,
-    required this.unit,
-    required this.type,
-    this.completed = false,
+    required this.displayName,
+    this.profilePictureUrl,
+    this.bio,
+    required this.emailNotifications,
+    required this.darkMode,
+    required this.createdAt,
+    this.lastLogin,
   });
 
-  factory FitnessGoal.fromMap(Map<String, dynamic> map) {
-    return FitnessGoal(
-      id: map['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
-      title: map['title'] ?? '',
-      description: map['description'] ?? '',
-      targetDate: map['targetDate'] != null
-          ? (map['targetDate'] as Timestamp).toDate()
-          : DateTime.now().add(Duration(days: 30)),
-      targetValue: map['targetValue']?.toDouble() ?? 0.0,
-      currentValue: map['currentValue']?.toDouble() ?? 0.0,
-      unit: map['unit'] ?? '',
-      type: map['type'] ?? '',
-      completed: map['completed'] ?? false,
+  UserModel copyWith({
+    String? id,
+    String? email,
+    String? displayName,
+    String? profilePictureUrl,
+    String? bio,
+    bool? emailNotifications,
+    bool? darkMode,
+    DateTime? createdAt,
+    DateTime? lastLogin,
+  }) {
+    return UserModel(
+      id: id ?? this.id,
+      email: email ?? this.email,
+      displayName: displayName ?? this.displayName,
+      profilePictureUrl: profilePictureUrl ?? this.profilePictureUrl,
+      bio: bio ?? this.bio,
+      emailNotifications: emailNotifications ?? this.emailNotifications,
+      darkMode: darkMode ?? this.darkMode,
+      createdAt: createdAt ?? this.createdAt,
+      lastLogin: lastLogin ?? this.lastLogin,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'title': title,
-      'description': description,
-      'targetDate': Timestamp.fromDate(targetDate),
-      'targetValue': targetValue,
-      'currentValue': currentValue,
-      'unit': unit,
-      'type': type,
-      'completed': completed,
+      'email': email,
+      'displayName': displayName,
+      'profilePictureUrl': profilePictureUrl,
+      'bio': bio,
+      'emailNotifications': emailNotifications,
+      'darkMode': darkMode,
+      'createdAt': createdAt.toIso8601String(),
+      'lastLogin': lastLogin?.toIso8601String(),
     };
   }
 
-  double get progressPercentage {
-    if (targetValue == 0) return 0;
-    
-    // For weight loss, the progress is inverted
-    if (type == 'weight' && targetValue < currentValue) {
-      final startValue = currentValue * 2 - targetValue; // Calculate the starting point
-      final totalChange = startValue - targetValue;
-      final currentChange = startValue - currentValue;
-      return (currentChange / totalChange).clamp(0.0, 1.0);
+  factory UserModel.fromMap(Map<String, dynamic> map) {
+    return UserModel(
+      id: map['id'],
+      email: map['email'],
+      displayName: map['displayName'] ?? map['display_name'],
+      profilePictureUrl: map['profilePictureUrl'] ?? map['profile_picture_url'],
+      bio: map['bio'],
+      emailNotifications: map['emailNotifications'] ?? map['email_notifications'] ?? true,
+      darkMode: map['darkMode'] ?? map['dark_mode'] ?? false,
+      createdAt: DateTime.parse(map['createdAt'] ?? map['created_at']),
+      lastLogin: map['lastLogin'] != null || map['last_login'] != null
+          ? DateTime.parse(map['lastLogin'] ?? map['last_login'])
+          : null,
+    );
+  }
+
+  String toJson() => json.encode(toMap());
+
+  factory UserModel.fromJson(String source) => UserModel.fromMap(json.decode(source));
+
+  @override
+  String toString() {
+    return 'UserModel(id: $id, email: $email, displayName: $displayName, '
+        'profilePictureUrl: $profilePictureUrl, bio: $bio, '
+        'emailNotifications: $emailNotifications, darkMode: $darkMode, '
+        'createdAt: $createdAt, lastLogin: $lastLogin)';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+  
+    return other is UserModel &&
+      other.id == id &&
+      other.email == email &&
+      other.displayName == displayName &&
+      other.profilePictureUrl == profilePictureUrl &&
+      other.bio == bio &&
+      other.emailNotifications == emailNotifications &&
+      other.darkMode == darkMode &&
+      other.createdAt == createdAt &&
+      other.lastLogin == lastLogin;
+  }
+
+  @override
+  int get hashCode {
+    return id.hashCode ^
+      email.hashCode ^
+      displayName.hashCode ^
+      profilePictureUrl.hashCode ^
+      bio.hashCode ^
+      emailNotifications.hashCode ^
+      darkMode.hashCode ^
+      createdAt.hashCode ^
+      lastLogin.hashCode;
+  }
+}
+"""
+    },
+    "spring-boot-microservice": {
+        "src/main/java/com/example/microservice/controllers/UserController.java": """package com.example.microservice.controllers;
+
+import com.example.microservice.models.User;
+import com.example.microservice.services.UserService;
+import com.example.microservice.exceptions.ResourceNotFoundException;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.*;
+
+import javax.validation.Valid;
+import javax.validation.constraints.NotNull;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+@RestController
+@RequestMapping("/api/users")
+@Validated
+public class UserController {
+
+    private final UserService userService;
+
+    @Autowired
+    public UserController(UserService userService) {
+        this.userService = userService;
     }
-    
-    return (currentValue / targetValue).clamp(0.0, 1.0);
-  }
 
-  FitnessGoal copyWith({
-    String? title,
-    String? description,
-    DateTime? targetDate,
-    double? targetValue,
-    double? currentValue,
-    String? unit,
-    String? type,
-    bool? completed,
-  }) {
-    return FitnessGoal(
-      id: this.id,
-      title: title ?? this.title,
-      description: description ?? this.description,
-      targetDate: targetDate ?? this.targetDate,
-      targetValue: targetValue ?? this.targetValue,
-      currentValue: currentValue ?? this.currentValue,
-      unit: unit ?? this.unit,
-      type: type ?? this.type,
-      completed: completed ?? this.completed,
-    );
-  }
-}
+    /**
+     * Get all users with pagination and sorting
+     *
+     * @param page Page number (zero-based)
+     * @param size Page size
+     * @param sort Sort field
+     * @param order Sort order (asc or desc)
+     * @return List of users
+     */
+    @GetMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> getAllUsers(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(defaultValue = "createdAt") String sort,
+            @RequestParam(defaultValue = "desc") String order) {
+        
+        Map<String, Object> response = userService.getAllUsers(page, size, sort, order);
+        return ResponseEntity.ok(response);
+    }
 
-class UserPreferences {
-  final bool useDarkMode;
-  final String unitSystem; // metric or imperial
-  final List<String> workoutPreferences;
-  final List<String> dietaryRestrictions;
-  final Map<String, bool> notifications;
+    /**
+     * Get user by ID
+     *
+     * @param id User ID
+     * @return User details
+     */
+    @GetMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN') or @userSecurity.isCurrentUser(#id)")
+    public ResponseEntity<User> getUserById(@PathVariable UUID id) {
+        User user = userService.getUserById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + id));
+        return ResponseEntity.ok(user);
+    }
 
-  UserPreferences({
-    this.useDarkMode = false,
-    this.unitSystem = 'metric',
-    List<String>? workoutPreferences,
-    List<String>? dietaryRestrictions,
-    Map<String, bool>? notifications,
-  })  : this.workoutPreferences = workoutPreferences ?? [],
-        this.dietaryRestrictions = dietaryRestrictions ?? [],
-        this.notifications = notifications ?? {
-          'workoutReminders': true,
-          'mealReminders': true,
-          'goalUpdates': true,
-          'weeklyRecap': true,
-        };
+    /**
+     * Create a new user
+     *
+     * @param user User details
+     * @return Created user
+     */
+    @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<User> createUser(@Valid @RequestBody User user) {
+        User createdUser = userService.createUser(user);
+        return new ResponseEntity<>(createdUser, HttpStatus.CREATED);
+    }
 
-  factory UserPreferences.fromMap(Map<String, dynamic> map) {
-    return UserPreferences(
-      useDarkMode: map['useDarkMode'] ?? false,
-      unitSystem: map['unitSystem'] ?? 'metric',
-      workoutPreferences: map['workoutPreferences'] != null
-          ? List<String>.from(map['workoutPreferences'])
-          : null,
-      dietaryRestrictions: map['dietaryRestrictions'] != null
-          ? List<String>.from(map['dietaryRestrictions'])
-          : null,
-      notifications: map['notifications'] != null
-          ? Map<String, bool>.from(map['notifications'])
-          : null,
-    );
-  }
+    /**
+     * Update user details
+     *
+     * @param id User ID
+     * @param userDetails Updated user details
+     * @return Updated user
+     */
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN') or @userSecurity.isCurrentUser(#id)")
+    public ResponseEntity<User> updateUser(
+            @PathVariable UUID id,
+            @Valid @RequestBody User userDetails) {
+        
+        User updatedUser = userService.updateUser(id, userDetails);
+        return ResponseEntity.ok(updatedUser);
+    }
 
-  Map<String, dynamic> toMap() {
-    return {
-      'useDarkMode': useDarkMode,
-      'unitSystem': unitSystem,
-      'workoutPreferences': workoutPreferences,
-      'dietaryRestrictions': dietaryRestrictions,
-      'notifications': notifications,
-    };
-  }
+    /**
+     * Delete a user
+     *
+     * @param id User ID
+     * @return Deletion confirmation
+     */
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Boolean>> deleteUser(@PathVariable UUID id) {
+        userService.deleteUser(id);
+        
+        Map<String, Boolean> response = new HashMap<>();
+        response.put("deleted", Boolean.TRUE);
+        return ResponseEntity.ok(response);
+    }
 
-  UserPreferences copyWith({
-    bool? useDarkMode,
-    String? unitSystem,
-    List<String>? workoutPreferences,
-    List<String>? dietaryRestrictions,
-    Map<String, bool>? notifications,
-  }) {
-    return UserPreferences(
-      useDarkMode: useDarkMode ?? this.useDarkMode,
-      unitSystem: unitSystem ?? this.unitSystem,
-      workoutPreferences: workoutPreferences ?? this.workoutPreferences,
-      dietaryRestrictions: dietaryRestrictions ?? this.dietaryRestrictions,
-      notifications: notifications ?? this.notifications,
-    );
-  }
-}
+    /**
+     * Change user password
+     *
+     * @param id User ID
+     * @param passwordRequest Password change request
+     * @return Status message
+     */
+    @PostMapping("/{id}/change-password")
+    @PreAuthorize("hasRole('ADMIN') or @userSecurity.isCurrentUser(#id)")
+    public ResponseEntity<Map<String, String>> changePassword(
+            @PathVariable UUID id,
+            @Valid @RequestBody Map<String, String> passwordRequest) {
+        
+        String currentPassword = passwordRequest.get("currentPassword");
+        String newPassword = passwordRequest.get("newPassword");
+        
+        if (currentPassword == null || newPassword == null) {
+            throw new IllegalArgumentException("Current password and new password are required");
+        }
+        
+        userService.changePassword(id, currentPassword, newPassword);
+        
+        Map<String, String> response = new HashMap<>();
+        response.put("message", "Password changed successfully");
+        return ResponseEntity.ok(response);
+    }
 
-class UserStats {
-  final int totalWorkouts;
-  final int workoutStreak;
-  final Duration totalWorkoutTime;
-  final double totalCaloriesBurned;
-  final double totalDistanceCovered; // in km
-  final Map<String, int> workoutTypeCount;
-  final Map<String, double> nutritionAverages;
+    /**
+     * Toggle user active status
+     *
+     * @param id User ID
+     * @return Updated user
+     */
+    @PostMapping("/{id}/toggle-status")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<User> toggleUserStatus(@PathVariable UUID id) {
+        User user = userService.toggleUserStatus(id);
+        return ResponseEntity.ok(user);
+    }
 
-  UserStats({
-    this.totalWorkouts = 0,
-    this.workoutStreak = 0,
-    Duration? totalWorkoutTime,
-    this.totalCaloriesBurned = 0,
-    this.totalDistanceCovered = 0,
-    Map<String, int>? workoutTypeCount,
-    Map<String, double>? nutritionAverages,
-  })  : this.totalWorkoutTime = totalWorkoutTime ?? Duration.zero,
-        this.workoutTypeCount = workoutTypeCount ?? {},
-        this.nutritionAverages = nutritionAverages ?? {};
+    /**
+     * Get current user profile
+     *
+     * @return Current user details
+     */
+    @GetMapping("/me")
+    public ResponseEntity<User> getCurrentUser() {
+        User currentUser = userService.getCurrentUser();
+        return ResponseEntity.ok(currentUser);
+    }
 
-  factory UserStats.fromMap(Map<String, dynamic> map) {
-    return UserStats(
-      totalWorkouts: map['totalWorkouts'] ?? 0,
-      workoutStreak: map['workoutStreak'] ?? 0,
-      totalWorkoutTime: map['totalWorkoutTimeMinutes'] != null
-          ? Duration(minutes: map['totalWorkoutTimeMinutes'])
-          : null,
-      totalCaloriesBurned: map['totalCaloriesBurned']?.toDouble() ?? 0,
-      totalDistanceCovered: map['totalDistanceCovered']?.toDouble() ?? 0,
-      workoutTypeCount: map['workoutTypeCount'] != null
-          ? Map<String, int>.from(map['workoutTypeCount'])
-          : null,
-      nutritionAverages: map['nutritionAverages'] != null
-          ? Map<String, double>.from(map['nutritionAverages'])
-          : null,
-    );
-  }
-
-  Map<String, dynamic> toMap() {
-    return {
-      'totalWorkouts': totalWorkouts,
-      'workoutStreak': workoutStreak,
-      'totalWorkoutTimeMinutes': totalWorkoutTime.inMinutes,
-      'totalCaloriesBurned': totalCaloriesBurned,
-      'totalDistanceCovered': totalDistanceCovered,
-      'workoutTypeCount': workoutTypeCount,
-      'nutritionAverages': nutritionAverages,
-    };
-  }
-
-  UserStats copyWith({
-    int? totalWorkouts,
-    int? workoutStreak,
-    Duration? totalWorkoutTime,
-    double? totalCaloriesBurned,
-    double? totalDistanceCovered,
-    Map<String, int>? workoutTypeCount,
-    Map<String, double>? nutritionAverages,
-  }) {
-    return UserStats(
-      totalWorkouts: totalWorkouts ?? this.totalWorkouts,
-      workoutStreak: workoutStreak ?? this.workoutStreak,
-      totalWorkoutTime: totalWorkoutTime ?? this.totalWorkoutTime,
-      totalCaloriesBurned: totalCaloriesBurned ?? this.totalCaloriesBurned,
-      totalDistanceCovered: totalDistanceCovered ?? this.totalDistanceCovered,
-      workoutTypeCount: workoutTypeCount ?? this.workoutTypeCount,
-      nutritionAverages: nutritionAverages ?? this.nutritionAverages,
-    );
-  }
+    /**
+     * Search users
+     *
+     * @param query Search query
+     * @param page Page number
+     * @param size Page size
+     * @return Search results
+     */
+    @GetMapping("/search")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> searchUsers(
+            @RequestParam @NotNull String query,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        
+        Map<String, Object> results = userService.searchUsers(query, page, size);
+        return ResponseEntity.ok(results);
+    }
 }
 """,
-    },
+        "src/main/java/com/example/microservice/config/SecurityConfig.java": """package com.example.microservice.config;
+
+import com.example.microservice.security.CustomUserDetailsService;
+import com.example.microservice.security.JwtAuthenticationEntryPoint;
+import com.example.microservice.security.JwtAuthenticationFilter;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
+import org.springframework.security.config.annotation.method.configuration.EnableGlobalMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.filter.CorsFilter;
+
+import java.util.Arrays;
+import java.util.Collections;
+
+@Configuration
+@EnableWebSecurity
+@EnableGlobalMethodSecurity(
+    securedEnabled = true,
+    jsr250Enabled = true,
+    prePostEnabled = true
+)
+public class SecurityConfig extends WebSecurityConfigurerAdapter {
+
+    @Autowired
+    private CustomUserDetailsService userDetailsService;
+
+    @Autowired
+    private JwtAuthenticationEntryPoint unauthorizedHandler;
+
+    @Bean
+    public JwtAuthenticationFilter jwtAuthenticationFilter() {
+        return new JwtAuthenticationFilter();
+    }
+
+    @Override
+    protected void configure(AuthenticationManagerBuilder auth) throws Exception {
+        auth.userDetailsService(userDetailsService).passwordEncoder(passwordEncoder());
+    }
+
+    @Bean
+    @Override
+    public AuthenticationManager authenticationManagerBean() throws Exception {
+        return super.authenticationManagerBean();
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Override
+    protected void configure(HttpSecurity http) throws Exception {
+        http
+            .cors()
+                .and()
+            .csrf()
+                .disable()
+            .exceptionHandling()
+                .authenticationEntryPoint(unauthorizedHandler)
+                .and()
+            .sessionManagement()
+                .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                .and()
+            .authorizeRequests()
+                .antMatchers("/",
+                    "/favicon.ico",
+                    "/**/*.png",
+                    "/**/*.gif",
+                    "/**/*.svg",
+                    "/**/*.jpg",
+                    "/**/*.html",
+                    "/**/*.css",
+                    "/**/*.js")
+                    .permitAll()
+                .antMatchers("/api/auth/**")
+                    .permitAll()
+                .antMatchers("/api/health/**")
+                    .permitAll()
+                .antMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
+                    .permitAll()
+                .antMatchers(HttpMethod.GET, "/api/products")
+                    .permitAll()
+                .anyRequest()
+                    .authenticated();
+
+        // Add our custom JWT security filter
+        http.addFilterBefore(jwtAuthenticationFilter(), UsernamePasswordAuthenticationFilter.class);
+    }
+
+    @Bean
+    public CorsFilter corsFilter() {
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        CorsConfiguration config = new CorsConfiguration();
+        
+        config.setAllowCredentials(true);
+        config.setAllowedOriginPatterns(Collections.singletonList("*"));
+        config.setAllowedHeaders(Arrays.asList("Origin", "Content-Type", "Accept", "Authorization"));
+        config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        
+        source.registerCorsConfiguration("/**", config);
+        return new CorsFilter(source);
+    }
+}
+"""
+    }
 }
 
-# Sidebar
+# Function to flatten a nested directory structure
+def flatten_directory_structure(structure, prefix=""):
+    files = []
+    for name, value in structure.items():
+        path = f"{prefix}/{name}" if prefix else name
+        if isinstance(value, dict) and not all(k in ["language", "loc", "complexity"] for k in value.keys()):
+            # This is a directory
+            files.extend(flatten_directory_structure(value, path))
+        else:
+            # This is a file
+            files.append({
+                "path": path,
+                "language": value.get("language", "Unknown"),
+                "loc": value.get("loc", 0),
+                "complexity": value.get("complexity", 0)
+            })
+    return files
+
+# Initialize session state variables if not already set
+if "selected_repository" not in st.session_state:
+    st.session_state.selected_repository = None
+
+if "repository_files" not in st.session_state:
+    st.session_state.repository_files = []
+
+if "repository_name" not in st.session_state:
+    st.session_state.repository_name = ""
+
+if "repository_language" not in st.session_state:
+    st.session_state.repository_language = ""
+
+if "file_contents" not in st.session_state:
+    st.session_state.file_contents = {}
+
+if "current_file" not in st.session_state:
+    st.session_state.current_file = None
+
+if "analysis_results" not in st.session_state:
+    st.session_state.analysis_results = None
+
+if "file_analysis" not in st.session_state:
+    st.session_state.file_analysis = {}
+
+if "repository_metrics" not in st.session_state:
+    st.session_state.repository_metrics = None
+
+# Sidebar - Repository selector
 st.sidebar.title("Repository Analysis")
 
-# Repository selection
+# Option to select sample repositories or upload your own
 repository_source = st.sidebar.radio(
     "Repository Source",
-    ["Sample Repository", "GitHub URL", "Upload Files"]
+    ["Sample Repositories", "Upload Repository"]
 )
 
-if repository_source == "Sample Repository":
-    # Sample repository selection
-    selected_repo = st.sidebar.selectbox(
-        "Select Sample Repository",
-        list(SAMPLE_REPOSITORIES.keys())
+if repository_source == "Sample Repositories":
+    selected_repo_key = st.sidebar.selectbox(
+        "Select Repository",
+        list(sample_repositories.keys()),
+        format_func=lambda x: sample_repositories[x]["name"]
     )
     
-    # Add repository to session state
     if st.sidebar.button("Analyze Repository"):
-        with st.spinner("Analyzing repository..."):
-            # Store file contents in session state
-            st.session_state.file_contents = SAMPLE_REPOSITORIES[selected_repo]
-            
-            # Analyze repository
-            repo_analysis = analyze_repository(st.session_state.file_contents)
-            if repo_analysis:
-                st.session_state.repo_analysis = repo_analysis
-                st.sidebar.success("Repository analysis completed!")
-
-elif repository_source == "GitHub URL":
-    # GitHub URL input
-    github_url = st.sidebar.text_input(
-        "GitHub Repository URL",
-        placeholder="https://github.com/username/repo"
-    )
-    
-    # Add note about limitations
-    st.sidebar.info("Note: Due to platform limitations, only public repositories can be analyzed, and large repositories may time out.")
-    
-    # Add repository to session state
-    if st.sidebar.button("Analyze Repository") and github_url:
-        st.sidebar.error("GitHub analysis is not implemented in this demo. Please use Sample Repository option.")
-
-elif repository_source == "Upload Files":
-    # File upload
-    uploaded_files = st.sidebar.file_uploader(
-        "Upload Repository Files",
-        accept_multiple_files=True,
-        type=["py", "js", "java", "cpp", "c", "h", "cs", "go", "rb", "php", "ts", "html", "css", "dart", "swift", "json", "yaml", "yml"]
-    )
-    
-    # Add repository to session state
-    if st.sidebar.button("Analyze Repository") and uploaded_files:
-        with st.spinner("Analyzing uploaded files..."):
-            # Process uploaded files
-            file_contents = {}
-            for file in uploaded_files:
-                file_contents[file.name] = file.getvalue().decode("utf-8")
-            
-            # Store file contents in session state
-            st.session_state.file_contents = file_contents
-            
-            # Analyze repository
-            repo_analysis = analyze_repository(file_contents)
-            if repo_analysis:
-                st.session_state.repo_analysis = repo_analysis
-                st.sidebar.success("Repository analysis completed!")
-
-# File analysis
-if st.session_state.repo_analysis and st.session_state.file_contents:
-    selected_file = st.sidebar.selectbox(
-        "Select File for Analysis",
-        options=list(st.session_state.file_contents.keys()),
-        format_func=lambda x: os.path.basename(x)
-    )
-    
-    if st.sidebar.button("Analyze File"):
-        with st.spinner("Analyzing file..."):
-            file_info = {
-                "path": selected_file,
-                "name": os.path.basename(selected_file),
-                "extension": os.path.splitext(selected_file)[1].lower(),
-                "content": st.session_state.file_contents[selected_file],
-                "size": len(st.session_state.file_contents[selected_file])
-            }
-            
-            # Get language based on file extension
-            ext = file_info["extension"]
-            if ext in ['.py']:
-                file_info["language"] = "Python"
-            elif ext in ['.js']:
-                file_info["language"] = "JavaScript"
-            elif ext in ['.ts']:
-                file_info["language"] = "TypeScript"
-            elif ext in ['.java']:
-                file_info["language"] = "Java"
-            elif ext in ['.go']:
-                file_info["language"] = "Go"
-            elif ext in ['.cs']:
-                file_info["language"] = "C#"
-            elif ext in ['.cpp', '.cc', '.c', '.h']:
-                file_info["language"] = "C/C++"
-            elif ext in ['.rb']:
-                file_info["language"] = "Ruby"
-            elif ext in ['.php']:
-                file_info["language"] = "PHP"
-            elif ext in ['.swift']:
-                file_info["language"] = "Swift"
-            elif ext in ['.dart']:
-                file_info["language"] = "Dart"
-            else:
-                file_info["language"] = "Other"
-            
-            # Analyze file
-            file_analysis = analyze_file(file_info)
-            if file_analysis:
-                st.session_state.files_analysis[selected_file] = file_analysis
-                st.session_state.current_file = selected_file
-                st.sidebar.success("File analysis completed!")
-
-# Add navigation back to homepage
-if st.sidebar.button("Back to Home"):
-    st.switch_page("app.py")
-
-# Main content
-st.title("Repository Analysis")
-
-# Display repository analysis
-if st.session_state.repo_analysis:
-    repo_analysis = st.session_state.repo_analysis
-    
-    # Repository overview
-    st.header("Repository Overview")
-    
-    # Quality score
-    quality_score = repo_analysis.get("quality_score", 5)
-    score_class = get_score_class(quality_score)
-    
-    st.markdown(
-        f"<div class='quality-score-container'>"
-        f"<div class='quality-score {score_class}'>{quality_score}</div>"
-        f"<div class='quality-label'>Overall Quality Score</div>"
-        f"</div>",
-        unsafe_allow_html=True
-    )
-    
-    # Repository metrics
-    stats = repo_analysis.get("stats", {})
-    languages = stats.get("languages", {})
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown(
-            f"<div class='repo-metric-card'>"
-            f"<div class='repo-metric-value'>{stats.get('file_count', 0)}</div>"
-            f"<div class='repo-metric-label'>Files</div>"
-            f"</div>",
-            unsafe_allow_html=True
+        # Set the selected repository
+        st.session_state.selected_repository = selected_repo_key
+        st.session_state.repository_name = sample_repositories[selected_repo_key]["name"]
+        st.session_state.repository_language = sample_repositories[selected_repo_key]["language"]
+        
+        # Flatten the directory structure
+        repo_structure = sample_repositories[selected_repo_key]["structure"]
+        st.session_state.repository_files = flatten_directory_structure(repo_structure)
+        
+        # Load sample file contents
+        if selected_repo_key in sample_file_contents:
+            st.session_state.file_contents = sample_file_contents[selected_repo_key]
+        else:
+            st.session_state.file_contents = {}
+        
+        # Reset current file selection
+        st.session_state.current_file = None
+        
+        # Generate analysis results
+        st.session_state.analysis_results = generate_repository_analysis(
+            st.session_state.repository_files,
+            st.session_state.repository_language
         )
+        
+        # Generate repository metrics
+        st.session_state.repository_metrics = generate_repository_metrics(
+            st.session_state.repository_files
+        )
+
+else:  # Upload Repository
+    uploaded_files = st.sidebar.file_uploader(
+        "Upload repository files",
+        accept_multiple_files=True,
+        type=["py", "js", "java", "html", "css", "dart", "json", "xml", "md"]
+    )
+    
+    if uploaded_files and st.sidebar.button("Analyze Uploaded Files"):
+        # Process uploaded files
+        repository_files = []
+        file_contents = {}
+        
+        for uploaded_file in uploaded_files:
+            file_path = uploaded_file.name
+            contents = uploaded_file.getvalue().decode("utf-8")
+            
+            # Determine language from file extension
+            extension = file_path.split(".")[-1].lower()
+            language = {
+                "py": "Python",
+                "js": "JavaScript",
+                "java": "Java",
+                "html": "HTML",
+                "css": "CSS",
+                "dart": "Dart",
+                "json": "JSON",
+                "xml": "XML",
+                "md": "Markdown"
+            }.get(extension, "Other")
+            
+            # Count lines of code
+            loc = len(contents.split("\n"))
+            
+            # Simplified complexity estimation (just a placeholder)
+            complexity = min(10, max(1, loc // 20))
+            
+            repository_files.append({
+                "path": file_path,
+                "language": language,
+                "loc": loc,
+                "complexity": complexity
+            })
+            
+            file_contents[file_path] = contents
+        
+        # Set session state
+        st.session_state.repository_files = repository_files
+        st.session_state.file_contents = file_contents
+        st.session_state.selected_repository = "uploaded"
+        st.session_state.repository_name = "Uploaded Repository"
+        
+        # Determine primary language
+        language_counts = {}
+        for file in repository_files:
+            lang = file["language"]
+            language_counts[lang] = language_counts.get(lang, 0) + file["loc"]
+        
+        if language_counts:
+            primary_language = max(language_counts.items(), key=lambda x: x[1])[0]
+            st.session_state.repository_language = primary_language
+        else:
+            st.session_state.repository_language = "Unknown"
+        
+        # Reset current file selection
+        st.session_state.current_file = None
+        
+        # Generate analysis results
+        st.session_state.analysis_results = generate_repository_analysis(
+            st.session_state.repository_files,
+            st.session_state.repository_language
+        )
+        
+        # Generate repository metrics
+        st.session_state.repository_metrics = generate_repository_metrics(
+            st.session_state.repository_files
+        )
+
+# If a repository is selected, show file browser in sidebar
+if st.session_state.selected_repository:
+    st.sidebar.markdown("### File Browser")
+    
+    # Group files by directory
+    directories = {}
+    for file in st.session_state.repository_files:
+        path = file["path"]
+        parts = path.split("/")
+        
+        # Skip the file name (last part)
+        current_dir = directories
+        for i, part in enumerate(parts[:-1]):
+            if part not in current_dir:
+                current_dir[part] = {}
+            current_dir = current_dir[part]
+        
+        # Add the file to the current directory
+        current_dir[parts[-1]] = file
+    
+    # Function to render the file tree recursively
+    def render_directory(dir_dict, path_prefix="", depth=0):
+        # Sort directories first, then files
+        items = sorted(dir_dict.items(), key=lambda x: (0 if isinstance(x[1], dict) else 1, x[0]))
+        
+        for name, value in items:
+            current_path = f"{path_prefix}/{name}" if path_prefix else name
+            
+            if isinstance(value, dict) and not all(k in ["path", "language", "loc", "complexity"] for k in value.keys()):
+                # This is a directory
+                st.sidebar.markdown(
+                    f"<div style='margin-left: {depth * 16}px;'>"
+                    f"<span class='directory'>📁 {name}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+                render_directory(value, current_path, depth + 1)
+            else:
+                # This is a file
+                is_selected = st.session_state.current_file == current_path
+                
+                if st.sidebar.button(
+                    f"📄 {name}",
+                    key=f"file_{current_path}",
+                    help=f"Lines: {value.get('loc', 0)}, Language: {value.get('language', 'Unknown')}",
+                    on_click=select_file,
+                    args=(current_path,),
+                ):
+                    pass
+    
+    # Function to handle file selection
+    def select_file(file_path):
+        st.session_state.current_file = file_path
+        
+        # Generate file analysis if this is a new file selection
+        if file_path not in st.session_state.file_analysis:
+            # Find the file info
+            file_info = next((f for f in st.session_state.repository_files if f["path"] == file_path), None)
+            
+            if file_info:
+                # Check if we have the file contents
+                if file_path in st.session_state.file_contents:
+                    content = st.session_state.file_contents[file_path]
+                else:
+                    # Generate dummy content based on the file type
+                    content = f"// Sample content for {file_path}\n// (Actual file content not available)"
+                
+                # Generate analysis
+                st.session_state.file_analysis[file_path] = generate_file_analysis(
+                    file_path,
+                    file_info,
+                    content,
+                    st.session_state.repository_language
+                )
+    
+    # Render the file tree
+    render_directory(directories)
+    
+# Main content area
+if st.session_state.selected_repository:
+    # Display repository information
+    st.title(st.session_state.repository_name)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    # Get metrics from repository metrics
+    metrics = st.session_state.repository_metrics
+    quality_score = metrics["quality_score"]
+    maintainability = metrics["maintainability"] 
+    testability = metrics["testability"]
+    security_score = metrics["security_score"]
+    
+    # Display metrics
+    with col1:
+        quality_class = "good" if quality_score >= 75 else "average" if quality_score >= 50 else "poor"
+        st.markdown(f"""
+        <div class="metric-container">
+            <div class="metric-label">Quality Score</div>
+            <div class="metric-value {quality_class}">{quality_score}/100</div>
+            <div class="progress-container">
+                <div class="progress-bar progress-{quality_class}" style="width: {quality_score}%;"></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col2:
-        total_size = stats.get('total_size', 0)
-        size_str = f"{total_size / 1024:.1f} KB" if total_size > 1024 else f"{total_size} bytes"
-        
-        st.markdown(
-            f"<div class='repo-metric-card'>"
-            f"<div class='repo-metric-value'>{size_str}</div>"
-            f"<div class='repo-metric-label'>Total Size</div>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
+        maintainability_class = "good" if maintainability >= 75 else "average" if maintainability >= 50 else "poor"
+        st.markdown(f"""
+        <div class="metric-container">
+            <div class="metric-label">Maintainability</div>
+            <div class="metric-value {maintainability_class}">{maintainability}/100</div>
+            <div class="progress-container">
+                <div class="progress-bar progress-{maintainability_class}" style="width: {maintainability}%;"></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col3:
-        lang_count = len(languages)
-        
-        st.markdown(
-            f"<div class='repo-metric-card'>"
-            f"<div class='repo-metric-value'>{lang_count}</div>"
-            f"<div class='repo-metric-label'>Languages</div>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
+        testability_class = "good" if testability >= 75 else "average" if testability >= 50 else "poor"
+        st.markdown(f"""
+        <div class="metric-container">
+            <div class="metric-label">Testability</div>
+            <div class="metric-value {testability_class}">{testability}/100</div>
+            <div class="progress-container">
+                <div class="progress-bar progress-{testability_class}" style="width: {testability}%;"></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # Language distribution
-    if languages:
-        st.subheader("Language Distribution")
+    with col4:
+        security_class = "good" if security_score >= 75 else "average" if security_score >= 50 else "poor"
+        st.markdown(f"""
+        <div class="metric-container">
+            <div class="metric-label">Security</div>
+            <div class="metric-value {security_class}">{security_score}/100</div>
+            <div class="progress-container">
+                <div class="progress-bar progress-{security_class}" style="width: {security_score}%;"></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Add some spacing
+    st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+    
+    # Create tabs for different analysis views
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Files", "Issues", "Architecture", "Recommendations"])
+    
+    with tab1:  # Overview tab
+        # Display repository summary
+        st.markdown("### Repository Summary")
+        st.markdown(f"""
+        <div class="summary-box">
+            <p>
+            <strong>Language:</strong> {st.session_state.repository_language}<br>
+            <strong>Files:</strong> {len(st.session_state.repository_files)}<br>
+            <strong>Lines of Code:</strong> {sum(f["loc"] for f in st.session_state.repository_files)}<br>
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        # Create pie chart
-        lang_data = pd.DataFrame({
-            "Language": list(languages.keys()),
-            "Files": list(languages.values())
-        })
+        # Display language distribution
+        st.markdown("### Language Distribution")
+        
+        language_counts = {}
+        for file in st.session_state.repository_files:
+            lang = file["language"]
+            loc = file["loc"]
+            language_counts[lang] = language_counts.get(lang, 0) + loc
+        
+        # Create data for pie chart
+        languages = list(language_counts.keys())
+        loc_counts = list(language_counts.values())
         
         fig = px.pie(
-            lang_data, 
-            values="Files", 
-            names="Language",
-            title="Language Distribution",
-            color_discrete_sequence=px.colors.qualitative.Set3
+            values=loc_counts,
+            names=languages,
+            title="Code Distribution by Language",
+            hole=0.4,
+            color_discrete_sequence=px.colors.qualitative.Bold
+        )
+        
+        fig.update_layout(
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=-0.2,
+                xanchor="center",
+                x=0.5
+            )
         )
         
         st.plotly_chart(fig, use_container_width=True)
-    
-    # Overview text
-    st.subheader("Analysis")
-    st.markdown(repo_analysis.get("overview", "No overview available"))
-    
-    # Tabs for different analysis aspects
-    tab1, tab2, tab3 = st.tabs(["Architecture", "Code Organization", "Issues & Recommendations"])
-    
-    with tab1:
-        architecture = repo_analysis.get("architecture", {})
         
-        arch_score = architecture.get("score", 0)
-        arch_score_class = get_score_class(arch_score)
+        # Display complexity distribution
+        st.markdown("### Code Complexity Distribution")
         
-        st.markdown(
-            f"<div class='quality-score-container'>"
-            f"<div class='quality-score {arch_score_class}'>{arch_score}</div>"
-            f"<div class='quality-label'>Architecture Score</div>"
-            f"</div>",
-            unsafe_allow_html=True
+        complexity_data = []
+        for file in st.session_state.repository_files:
+            complexity = file["complexity"]
+            complexity_data.append({
+                "file": file["path"],
+                "complexity": complexity,
+                "category": "High" if complexity > 7 else "Medium" if complexity > 4 else "Low"
+            })
+        
+        complexity_df = pd.DataFrame(complexity_data)
+        
+        # Count files in each complexity category
+        complexity_counts = complexity_df["category"].value_counts().reset_index()
+        complexity_counts.columns = ["Complexity", "Files"]
+        
+        # Sort by complexity level
+        complexity_order = {"Low": 0, "Medium": 1, "High": 2}
+        complexity_counts["SortOrder"] = complexity_counts["Complexity"].map(complexity_order)
+        complexity_counts = complexity_counts.sort_values("SortOrder")
+        
+        # Create bar chart
+        fig = px.bar(
+            complexity_counts,
+            x="Complexity",
+            y="Files",
+            color="Complexity",
+            title="Files by Complexity Level",
+            color_discrete_map={
+                "Low": "#4CAF50",
+                "Medium": "#FFC107",
+                "High": "#F44336"
+            }
         )
         
-        st.markdown(architecture.get("evaluation", "No architecture evaluation available"))
+        fig.update_layout(xaxis_title=None)
         
-        patterns = architecture.get("patterns", [])
-        if patterns:
-            st.subheader("Architecture Patterns")
-            for pattern in patterns:
-                st.markdown(f"- {pattern}")
-    
-    with tab2:
-        organization = repo_analysis.get("organization", {})
+        st.plotly_chart(fig, use_container_width=True)
         
-        org_score = organization.get("score", 0)
-        org_score_class = get_score_class(org_score)
-        
-        st.markdown(
-            f"<div class='quality-score-container'>"
-            f"<div class='quality-score {org_score_class}'>{org_score}</div>"
-            f"<div class='quality-label'>Organization Score</div>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
-        
-        st.markdown(organization.get("evaluation", "No organization evaluation available"))
-        
-        # Strengths and weaknesses
+        # Display code quality strengths and weaknesses
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("Strengths")
-            strengths = organization.get("strengths", [])
+            st.markdown("### Strengths")
+            strengths = st.session_state.analysis_results.get("strengths", [])
+            
             if strengths:
-                for strength in strengths:
-                    st.markdown(f"- {strength}")
+                for strength in strengths[:3]:  # Show top 3 strengths
+                    st.markdown(f"""
+                    <div class="strength-box">
+                        <div class="issue-title">{strength["title"]}</div>
+                        <p>{strength["description"]}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
             else:
                 st.info("No strengths identified")
         
         with col2:
-            st.subheader("Weaknesses")
-            weaknesses = organization.get("weaknesses", [])
+            st.markdown("### Weaknesses")
+            weaknesses = st.session_state.analysis_results.get("weaknesses", [])
+            
             if weaknesses:
-                for weakness in weaknesses:
-                    st.markdown(f"- {weakness}")
+                for weakness in weaknesses[:3]:  # Show top 3 weaknesses
+                    st.markdown(f"""
+                    <div class="weakness-box">
+                        <div class="issue-title">{weakness["title"]}</div>
+                        <p>{weakness["description"]}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
             else:
                 st.info("No weaknesses identified")
     
-    with tab3:
-        # Issues
-        st.subheader("Issues")
-        issues = repo_analysis.get("issues", [])
+    with tab2:  # Files tab
+        # File metrics and details
+        st.markdown("### File Metrics")
+        
+        # Create data for table
+        file_data = []
+        for file in st.session_state.repository_files:
+            path = file["path"]
+            language = file["language"]
+            loc = file["loc"]
+            complexity = file["complexity"]
+            
+            # Calculate a quality score for each file
+            # This is a simplified calculation
+            quality = 100 - (complexity * 10) if complexity < 10 else 0
+            quality = max(0, min(100, quality))
+            
+            file_data.append({
+                "File": path,
+                "Language": language,
+                "LOC": loc,
+                "Complexity": complexity,
+                "Quality": quality
+            })
+        
+        file_df = pd.DataFrame(file_data)
+        
+        # Add sorting and filtering
+        st.markdown("#### Filter and Sort Files")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # Filter by language
+            languages = ["All"] + sorted(set(file["language"] for file in st.session_state.repository_files))
+            selected_language = st.selectbox("Language", languages)
+        
+        with col2:
+            # Sort by column
+            sort_columns = ["File", "Language", "LOC", "Complexity", "Quality"]
+            sort_by = st.selectbox("Sort by", sort_columns)
+        
+        with col3:
+            # Sort order
+            sort_order = st.radio("Order", ["Ascending", "Descending"], horizontal=True)
+        
+        # Apply filters and sorting
+        if selected_language != "All":
+            filtered_df = file_df[file_df["Language"] == selected_language]
+        else:
+            filtered_df = file_df
+        
+        # Apply sorting
+        ascending = sort_order == "Ascending"
+        filtered_df = filtered_df.sort_values(by=sort_by, ascending=ascending)
+        
+        # Display file table
+        st.markdown(f"#### {len(filtered_df)} Files")
+        st.dataframe(
+            filtered_df,
+            hide_index=True,
+            use_container_width=True
+        )
+        
+        # Display file distribution by directory
+        st.markdown("### Files by Directory")
+        
+        # Count files by directory
+        directory_counts = {}
+        for file in st.session_state.repository_files:
+            path = file["path"]
+            parts = path.split("/")
+            
+            # Get the top-level directory
+            if len(parts) > 1:
+                directory = parts[0]
+            else:
+                directory = "Root"
+            
+            directory_counts[directory] = directory_counts.get(directory, 0) + 1
+        
+        # Create data for bar chart
+        directory_df = pd.DataFrame({
+            "Directory": list(directory_counts.keys()),
+            "Files": list(directory_counts.values())
+        })
+        
+        # Sort by number of files
+        directory_df = directory_df.sort_values("Files", ascending=False)
+        
+        fig = px.bar(
+            directory_df,
+            x="Directory",
+            y="Files",
+            title="Files by Directory",
+            color="Files",
+            color_continuous_scale=px.colors.sequential.Viridis
+        )
+        
+        fig.update_layout(xaxis_title=None)
+        
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with tab3:  # Issues tab
+        # Display issues found in the repository
+        st.markdown("### Issues")
+        
+        issues = st.session_state.analysis_results.get("issues", [])
         
         if issues:
-            for issue in issues:
-                severity = issue.get("severity", "medium")
-                severity_color = {
-                    "high": "#f44336",
-                    "medium": "#ff9800",
-                    "low": "#4caf50"
-                }.get(severity.lower(), "#ff9800")
+            # Add filtering by severity
+            severity_options = ["All", "Critical", "High", "Medium", "Low"]
+            selected_severity = st.radio("Filter by Severity", severity_options, horizontal=True)
+            
+            # Filter issues by severity
+            if selected_severity != "All":
+                filtered_issues = [issue for issue in issues if issue["severity"] == selected_severity.lower()]
+            else:
+                filtered_issues = issues
+            
+            # Display filtered issues
+            st.markdown(f"#### {len(filtered_issues)} Issues Found")
+            
+            for issue in filtered_issues:
+                severity = issue["severity"]
+                title = issue["title"]
+                description = issue["description"]
+                file_path = issue.get("file_path", "Multiple files")
+                line = issue.get("line", "N/A")
                 
-                st.markdown(
-                    f"<div class='issue-card'>"
-                    f"<div class='issue-title'>{issue.get('title', 'Unknown Issue')}</div>"
-                    f"<div>Severity: <span style='color: {severity_color}; font-weight: bold;'>{severity.upper()}</span></div>"
-                    f"<div>{issue.get('description', 'No description available')}</div>"
-                    f"</div>",
-                    unsafe_allow_html=True
-                )
+                st.markdown(f"""
+                <div class="issue-box">
+                    <div class="issue-title {severity}">
+                        <span class="badge badge-{severity}">{severity.title()}</span> {title}
+                    </div>
+                    <p>{description}</p>
+                    <div class="file-meta">
+                        <strong>Location:</strong> {file_path}{f" (line {line})" if line != "N/A" else ""}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
         else:
             st.info("No issues identified")
         
-        # Recommendations
-        st.subheader("Recommendations")
-        recommendations = repo_analysis.get("recommendations", [])
+    with tab4:  # Architecture tab
+        # Display architecture analysis
+        st.markdown("### Architecture Overview")
+        
+        # Architecture quality score
+        architecture_score = st.session_state.analysis_results.get("architecture_score", 70)
+        architecture_class = "good" if architecture_score >= 75 else "average" if architecture_score >= 50 else "poor"
+        
+        st.markdown(f"""
+        <div class="summary-box">
+            <div class="metric-label">Architecture Quality</div>
+            <div class="metric-value {architecture_class}" style="font-size: 2rem;">{architecture_score}/100</div>
+            <div class="progress-container">
+                <div class="progress-bar progress-{architecture_class}" style="width: {architecture_score}%;"></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Architecture visualization
+        st.markdown("### Component Dependencies")
+        
+        # Create a directed graph
+        G = nx.DiGraph()
+        
+        # Create nodes and edges based on repository structure
+        # This is highly simplified and would be more sophisticated in a real application
+        
+        if st.session_state.repository_language == "JavaScript":
+            components = ["Controllers", "Models", "Routes", "Middleware", "Utils", "App"]
+            # Add nodes
+            for component in components:
+                G.add_node(component)
+            
+            # Add edges (dependencies)
+            G.add_edge("App", "Routes")
+            G.add_edge("App", "Middleware")
+            G.add_edge("Routes", "Controllers")
+            G.add_edge("Controllers", "Models")
+            G.add_edge("Controllers", "Utils")
+            G.add_edge("Middleware", "Utils")
+        
+        elif st.session_state.repository_language == "Python":
+            components = ["Views", "Models", "Forms", "Templates", "Admin", "Utils"]
+            # Add nodes
+            for component in components:
+                G.add_node(component)
+            
+            # Add edges (dependencies)
+            G.add_edge("Views", "Models")
+            G.add_edge("Views", "Forms")
+            G.add_edge("Views", "Templates")
+            G.add_edge("Forms", "Models")
+            G.add_edge("Admin", "Models")
+            G.add_edge("Models", "Utils")
+        
+        elif st.session_state.repository_language == "Dart":
+            components = ["Screens", "Widgets", "Models", "Services", "Utils"]
+            # Add nodes
+            for component in components:
+                G.add_node(component)
+            
+            # Add edges (dependencies)
+            G.add_edge("Screens", "Widgets")
+            G.add_edge("Screens", "Models")
+            G.add_edge("Screens", "Services")
+            G.add_edge("Widgets", "Models")
+            G.add_edge("Services", "Models")
+            G.add_edge("Services", "Utils")
+        
+        elif st.session_state.repository_language == "Java":
+            components = ["Controllers", "Services", "Repositories", "Models", "Config", "Exceptions", "Utils"]
+            # Add nodes
+            for component in components:
+                G.add_node(component)
+            
+            # Add edges (dependencies)
+            G.add_edge("Controllers", "Services")
+            G.add_edge("Services", "Repositories")
+            G.add_edge("Services", "Models")
+            G.add_edge("Repositories", "Models")
+            G.add_edge("Controllers", "Exceptions")
+            G.add_edge("Services", "Exceptions")
+            G.add_edge("Config", "Services")
+            G.add_edge("Services", "Utils")
+        
+        else:
+            components = ["Component A", "Component B", "Component C", "Component D", "Component E"]
+            # Add nodes
+            for component in components:
+                G.add_node(component)
+            
+            # Add edges (dependencies)
+            G.add_edge("Component A", "Component B")
+            G.add_edge("Component A", "Component C")
+            G.add_edge("Component B", "Component D")
+            G.add_edge("Component C", "Component D")
+            G.add_edge("Component D", "Component E")
+        
+        # Create a figure with a dark background
+        plt.figure(figsize=(10, 7), facecolor='#0E1117')
+        
+        # Draw the graph
+        pos = nx.spring_layout(G, k=0.3, iterations=50)
+        
+        # Draw nodes
+        nx.draw_networkx_nodes(
+            G, pos,
+            node_size=1000,
+            node_color='#1976D2',
+            alpha=0.8,
+            linewidths=2,
+            edgecolors='white'
+        )
+        
+        # Draw edges
+        nx.draw_networkx_edges(
+            G, pos,
+            width=2,
+            alpha=0.7,
+            edge_color='#4CAF50',
+            arrows=True,
+            arrowsize=20,
+            arrowstyle='-|>',
+            connectionstyle='arc3,rad=0.1'
+        )
+        
+        # Draw labels
+        nx.draw_networkx_labels(
+            G, pos,
+            font_size=12,
+            font_family='sans-serif',
+            font_weight='bold',
+            font_color='white'
+        )
+        
+        # Remove axes
+        plt.axis('off')
+        
+        # Display the graph
+        st.pyplot(plt)
+        
+        # Architecture metrics
+        st.markdown("### Architecture Metrics")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown(f"""
+            <div class="metric-container">
+                <div class="metric-label">Coupling</div>
+                <div class="metric-value average">Medium</div>
+                <p style="font-size: 0.9rem;">The components have a moderate level of interdependence.</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown(f"""
+            <div class="metric-container">
+                <div class="metric-label">Cohesion</div>
+                <div class="metric-value good">High</div>
+                <p style="font-size: 0.9rem;">Components have a good level of internal cohesion.</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown(f"""
+            <div class="metric-container">
+                <div class="metric-label">Complexity</div>
+                <div class="metric-value average">Medium</div>
+                <p style="font-size: 0.9rem;">The architectural complexity is manageable but could be improved.</p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    with tab5:  # Recommendations tab
+        # Display recommendations for improving the codebase
+        st.markdown("### Recommendations")
+        
+        recommendations = st.session_state.analysis_results.get("recommendations", [])
         
         if recommendations:
-            for i, recommendation in enumerate(recommendations):
-                st.markdown(f"{i+1}. {recommendation}")
+            for rec in recommendations:
+                title = rec["title"]
+                description = rec["description"]
+                priority = rec["priority"].lower()
+                
+                st.markdown(f"""
+                <div class="recommendation-box">
+                    <div class="issue-title">
+                        <span class="badge badge-{priority}">{rec["priority"]}</span> {title}
+                    </div>
+                    <p>{description}</p>
+                </div>
+                """, unsafe_allow_html=True)
         else:
             st.info("No recommendations provided")
     
-    # File analysis
-    if st.session_state.current_file and st.session_state.current_file in st.session_state.files_analysis:
-        st.header("File Analysis")
+    # If a file is selected, show file details
+    if st.session_state.current_file:
+        st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
+        st.markdown(f"## File Analysis: {st.session_state.current_file}")
         
-        file_analysis = st.session_state.files_analysis[st.session_state.current_file]
-        file_info = file_analysis.get("file_info", {})
+        # Get file info and analysis
+        file_info = next((f for f in st.session_state.repository_files if f["path"] == st.session_state.current_file), None)
+        file_analysis = st.session_state.file_analysis.get(st.session_state.current_file, None)
         
-        # File header
-        st.markdown(
-            f"<div class='file-card'>"
-            f"<div class='file-name'>{file_info.get('name', 'Unknown file')}</div>"
-            f"<div class='file-path'>{file_info.get('path', '')}</div>"
-            f"<div class='file-metrics'>"
-            f"<span class='file-metric'>Language: {file_info.get('language', 'Unknown')}</span>"
-            f"<span class='file-metric'>Size: {file_info.get('size', 0)} bytes</span>"
-            f"</div>"
-            f"<div class='file-description'>{file_analysis.get('summary', 'No summary available')}</div>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
-        
-        # Quality scores
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            quality_score = file_analysis.get("quality_score", 5)
-            score_class = get_score_class(quality_score)
+        if file_info and file_analysis:
+            # File metrics
+            col1, col2, col3, col4 = st.columns(4)
             
-            st.markdown(
-                f"<div class='repo-metric-card'>"
-                f"<div class='quality-score {score_class}' style='margin: 0 auto;'>{quality_score}</div>"
-                f"<div class='repo-metric-label'>Overall Quality</div>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-        
-        with col2:
-            complexity = file_analysis.get("complexity", {})
-            complexity_score = complexity.get("score", 5)
-            score_class = get_score_class(complexity_score)
+            with col1:
+                st.markdown(f"""
+                <div class="metric-container">
+                    <div class="metric-label">Language</div>
+                    <div class="metric-value" style="font-size: 1.5rem;">{file_info["language"]}</div>
+                </div>
+                """, unsafe_allow_html=True)
             
-            st.markdown(
-                f"<div class='repo-metric-card'>"
-                f"<div class='quality-score {score_class}' style='margin: 0 auto;'>{complexity_score}</div>"
-                f"<div class='repo-metric-label'>Complexity</div>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-        
-        with col3:
-            documentation = file_analysis.get("documentation", {})
-            documentation_score = documentation.get("score", 5)
-            score_class = get_score_class(documentation_score)
+            with col2:
+                st.markdown(f"""
+                <div class="metric-container">
+                    <div class="metric-label">Lines of Code</div>
+                    <div class="metric-value" style="font-size: 1.5rem;">{file_info["loc"]}</div>
+                </div>
+                """, unsafe_allow_html=True)
             
-            st.markdown(
-                f"<div class='repo-metric-card'>"
-                f"<div class='quality-score {score_class}' style='margin: 0 auto;'>{documentation_score}</div>"
-                f"<div class='repo-metric-label'>Documentation</div>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-        
-        with col4:
-            maintainability = file_analysis.get("maintainability", {})
-            maintainability_score = maintainability.get("score", 5)
-            score_class = get_score_class(maintainability_score)
+            with col3:
+                complexity = file_info["complexity"]
+                complexity_class = "good" if complexity <= 4 else "average" if complexity <= 7 else "poor"
+                
+                st.markdown(f"""
+                <div class="metric-container">
+                    <div class="metric-label">Complexity</div>
+                    <div class="metric-value {complexity_class}" style="font-size: 1.5rem;">{complexity}/10</div>
+                </div>
+                """, unsafe_allow_html=True)
             
-            st.markdown(
-                f"<div class='repo-metric-card'>"
-                f"<div class='quality-score {score_class}' style='margin: 0 auto;'>{maintainability_score}</div>"
-                f"<div class='repo-metric-label'>Maintainability</div>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-        
-        # File analysis tabs
-        tab1, tab2, tab3 = st.tabs(["Analysis", "Issues", "Best Practices"])
-        
-        with tab1:
-            # Complexity
-            st.subheader("Complexity Analysis")
-            st.markdown(complexity.get("evaluation", "No complexity evaluation available"))
+            with col4:
+                quality = file_analysis["quality_score"]
+                quality_class = "good" if quality >= 75 else "average" if quality >= 50 else "poor"
+                
+                st.markdown(f"""
+                <div class="metric-container">
+                    <div class="metric-label">Quality Score</div>
+                    <div class="metric-value {quality_class}" style="font-size: 1.5rem;">{quality}/100</div>
+                </div>
+                """, unsafe_allow_html=True)
             
-            # Documentation
-            st.subheader("Documentation Analysis")
-            st.markdown(documentation.get("evaluation", "No documentation evaluation available"))
+            # Create tabs for file analysis
+            file_tab1, file_tab2, file_tab3 = st.tabs(["Issues", "Best Practices", "Content"])
             
-            # Maintainability
-            st.subheader("Maintainability Analysis")
-            st.markdown(maintainability.get("evaluation", "No maintainability evaluation available"))
-        
-        with tab2:
-            # Issues
-            st.subheader("Issues")
-            issues = file_analysis.get("issues", [])
+            with file_tab1:
+                # File-specific issues
+                st.markdown("### File Issues")
+                
+                issues = file_analysis.get("issues", [])
+                
+                if issues:
+                    for issue in issues:
+                        severity = issue["severity"]
+                        title = issue["title"]
+                        description = issue["description"]
+                        line = issue.get("line", "N/A")
+                        
+                        st.markdown(f"""
+                        <div class="issue-box">
+                            <div class="issue-title {severity}">
+                                <span class="badge badge-{severity}">{severity.title()}</span> {title}
+                            </div>
+                            <p>{description}</p>
+                            <div class="file-meta">
+                                <strong>Line:</strong> {line}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.info("No issues identified in this file")
             
-            if issues:
-                for issue in issues:
-                    severity = issue.get("severity", "medium")
-                    severity_color = {
-                        "high": "#f44336",
-                        "medium": "#ff9800",
-                        "low": "#4caf50"
-                    }.get(severity.lower(), "#ff9800")
-                    
-                    line_numbers = issue.get("line_numbers", [])
-                    line_str = f"Lines: {', '.join(map(str, line_numbers))}" if line_numbers else ""
-                    
-                    st.markdown(
-                        f"<div class='issue-card'>"
-                        f"<div class='issue-title'>{issue.get('title', 'Unknown Issue')}</div>"
-                        f"<div>Severity: <span style='color: {severity_color}; font-weight: bold;'>{severity.upper()}</span> {line_str}</div>"
-                        f"<div>{issue.get('description', 'No description available')}</div>"
-                        f"</div>",
-                        unsafe_allow_html=True
-                    )
-            else:
-                st.info("No issues identified in this file")
+            with file_tab2:
+                # Best practices analysis
+                st.markdown("### Best Practices")
+                
+                best_practices = file_analysis.get("best_practices", [])
+                
+                if best_practices:
+                    for practice in best_practices:
+                        status = practice["status"]
+                        title = practice["title"]
+                        description = practice["description"]
+                        
+                        status_class = "good" if status else "poor"
+                        status_text = "✓ Followed" if status else "✗ Not Followed"
+                        
+                        st.markdown(f"""
+                        <div class="{'strength-box' if status else 'weakness-box'}">
+                            <div class="issue-title">
+                                <span class="{status_class}">{status_text}</span> {title}
+                            </div>
+                            <p>{description}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.info("No best practices evaluated for this file")
             
-            # Recommendations
-            st.subheader("Recommendations")
-            recommendations = file_analysis.get("recommendations", [])
-            
-            if recommendations:
-                for i, recommendation in enumerate(recommendations):
-                    st.markdown(f"{i+1}. {recommendation}")
-            else:
-                st.info("No recommendations provided for this file")
-        
-        with tab3:
-            # Best practices
-            st.subheader("Best Practices")
-            practices = file_analysis.get("best_practices", [])
-            
-            if practices:
-                for practice in practices:
-                    title = practice.get("title", "Unknown practice")
-                    observed = practice.get("observed", False)
-                    description = practice.get("description", "No description available")
-                    
-                    if observed:
-                        icon = "✅"
-                        status = "Observed"
-                    else:
-                        icon = "❌"
-                        status = "Not observed"
-                    
-                    st.markdown(
-                        f"<div class='issue-card'>"
-                        f"<div class='issue-title'>{title} {icon}</div>"
-                        f"<div>Status: <strong>{status}</strong></div>"
-                        f"<div>{description}</div>"
-                        f"</div>",
-                        unsafe_allow_html=True
-                    )
-            else:
-                st.info("No best practices evaluated for this file")
-        
-        # Show file content
-        with st.expander("View File Content", expanded=False):
-            st.code(st.session_state.file_contents[st.session_state.current_file], language=file_info.get("language", "").lower())
+            with file_tab3:
+                # Show file content
+                with st.expander("View File Content", expanded=False):
+                    st.code(st.session_state.file_contents[st.session_state.current_file], language=file_info.get("language", "").lower())
 else:
     # Welcome message
     st.info("""
@@ -3124,3 +3192,252 @@ else:
     st.image("https://miro.medium.com/max/1400/1*RIrV8tSF-L-Gnh9G1qUjYQ.png", 
              caption="Example repository analysis", 
              use_column_width=True)
+# Helper functions for repository analysis
+def generate_repository_analysis(files, primary_language):
+    """Generate analysis results for a repository"""
+    
+    # In a real implementation, this would perform actual code analysis
+    # For demonstration purposes, we're using simulated data
+    
+    analysis = {
+        "strengths": [
+            {
+                "title": "Well-structured code organization",
+                "description": "The code is organized into clear, logical components with good separation of concerns."
+            },
+            {
+                "title": "Consistent naming conventions",
+                "description": "The codebase follows consistent naming conventions, making it more readable and maintainable."
+            },
+            {
+                "title": "Comprehensive test coverage",
+                "description": "The codebase includes tests for core functionality, reducing the risk of regressions."
+            }
+        ],
+        "weaknesses": [
+            {
+                "title": "High complexity in some modules",
+                "description": "Several modules have high cyclomatic complexity, making them harder to understand and test."
+            },
+            {
+                "title": "Limited documentation",
+                "description": "Some parts of the codebase lack sufficient documentation, which may impede understanding and maintenance."
+            },
+            {
+                "title": "Inconsistent error handling",
+                "description": "Error handling approaches vary across the codebase, potentially leading to unpredictable behavior."
+            }
+        ],
+        "issues": [
+            {
+                "title": "Potential security vulnerability",
+                "description": "Possible SQL injection vulnerability in database queries",
+                "severity": "critical",
+                "file_path": "src/controllers/userController.js",
+                "line": 42
+            },
+            {
+                "title": "Performance concern",
+                "description": "Inefficient data processing could lead to performance issues with large datasets",
+                "severity": "high",
+                "file_path": "src/services/dataService.js",
+                "line": 78
+            },
+            {
+                "title": "Code duplication",
+                "description": "Similar code patterns repeated across multiple modules",
+                "severity": "medium"
+            },
+            {
+                "title": "Unused variables",
+                "description": "Several unused variables found throughout the codebase",
+                "severity": "low"
+            }
+        ],
+        "architecture_score": 75,
+        "recommendations": [
+            {
+                "title": "Refactor high-complexity modules",
+                "description": "Break down complex modules into smaller, more manageable components to improve readability and testability.",
+                "priority": "High"
+            },
+            {
+                "title": "Implement consistent error handling",
+                "description": "Establish and follow a consistent error handling pattern throughout the codebase.",
+                "priority": "Medium"
+            },
+            {
+                "title": "Add missing documentation",
+                "description": "Improve documentation, especially for core modules and public APIs.",
+                "priority": "Medium"
+            },
+            {
+                "title": "Address security vulnerabilities",
+                "description": "Fix identified security vulnerabilities, particularly in data handling and authentication.",
+                "priority": "Critical"
+            }
+        ]
+    }
+    
+    return analysis
+
+def generate_repository_metrics(files):
+    """Generate metrics for a repository"""
+    
+    # Calculate quality score based on complexity
+    total_loc = sum(f["loc"] for f in files)
+    avg_complexity = sum(f["complexity"] * f["loc"] for f in files) / total_loc if total_loc > 0 else 0
+    
+    # Simplified quality score calculation
+    quality_score = max(0, min(100, int(100 - avg_complexity * 8)))
+    
+    # Calculate other metrics
+    high_complexity_files = sum(1 for f in files if f["complexity"] > 7)
+    high_complexity_percentage = (high_complexity_files / len(files)) * 100 if files else 0
+    
+    # Calculate maintainability
+    maintainability = max(0, min(100, int(quality_score * 0.7 + (100 - high_complexity_percentage) * 0.3)))
+    
+    # Calculate testability
+    testability = max(0, min(100, int(maintainability * 0.9)))
+    
+    # Calculate security score (simplified)
+    security_score = max(0, min(100, int(quality_score * 0.8)))
+    
+    return {
+        "quality_score": quality_score,
+        "maintainability": maintainability,
+        "testability": testability,
+        "security_score": security_score,
+        "high_complexity_files": high_complexity_files,
+        "high_complexity_percentage": high_complexity_percentage
+    }
+
+def generate_file_analysis(file_path, file_info, content, primary_language):
+    """Generate analysis for a specific file"""
+    
+    # In a real implementation, this would perform actual code analysis
+    # For demonstration purposes, we're using simulated data based on file info
+    
+    loc = file_info["loc"]
+    complexity = file_info["complexity"]
+    language = file_info["language"]
+    
+    # Calculate a quality score for the file
+    quality_score = 100 - (complexity * 10) if complexity < 10 else 0
+    quality_score = max(0, min(100, quality_score))
+    
+    # Generate issues based on complexity and other factors
+    issues = []
+    
+    if complexity > 7:
+        issues.append({
+            "title": "High cyclomatic complexity",
+            "description": "This file has high complexity, making it harder to understand and maintain.",
+            "severity": "high",
+            "line": "N/A"
+        })
+    
+    if "TODO" in content:
+        todo_line = content.split("\n").index([line for line in content.split("\n") if "TODO" in line][0]) + 1
+        issues.append({
+            "title": "TODO comment found",
+            "description": "There are TODO comments in the code that should be addressed.",
+            "severity": "low",
+            "line": todo_line
+        })
+    
+    if language == "JavaScript" and "===" not in content and "==" in content:
+        issues.append({
+            "title": "Non-strict equality",
+            "description": "Using non-strict equality (==) instead of strict equality (===) can lead to unexpected behavior.",
+            "severity": "medium",
+            "line": "N/A"
+        })
+    
+    if language == "Python" and "except:" in content and "except Exception:" not in content:
+        issues.append({
+            "title": "Bare except clause",
+            "description": "Using bare except clauses can catch unexpected exceptions and hide errors.",
+            "severity": "medium",
+            "line": "N/A"
+        })
+    
+    # Generate best practices analysis
+    best_practices = []
+    
+    # Add language-specific best practices
+    if language == "JavaScript":
+        best_practices.extend([
+            {
+                "title": "Use strict equality",
+                "description": "Always use === instead of == for equality comparisons",
+                "status": "===" in content
+            },
+            {
+                "title": "Use const/let instead of var",
+                "description": "Prefer const and let over var for variable declarations",
+                "status": "var " not in content or ("const " in content and "let " in content)
+            },
+            {
+                "title": "Error handling",
+                "description": "Implement proper error handling with try/catch blocks",
+                "status": "try {" in content and "catch" in content
+            }
+        ])
+    elif language == "Python":
+        best_practices.extend([
+            {
+                "title": "Use meaningful variable names",
+                "description": "Variables should have descriptive names",
+                "status": True  # Simplified check, would need more sophisticated analysis
+            },
+            {
+                "title": "Proper exception handling",
+                "description": "Use specific exception types instead of bare except clauses",
+                "status": "except:" not in content or "except Exception:" in content
+            },
+            {
+                "title": "Follow PEP 8 style guide",
+                "description": "Code should follow the PEP 8 style guide for Python code",
+                "status": True  # Simplified check
+            }
+        ])
+    elif language == "Java":
+        best_practices.extend([
+            {
+                "title": "Use proper access modifiers",
+                "description": "Fields and methods should have appropriate access modifiers",
+                "status": "private " in content or "protected " in content or "public " in content
+            },
+            {
+                "title": "Include Javadoc comments",
+                "description": "Public methods should include Javadoc comments",
+                "status": "/**" in content and "*/" in content
+            },
+            {
+                "title": "Proper exception handling",
+                "description": "Exceptions should be either handled or declared",
+                "status": "try {" in content and "catch" in content
+            }
+        ])
+    
+    # Add generic best practices
+    best_practices.extend([
+        {
+            "title": "Code is modular",
+            "description": "Code is divided into manageable, focused modules/functions",
+            "status": loc < 300
+        },
+        {
+            "title": "Comment quality",
+            "description": "Comments explain 'why' not 'what' and are kept updated",
+            "status": True  # Simplified check
+        }
+    ])
+    
+    return {
+        "quality_score": quality_score,
+        "issues": issues,
+        "best_practices": best_practices
+    }
