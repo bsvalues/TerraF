@@ -4,6 +4,8 @@
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
+const fs = require('fs').promises;
+const path = require('path');
 
 // Create Express app
 const app = express();
@@ -17,19 +19,40 @@ app.use(morgan('dev'));
 // Import routes
 const apiRoutes = require('./routes/api');
 const levyRoutes = require('./routes/levy');
+const securityScanRoutes = require('./routes/securityScan');
+
+// Ensure data directories exist
+async function ensureDataDirectories() {
+  try {
+    const dataDir = path.join(__dirname, '..', 'data');
+    const scansDir = path.join(dataDir, 'scans');
+    
+    await fs.mkdir(dataDir, { recursive: true });
+    await fs.mkdir(scansDir, { recursive: true });
+    
+    console.log('Data directories created');
+  } catch (error) {
+    console.error('Error creating data directories:', error);
+  }
+}
 
 // Mount API routes
 app.use('/api', apiRoutes);
 app.use('/api/v1', levyRoutes);
+app.use('/api/security', securityScanRoutes);
 
 // Default route
 app.get('/', (req, res) => {
   res.json({
     message: 'TerraFusion API',
-    version: '0.1.0',
+    version: '0.2.0',
     endpoints: [
       '/api/status',
-      '/api/v1/levy'
+      '/api/v1/levy',
+      '/api/security/scan',
+      '/api/security/scans',
+      '/api/security/dependencies/check',
+      '/api/security/secrets/detect'
     ]
   });
 });
@@ -45,9 +68,13 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on http://0.0.0.0:${PORT}`);
+// Create data directories and start server
+ensureDataDirectories().then(() => {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://0.0.0.0:${PORT}`);
+  });
+}).catch(err => {
+  console.error('Failed to initialize server:', err);
 });
 
 module.exports = app;
