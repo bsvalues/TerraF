@@ -417,6 +417,10 @@ def get_metric_color_class(value, thresholds):
     else:
         return "metric-good"
 
+# Helper function to pluralize words
+def pluralize(word, count):
+    return word if count == 1 else f"{word}s"
+
 # Initialize session state
 if "show_scan_details" not in st.session_state:
     st.session_state.show_scan_details = False
@@ -606,11 +610,14 @@ with col1:
                 timestamp = scan_data.get("timestamp", 0)
                 formatted_time = format_timestamp(timestamp)
                 with cols[3]:
+                    # Format the scan ID appropriately
+                    scan_id_display = st.session_state.current_scan_id[:8] + "..." if st.session_state.current_scan_id else "N/A"
+                    
                     st.markdown(f"""
                     <div class="metric-container">
                         <div class="metric-title">Scan Completed</div>
                         <div class="metric-value" style="font-size: 1.5rem;">{formatted_time}</div>
-                        <div class="metric-details">Scan ID: {st.session_state.current_scan_id[:8]}...</div>
+                        <div class="metric-details">Scan ID: {scan_id_display}</div>
                     </div>
                     """, unsafe_allow_html=True)
                 
@@ -1126,7 +1133,7 @@ with col1:
                 df_deps = pd.DataFrame(dep_data)
                 
                 # Function to color severity
-                def color_severity(val):
+                def color_severity_dep(val):
                     if val == "Critical":
                         return f'<span class="vuln-badge vuln-critical">{val}</span>'
                     elif val == "High":
@@ -1140,7 +1147,7 @@ with col1:
                 
                 # Apply styling
                 df_styled = df_deps.style.format({
-                    "Severity": lambda x: color_severity(x)
+                    "Severity": lambda x: color_severity_dep(x)
                 })
                 
                 st.write(df_styled.to_html(escape=False), unsafe_allow_html=True)
@@ -1292,7 +1299,7 @@ with col1:
                 df_secrets = pd.DataFrame(secret_data)
                 
                 # Function to color severity
-                def color_severity(val):
+                def color_severity_secret(val):
                     if val == "Critical":
                         return f'<span class="vuln-badge vuln-critical">{val}</span>'
                     elif val == "High":
@@ -1306,7 +1313,7 @@ with col1:
                 
                 # Apply styling
                 df_styled = df_secrets.style.format({
-                    "Severity": lambda x: color_severity(x)
+                    "Severity": lambda x: color_severity_secret(x)
                 })
                 
                 st.write(df_styled.to_html(escape=False), unsafe_allow_html=True)
@@ -1476,7 +1483,3 @@ with col1:
                 st.warning("Failed to load scan details. The scan may still be in progress.")
         else:
             st.info("Select a scan from the list or run a new security scan to view recommendations.")
-
-# Helper function to pluralize words
-def pluralize(word, count):
-    return word if count == 1 else f"{word}s"
