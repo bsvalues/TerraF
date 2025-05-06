@@ -1,10 +1,11 @@
 import streamlit as st
 import time
+from datetime import datetime
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
 import numpy as np
-from sync_service import SyncService
+from sync_service import SyncService, BatchConfiguration
 
 # Set page configuration
 st.set_page_config(
@@ -383,7 +384,12 @@ with right_col:
             }
         
         # Update the sync service with the new configuration
-        st.session_state.sync_service = SyncService(config)
+        batch_config = BatchConfiguration(
+            initial_size=config["batch_size"],
+            min_size=max(10, int(config["batch_size"] * 0.5)),
+            max_size=min(500, int(config["batch_size"] * 2.0))
+        )
+        st.session_state.sync_service = SyncService(batch_config=batch_config, config=config)
         
         # Run the selected sync operation
         with st.spinner(f"Running {sync_type}..."):
